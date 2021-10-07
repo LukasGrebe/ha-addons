@@ -2,6 +2,12 @@
 
 creates a supervisor addon to run [ebusd](http://ebusd.eu). Configure ebusd comandline arguments in the settings options.
 
+See [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md) on how to run ebusd in supervisor
+
+**feedback please**
+- via the [Home Assistant Forums Topic](https://community.home-assistant.io/t/an-ebusd-add-on/344852)
+- via Issues and Pullrequests in the Github Repository
+
 *Not actually tested on any of these architectures*
 ![Supports aarch64 Architecture][aarch64-shield]
 ![Supports amd64 Architecture][amd64-shield]
