@@ -5,7 +5,7 @@ Addons for http://home-assistant.io
 ## How to Install
 1. In Supervisor go to the Add-on Store,
 2. In the overflow menu click "Repositories"
-3. Add `https://github.com/LukasGrebe/ha-addons/``
+3. Add `https://github.com/LukasGrebe/ha-addons/`
 4. Wait for the ebusd Add-on to show up or click reload in the same overflow menu
 5. Follow Documentation, Setup and Install of the Add-on
 
