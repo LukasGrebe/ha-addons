@@ -1,0 +1,43 @@
+configuration:
+  device:
+    name: Device
+    description: -d, --device=DEV Use DEV as eBUS device ("enh:DEVICE" or "enh:IP:PORT" for enhanced device,"DEVICE" for serial device, or "[udp:]IP:PORT" for network device) [/dev/ttyUSB0]
+  port:
+    name: Port for TCP interface
+    description: -p, --port=PORT Listen for command line connections connections on PORT [8888]
+  latency:
+    name: Latency
+    description: ebusd --latency=MSEC Transfer latency in ms [0 for USB, 10 for IP]
+  readonly:
+    name: Read Only
+    description: Only read from device, never write to it
+  foreground:
+    name: Read Only
+    description: Only read from device, never write to it
+  scanconfig:
+    name: Scan Config
+    description: Pick CSV config files matching initial scan (ADDR="none" or empty for no initial scan message "full" for full scan, or a single hex address to scan, default is to send a broadcast ident message).
+  logareas:
+    name: Log Area
+    description: Only write log for matching AREA
+  loglevel:
+    name: Log Level
+    description: Only write log below or equal to LEVEL
+  mqtthost:
+    name: MQTT Host
+    description: Connect to MQTT broker on HOST [localhost]
+  mqttport:
+    name: MQTT serverPort
+    description: Connect to MQTT broker on PORT (usually 1883), 0 to disable [0]
+  mqttuser:
+    name: MQTT User
+    description: Connect as USER to MQTT broker (no default)
+  mqttpass:
+    name: MQTT Password
+    description: Use PASSWORD when connecting to MQTT broker (no default)
+  mqttjson:
+    name: MQTT Json
+    description: Publish in JSON format instead of strings
+  mqttlog:
+    name: MQTT Log
+    description: Log library events
