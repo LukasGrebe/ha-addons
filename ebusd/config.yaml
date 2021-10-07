@@ -1,15 +1,11 @@
-name: ebusd
-version: "0.76"
+name: eBUSd
+version: "0.81"
 slug: ebusd
 description: >
-  This Add-on runs [ebusd](http://ebusd.eu), a daemon for handling communication with eBUS devices
-  connected to a 2-wire bus system (“energy bus” used by numerous heating systems).
-
-  This repository is
-  - in a very early stage of development - please leavepull-requests with improvements
-  - build from source and may **take several minutes to install**.
-  - not yet tested on anything but a RaspberryPi 4 with an [esera ebus koppler](https://www.esera.de/produkte/ebus/135/1-wire-hub-platine)
-url: https://github.com/LukasGrebe/ha-addons
+  This Add-on runs eBUSd, a daemon for handling communication with eBUS devices
+  connected to a 2-wire bus system (“energy bus” used by numerous heating systems)
+  You currently need an eBUS hardware interface connected via usb to make use of this addon
+url: https://community.home-assistant.io/t/an-ebusd-add-on/344852
 arch:
   - armhf
   - armv7
@@ -21,8 +17,8 @@ startup: "system"
 boot: "auto"
 uart: true
 options:
-  port: 8888
-  mqttport: 0
+  scanconfig: true
+  foreground: true
 schema:
   device: "device(subsystem=tty)"
   port: "port?"
