@@ -1,4 +1,4 @@
-# Home Assistant Add-on: Example add-on
+# Home Assistant Add-on: eBUSd
 
 This is to run [ebusd](http://ebusd.eu) as supervisor addon (docker container) in Home Assistant OS.
 
