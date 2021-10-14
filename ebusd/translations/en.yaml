@@ -12,8 +12,8 @@ configuration:
     name: Read Only
     description: Only read from device, never write to it
   foreground:
-    name: Read Only
-    description: Only read from device, never write to it
+    name: foreground
+    description: show output in supervisor log (required to keep running ebusd)
   scanconfig:
     name: Scan Config
     description: Pick CSV config files matching initial scan (ADDR="none" or empty for no initial scan message "full" for full scan, or a single hex address to scan, default is to send a broadcast ident message).
