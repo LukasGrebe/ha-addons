@@ -44,3 +44,6 @@ configuration:
   mqttretain:
     name: MQTT Retain
     description: All MQTT messages sent with retain flag
+  accesslevel=*:
+    name: Access Level
+    description: Set access level to * (allows access to all

@@ -35,3 +35,4 @@ schema:
   mqttjson: "bool?"
   mqttlog: "bool?"
   mqttretain: "bool?"
+  accesslevel=*: "bool?"

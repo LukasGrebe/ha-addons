@@ -3,7 +3,7 @@
 declare -a ebusd_args
 
 #boolean options
-declare options=( "readonly" "scanconfig" "foreground" "mqttjson" "mqttlog" "mqttretain")
+declare options=( "readonly" "scanconfig" "foreground" "mqttjson" "mqttlog" "mqttretain" "accesslevel=*")
 for optName in "${options[@]}"
 do
     if bashio::config.true ${optName}; then
