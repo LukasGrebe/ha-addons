@@ -41,3 +41,6 @@ configuration:
   mqttlog:
     name: MQTT Log
     description: Log library events
+  mqttretain:
+    name: MQTT Retain
+    description: All MQTT messages sent with retain flag
