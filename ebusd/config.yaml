@@ -34,3 +34,4 @@ schema:
   mqttpass: "str?"
   mqttjson: "bool?"
   mqttlog: "bool?"
+  mqttretain: "bool?"
