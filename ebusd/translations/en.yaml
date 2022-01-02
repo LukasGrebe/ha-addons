@@ -44,3 +44,6 @@ configuration:
   mqttretain:
     name: MQTT Retain
     description: All MQTT messages sent with retain flag
+  commandline_options:
+    name: Custom Commandline Options
+    description: Add any additional commandline options
