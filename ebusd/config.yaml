@@ -1,5 +1,5 @@
 name: eBUSd
-version: "0.84"
+version: "0.85"
 slug: ebusd
 description: >
   This Add-on runs eBUSd, a daemon for handling communication with eBUS devices
@@ -16,6 +16,12 @@ init: false
 startup: "system"
 boot: "auto"
 uart: true
+ports:
+  8888/tcp: null
+  8889/tcp: null
+ports_description:
+  8888/tcp: TCP client port
+  8889/tcp: HTTP client port (HTTP must be activated in config)
 options:
   scanconfig: true
   foreground: true
@@ -36,3 +42,4 @@ schema:
   mqttlog: "bool?"
   mqttretain: "bool?"
   commandline_options: "str?"
+  http: "bool?"

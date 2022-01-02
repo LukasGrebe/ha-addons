@@ -47,3 +47,6 @@ configuration:
   commandline_options:
     name: Custom Commandline Options
     description: Add any additional commandline options
+  http:
+    name: Enable HTTP access
+    description: Enable HTTP client access
