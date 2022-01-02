@@ -27,7 +27,7 @@ fi
 
 #activate http
 if ! bashio::config.is_empty http; then
-    ebusd_args+="--httpport=8889"
+    ebusd_args+=" --httpport=8889"
 fi
 
 
