@@ -2,9 +2,6 @@ configuration:
   device:
     name: Device
     description: -d, --device=DEV Use DEV as eBUS device ("enh:DEVICE" or "enh:IP:PORT" for enhanced device,"DEVICE" for serial device, or "[udp:]IP:PORT" for network device) [/dev/ttyUSB0]
-  port:
-    name: Port for TCP interface
-    description: -p, --port=PORT Listen for command line connections connections on PORT [8888]
   latency:
     name: Latency
     description: ebusd --latency=MSEC Transfer latency in ms [0 for USB, 10 for IP]
