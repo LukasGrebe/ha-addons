@@ -11,14 +11,24 @@ do
     fi
 done
 
-#other options
-declare options=( "device" "port" "latency" "logareas" "loglevel" "mqtthost" "mqttport" "mqttuser" "mqttpass" "accesslevel")
+#string options
+declare options=( "device" "port" "latency" "mqtthost" "mqttport" "mqttuser" "mqttpass" "accesslevel")
 for optName in "${options[@]}"
 do
     if ! bashio::config.is_empty ${optName}; then
         ebusd_args+=("--${optName}=$(bashio::config ${optName})")
     fi
 done
+
+#logging
+declare options=( "loglevel_all" "loglevel_main" "loglevel_bus" "loglevel_update" "loglevel_network")
+for optName in "${options[@]}"
+do
+    if ! bashio::config.is_empty ${optName}; then
+        ebusd_args+=("--log=$(echo $optName | sed 's/loglevel_//g'):$(bashio::config ${optName})")
+    fi
+done
+
 
 #add additional options
 if ! bashio::config.is_empty commandline_options; then
@@ -33,10 +43,6 @@ fi
 
 if bashio::config.false "foreground" || bashio::config.is_empty "foreground"; then
     bashio::config.suggest.true "foreground" "ebusd add-on will stop if ebusd is not running in the foreground."
-fi
-
-if ! (bashio::config.equals "loglevel" "error" || bashio::config.is_empty "foreground"); then
-    bashio::config.suggest "loglevel" "Consider setting the loglevel to 'error'."
 fi
 
 echo "> ebusd ${ebusd_args[*]}"
