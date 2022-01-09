@@ -1,5 +1,14 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## TBC
+
+- IMPROVE: Add access level config option
+- IMPROVE: Enable custom config files (save in share folder)
+- TODO: Redraft docs
+- TODO: Custom csv files config option
+- TODO: Wireless ebusd adapter
+- TODO: cleanup config options
+
 ## 0.87
 
 - IMPROVE - Allow  access with HTTP and TCP client
