@@ -7,6 +7,7 @@
 - IMPROVE: Configure logger for individual areas
 - BREAKING: Remove old style loglevel and logareas option
 - IMPROVE: Wireless ebusd adapter (needs testing)
+- IMPROVE: Add watchdog URL so Home Assistant can restart eBUSd if it crashes
 - TODO: Redraft docs
 - TODO: Custom csv files config option
 - TODO: cleanup config options
