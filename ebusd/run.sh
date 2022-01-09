@@ -12,7 +12,8 @@ do
 done
 
 #string options
-declare options=( "port" "latency" "mqtthost" "mqttport" "mqttuser" "mqttpass" "accesslevel")
+declare options=( "configpath" "port" "latency" "mqtthost" "mqttport" "mqttuser" "mqttpass" "accesslevel")
+
 for optName in "${options[@]}"
 do
     if ! bashio::config.is_empty ${optName}; then

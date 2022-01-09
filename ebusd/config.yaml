@@ -20,7 +20,7 @@ boot: "auto"
 watchdog: tcp://[HOST]:8888
 uart: true
 map:
- - share:rw
+ - config
 ports:
   8888/tcp: null
   8889/tcp: null
@@ -36,6 +36,7 @@ schema:
   latency: "int(0,10000)?"
   readonly: "bool?"
   foreground: "bool?"
+  configpath: "str?"
   scanconfig: "bool?"
   mqtthost: "str?"
   mqttport: "int?"
