@@ -9,7 +9,7 @@ RUN apk add --no-cache \
     git \
     mosquitto-dev \
     cmake
-    
+
 WORKDIR /build
 
 RUN git clone https://github.com/john30/ebusd.git /build && cmake . && make
