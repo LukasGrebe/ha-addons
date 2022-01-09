@@ -47,3 +47,6 @@ configuration:
   http:
     name: Enable HTTP access
     description: Enable HTTP client access
+  accesslevel:
+    name: Access Level
+    description: Set default access level(s) to LEVEL ("*" for everything, multiple levels separated by comma)
