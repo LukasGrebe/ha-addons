@@ -59,3 +59,6 @@ configuration:
   loglevel_main:
     name: Log level for main messages 
     description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
+  custom_device:
+    name: Custom device e.g. ip adress of wireless adapter
+    description: Use this option if your device is not listed in the config options

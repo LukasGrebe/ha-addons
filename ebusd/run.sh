@@ -12,13 +12,21 @@ do
 done
 
 #string options
-declare options=( "device" "port" "latency" "mqtthost" "mqttport" "mqttuser" "mqttpass" "accesslevel")
+declare options=( "port" "latency" "mqtthost" "mqttport" "mqttuser" "mqttpass" "accesslevel")
 for optName in "${options[@]}"
 do
     if ! bashio::config.is_empty ${optName}; then
         ebusd_args+=("--${optName}=$(bashio::config ${optName})")
     fi
 done
+
+#device
+if ! bashio::config.is_empty custom_device; then
+    ebusd_args+=("--device=$(bashio::config custom_device)")
+else
+    ebusd_args+=("--device=$(bashio::config device)")
+fi
+
 
 #logging
 declare options=( "loglevel_all" "loglevel_main" "loglevel_bus" "loglevel_update" "loglevel_network")
