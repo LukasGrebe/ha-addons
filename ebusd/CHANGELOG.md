@@ -6,9 +6,9 @@
 - IMPROVE: Enable custom config files (save in share folder)
 - IMPROVE: Configure logger for individual areas
 - BREAKING: Remove old style loglevel and logareas option
+- IMPROVE: Wireless ebusd adapter (needs testing)
 - TODO: Redraft docs
 - TODO: Custom csv files config option
-- TODO: Wireless ebusd adapter
 - TODO: cleanup config options
 
 ## 0.87
