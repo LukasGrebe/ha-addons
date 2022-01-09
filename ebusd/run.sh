@@ -12,7 +12,7 @@ do
 done
 
 #other options
-declare options=( "device" "port" "latency" "logareas" "loglevel" "mqtthost" "mqttport" "mqttuser" "mqttpass")
+declare options=( "configpath" "device" "port" "latency" "logareas" "loglevel" "mqtthost" "mqttport" "mqttuser" "mqttpass")
 for optName in "${options[@]}"
 do
     if ! bashio::config.is_empty ${optName}; then

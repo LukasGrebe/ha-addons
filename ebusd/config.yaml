@@ -25,6 +25,7 @@ schema:
   latency: "int(0,10000)?"
   readonly: "bool?"
   foreground: "bool?"
+  configpath: "str?"
   scanconfig: "bool?"
   logareas: "list(main|network|bus|update|all)?"
   loglevel: "list(error|notice|info|debug)?"
@@ -35,3 +36,5 @@ schema:
   mqttjson: "bool?"
   mqttlog: "bool?"
   mqttretain: "bool?"
+map: 
+  - config

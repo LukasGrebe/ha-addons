@@ -14,6 +14,9 @@ configuration:
   foreground:
     name: foreground
     description: show output in supervisor log (required to keep running ebusd)
+  configpath:
+    name: Config Path
+    description: Read CSV config files from custom path. You can create a local copy of https://github.com/john30/ebusd-configuration in your "/config" folder and change configpath to e.g. "/config/ebusd-configuration/latest/en" [http://ebusd.eu/config/]
   scanconfig:
     name: Scan Config
     description: Pick CSV config files matching initial scan (ADDR="none" or empty for no initial scan message "full" for full scan, or a single hex address to scan, default is to send a broadcast ident message).
