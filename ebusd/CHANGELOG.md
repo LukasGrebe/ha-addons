@@ -2,25 +2,24 @@
 
 ## TBC
 
+- BREAKING: Remove old style loglevel and logareas option
+- BREAKING: Remove TCP port option.  Port will default to port 8888 internally.  External port can be configured in network options
+
 - IMPROVE: Add access level config option
 - IMPROVE: Enable custom config files (save in share folder)
 - IMPROVE: Configure logger for individual areas
-- BREAKING: Remove old style loglevel and logareas option
-- IMPROVE: Wireless ebusd adapter (needs testing)
+- IMPROVE: Allow wireless ebusd adapter
 - IMPROVE: Add watchdog URL so Home Assistant can restart eBUSd if it crashes
-- TODO: Redraft docs
-- TODO: Custom csv files config option
-- TODO: cleanup config options
-
-## 0.87
-
-- IMPROVE - Allow  access with HTTP and TCP client
-- BREAKING - Remove TCP port option.  Port will default to port 8888 internally.  External port can be configured in network options
-
-## 0.84
-
+- IMPROVE: Allow  access with HTTP and TCP client
 - IMPROVE: Add MQTT retain option
 - IMPROVE: Add custom commandline options
+
+- TODO: Redraft docs
+- TODO: cleanup config options
+
+## 0.82
+
+- IMPROVE: Enable custom CSV files (save in /config folder)
 
 ## 0.81
 
