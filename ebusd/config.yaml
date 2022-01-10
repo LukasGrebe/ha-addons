@@ -14,21 +14,30 @@ arch:
   - i386
 init: false
 startup: "system"
+services:
+ - mqtt:want
 boot: "auto"
+watchdog: tcp://[HOST]:8888
 uart: true
+map:
+ - config
+ports:
+  8888/tcp: null
+  8889/tcp: null
+ports_description:
+  8888/tcp: TCP client port
+  8889/tcp: HTTP client port (HTTP must be activated in config)
 options:
   scanconfig: true
   foreground: true
+  loglevel_all: "notice"
 schema:
   device: "device(subsystem=tty)"
-  port: "port?"
   latency: "int(0,10000)?"
   readonly: "bool?"
   foreground: "bool?"
   configpath: "str?"
   scanconfig: "bool?"
-  logareas: "list(main|network|bus|update|all)?"
-  loglevel: "list(error|notice|info|debug)?"
   mqtthost: "str?"
   mqttport: "int?"
   mqttuser: "str?"
@@ -36,5 +45,12 @@ schema:
   mqttjson: "bool?"
   mqttlog: "bool?"
   mqttretain: "bool?"
-map: 
-  - config
+  commandline_options: "str?"
+  http: "bool?"
+  accesslevel: "str?"
+  loglevel_all: "list(error|notice|info|debug)"
+  loglevel_network: "list(error|notice|info|debug)?"
+  loglevel_bus: "list(error|notice|info|debug)?"
+  loglevel_update: "list(error|notice|info|debug)?"
+  loglevel_main: "list(error|notice|info|debug)?"
+  custom_device: "str?"
