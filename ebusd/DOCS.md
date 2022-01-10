@@ -21,3 +21,7 @@ The steps **Build and Install are handled by this addon**. You'll need to **conf
 
 There are propably multiple ways using the different [ebusd clients](https://github.com/john30/ebusd/wiki/3.-Clients-and-commands).
 see also: [the official Mosquitto Broker](https://github.com/home-assistant/addons/blob/master/mosquitto/DOCS.md) as MQTT middleware
+
+## Custom CSV files:
+
+To use custom CSV config files you can use the configpath option. You can create a local copy of https://github.com/john30/ebusd-configuration in your "/config" folder and change configpath to e.g. "/config/ebusd-configuration/latest/en".  Custom CSV files must be in /config folder
