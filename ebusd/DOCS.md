@@ -24,4 +24,21 @@ see also: [the official Mosquitto Broker](https://github.com/home-assistant/addo
 
 ## Custom CSV files:
 
-To use custom CSV config files you can use the configpath option. You can create a local copy of https://github.com/john30/ebusd-configuration in your "/config" folder and change configpath to e.g. "/config/ebusd-configuration/latest/en".  Custom CSV files must be in /config folder
+To use custom CSV config files you can use the configpath option. You can create a local copy of https://github.com/john30/ebusd-configuration in your "/config" folder and change configpath to e.g. "/config/ebusd-configuration/latest/en".  Custom CSV files must be in the /config folder.
+
+## HTTP and TCP client Access
+
+To use HTTP and TCP clients enter port numbers into the add-on network settings and activated in the config.
+
+## Custom command line options
+
+You can add any command line options using the custom command line options field.  Check the eBUSd wiki for all available options - https://github.com/john30/ebusd/wiki/2.-Run
+
+For example ``` --initsend --dumpconfig```
+
+## BETA - Wireless eBUSd adapter support
+
+This release includes beta support for wireless eBUSd adapters.  This is just a proof of concept at this stage and will be improved in the next release.  To test wireless support enter the IP address into the custom device box. You must select a usb device to validate the config but it will be ignored at runtime
+
+For example ```enh:192.168.0.7:9999```
+
