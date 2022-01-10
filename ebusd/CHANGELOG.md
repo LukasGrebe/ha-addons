@@ -6,13 +6,14 @@
 - BREAKING: Remove TCP port option.  Port will default to port 8888 internally.  External port can be configured in network options
 
 - IMPROVE: Add access level config option
-- IMPROVE: Enable custom config files (save in share folder)
+- IMPROVE: Enable custom config files (save in config folder)
 - IMPROVE: Configure logger for individual areas
-- IMPROVE: Allow wireless ebusd adapter
 - IMPROVE: Add watchdog URL so Home Assistant can restart eBUSd if it crashes
 - IMPROVE: Allow  access with HTTP and TCP client
 - IMPROVE: Add MQTT retain option
 - IMPROVE: Add custom commandline options
+
+- BETA: Allow wireless ebusd adapter
 
 - TODO: Redraft docs
 - TODO: cleanup config options
