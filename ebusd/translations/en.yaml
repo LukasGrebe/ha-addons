@@ -40,7 +40,7 @@ configuration:
     description: All MQTT messages sent with retain flag
   commandline_options:
     name: Custom Commandline Options
-    description: Add any additional commandline options
+    description: Add any additional commandline options.  See eBUSd wiki for all available options https://github.com/john30/ebusd/wiki/2.-Run
   http:
     name: Enable HTTP access
     description: Enable HTTP client access
