@@ -1,6 +1,6 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
-## TBC
+## 0.83
 
 - BREAKING: Remove old style loglevel and logareas option
 - BREAKING: Remove TCP port option.  Port will default to port 8888 internally.  External port can be configured in network options
@@ -14,9 +14,6 @@
 - IMPROVE: Add custom commandline options
 
 - BETA: Allow wireless ebusd adapter
-
-- TODO: Redraft docs
-- TODO: cleanup config options
 
 ## 0.82
 
