@@ -15,7 +15,7 @@ arch:
 init: false
 startup: "system"
 services:
- - mqtt:need
+ - mqtt:want
 boot: "auto"
 watchdog: tcp://[HOST]:8888
 uart: true
