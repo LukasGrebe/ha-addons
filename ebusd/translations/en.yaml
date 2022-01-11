@@ -8,9 +8,6 @@ configuration:
   readonly:
     name: Read Only
     description: Only read from device, never write to it
-  foreground:
-    name: foreground
-    description: show output in supervisor log (required to keep running ebusd)
   configpath:
     name: Config Path
     description: Read CSV config files from custom path. You can create a local copy of https://github.com/john30/ebusd-configuration in your "/config" folder and change configpath to e.g. "/config/ebusd-configuration/latest/en" [http://ebusd.eu/config/]

@@ -2,8 +2,10 @@
 
 declare -a ebusd_args
 
+ebusd_args+=("--foreground")
+
 #boolean options
-declare options=( "readonly" "scanconfig" "foreground" "mqttjson" "mqttlog" "mqttretain")
+declare options=( "readonly" "scanconfig" "mqttjson" "mqttlog" "mqttretain")
 for optName in "${options[@]}"
 do
     if bashio::config.true ${optName}; then
@@ -47,11 +49,6 @@ fi
 #activate http
 if ! bashio::config.is_empty http; then
     ebusd_args+=" --httpport=8889"
-fi
-
-
-if bashio::config.false "foreground" || bashio::config.is_empty "foreground"; then
-    bashio::config.suggest.true "foreground" "ebusd add-on will stop if ebusd is not running in the foreground."
 fi
 
 echo "> ebusd ${ebusd_args[*]}"
