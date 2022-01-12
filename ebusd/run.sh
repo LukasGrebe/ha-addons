@@ -22,12 +22,19 @@ do
 done
 
 #device
-if ! bashio::config.is_empty custom_device; then
-    ebusd_args+=("--device=$(bashio::config custom_device)")
-else
+if bashio::config.has_value "device" && bashio::config.has_value "wireless_device"; then
+    bashio::log.warning "USB and wireless device defined.  Only one device can be used at a time."
+    bashio::log.warning "Ignoring USB device..."
+    ebusd_args+=("--device=$(bashio::config wireless_device)")
+elif bashio::config.has_value "device"; then
     ebusd_args+=("--device=$(bashio::config device)")
+elif bashio::config.has_value "wireless_device"; then
+    ebusd_args+=("--device=$(bashio::config wireless_device)")
+else
+    bashio::log.fatal "No wireless or USB device defined. Configure a device and restart addon"
+    # stop addon, ebusd will not run without defining a device
+    bashio::addon.stop
 fi
-
 
 #logging
 declare options=( "loglevel_all" "loglevel_main" "loglevel_bus" "loglevel_update" "loglevel_network")
