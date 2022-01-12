@@ -22,16 +22,16 @@ do
 done
 
 #device
-if bashio::config.has_value "device" && bashio::config.has_value "wireless_device"; then
-    bashio::log.warning "USB and wireless device defined.  Only one device can be used at a time."
+if bashio::config.has_value "device" && bashio::config.has_value "network_device"; then
+    bashio::log.warning "USB and network device defined.  Only one device can be used at a time."
     bashio::log.warning "Ignoring USB device..."
-    ebusd_args+=("--device=$(bashio::config wireless_device)")
+    ebusd_args+=("--device=$(bashio::config network_device)")
 elif bashio::config.has_value "device"; then
     ebusd_args+=("--device=$(bashio::config device)")
-elif bashio::config.has_value "wireless_device"; then
-    ebusd_args+=("--device=$(bashio::config wireless_device)")
+elif bashio::config.has_value "network_device"; then
+    ebusd_args+=("--device=$(bashio::config network_device)")
 else
-    bashio::log.fatal "No wireless or USB device defined. Configure a device and restart addon"
+    bashio::log.fatal "No network or USB device defined. Configure a device and restart addon"
     # stop addon, ebusd will not run without defining a device
     bashio::addon.stop
 fi

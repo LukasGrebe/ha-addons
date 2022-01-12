@@ -2,7 +2,7 @@
 
 ## 0.84
 
-- IMPROVE: Improve configuration of wireless adapters.  Check release notes as config has changed.
+- IMPROVE: Improve configuration of network eBUSd adapters.  Check release notes as config has changed.
 - BREAKING: Config option name has changed.  custom_device changed to wireless_device
 
 ## 0.83

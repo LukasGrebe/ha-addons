@@ -53,4 +53,4 @@ schema:
   loglevel_bus: "list(error|notice|info|debug)?"
   loglevel_update: "list(error|notice|info|debug)?"
   loglevel_main: "list(error|notice|info|debug)?"
-  wireless_device: "str?"
+  network_device: "str?"

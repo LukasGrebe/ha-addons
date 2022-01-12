@@ -62,6 +62,6 @@ configuration:
   loglevel_main:
     name: Log level for main messages 
     description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
-  wireless_device:
-    name: Wireless adapter address i.e enh:192.168.0.7:9999
-    description: Use this option to for wireless eBUSd adapters ("enh:IP:PORT" for enhanced device or "[udp:]IP:PORT" for network device)
+  network_device:
+    name: Network adapter address i.e enh:192.168.0.7:9999
+    description: Use this option to for network eBUSd adapters ("enh:IP:PORT" for enhanced device or "[udp:]IP:PORT" for network device)
