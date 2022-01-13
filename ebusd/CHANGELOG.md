@@ -3,8 +3,11 @@
 ## 0.84 (not yet released)
 
 - IMPROVE: Add Polish translation (@pepsonEL)
+
+- BREAKING: Remove foreground option
 - IMPROVE: Improve configuration of network eBUSd adapters.  Check release notes as config has changed.
 - BREAKING: Config option name has changed.  custom_device changed to wireless_device
+
 
 ## 0.83
 

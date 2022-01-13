@@ -29,13 +29,11 @@ ports_description:
   8889/tcp: HTTP client port (HTTP must be activated in config)
 options:
   scanconfig: true
-  foreground: true
   loglevel_all: "notice"
 schema:
   device: "device(subsystem=tty)?"
   latency: "int(0,10000)?"
   readonly: "bool?"
-  foreground: "bool?"
   configpath: "str?"
   scanconfig: "bool?"
   mqtthost: "str?"
