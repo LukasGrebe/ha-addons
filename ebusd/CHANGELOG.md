@@ -1,5 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## 0.84 (not yet released)
+
+- IMPROVE: Add Polish translation (@pepsonEL)
+
 ## 0.83
 
 - BREAKING: Remove old style loglevel and logareas option
