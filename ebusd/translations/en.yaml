@@ -1,7 +1,7 @@
 configuration:
   device:
-    name: Device
-    description: -d, --device=DEV Use DEV as eBUS device ("enh:DEVICE" or "enh:IP:PORT" for enhanced device,"DEVICE" for serial device, or "[udp:]IP:PORT" for network device) [/dev/ttyUSB0]
+    name: USB Device
+    description: Use this option for USB eBUSd adapters
   latency:
     name: Latency
     description: ebusd --latency=MSEC Transfer latency in ms [0 for USB, 10 for IP]
@@ -59,6 +59,6 @@ configuration:
   loglevel_main:
     name: Log level for main messages 
     description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
-  custom_device:
-    name: Custom device e.g. ip address of wireless adapter
-    description: Use this option if your device is not listed in the config options
+  network_device:
+    name: Network adapter address i.e enh:192.168.0.7:9999
+    description: Use this option to for network eBUSd adapters ("enh:IP:PORT" for enhanced device or "[udp:]IP:PORT" for network device)
