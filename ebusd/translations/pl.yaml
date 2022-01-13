@@ -1,7 +1,7 @@
 configuration:
   device:
-    name: Urządzenie
-    description: -d, --device=DEV Użyj DEV jako urządzenia eBUS ("enh:DEVICE" lub "enh:IP:PORT" dla zaawansowanego urządzenia,"DEVICE" dla urządzenia serial, lub "[udp:]IP:PORT" dla urządzenia sieciowego) [/dev/ttyUSB0]
+    name: Urządzenie USB
+    description: Użyj tej opcji dla adapterów USB eBUSd
   latency:
     name: Czas oczekiwania
     description: ebusd --latency=MSEC Opóźnienie transferu w ms [0 dla USB, 10 dla IP]
