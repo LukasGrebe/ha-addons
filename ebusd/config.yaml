@@ -1,5 +1,5 @@
 name: eBUSd
-version: "0.83"
+version: "0.83.6"
 slug: ebusd
 description: >
   This Add-on runs eBUSd, a daemon for handling communication with eBUS devices
@@ -32,7 +32,7 @@ options:
   foreground: true
   loglevel_all: "notice"
 schema:
-  device: "device(subsystem=tty)"
+  device: "device(subsystem=tty)?"
   latency: "int(0,10000)?"
   readonly: "bool?"
   foreground: "bool?"
@@ -53,4 +53,4 @@ schema:
   loglevel_bus: "list(error|notice|info|debug)?"
   loglevel_update: "list(error|notice|info|debug)?"
   loglevel_main: "list(error|notice|info|debug)?"
-  custom_device: "str?"
+  network_device: "str?"
