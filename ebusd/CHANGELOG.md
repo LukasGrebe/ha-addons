@@ -1,8 +1,10 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
-## 0.84
+## 0.84 (not yet released)
 
+- IMPROVE: Add Polish translation (@pepsonEL)
 - BREAKING: Remove foreground option
+
 
 ## 0.83
 
