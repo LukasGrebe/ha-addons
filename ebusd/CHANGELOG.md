@@ -1,12 +1,12 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
-## 0.84 (not yet released)
+## 0.84
 
 - IMPROVE: Add Polish translation (@pepsonEL)
+- IMPROVE: Improve configuration of network eBUSd adapters.
 
-- BREAKING: Remove foreground option
-- IMPROVE: Improve configuration of network eBUSd adapters.  Check release notes as config has changed.
-- BREAKING: Config option name has changed.  custom_device changed to wireless_device
+- BREAKING: Remove foreground option.  eBUSd will now run in foreground by default.
+- BREAKING: Network device config has changed.  Custom_device has now changed to wireless_device
 
 
 ## 0.83
