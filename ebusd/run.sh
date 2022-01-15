@@ -39,7 +39,7 @@ else
 fi
 
 #logging
-declare options=( "loglevel_all" "loglevel_main" "loglevel_bus" "loglevel_update" "loglevel_network")
+declare options=( "loglevel_all" "loglevel_main" "loglevel_bus" "loglevel_update" "loglevel_network" "loglevel_mqtt")
 for optName in "${options[@]}"
 do
     if ! bashio::config.is_empty ${optName}; then
