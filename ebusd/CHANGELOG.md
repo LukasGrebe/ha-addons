@@ -1,5 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## Next release
+
+ - IMPROVE: Configure MQTT log level
+
 ## 0.84
 
 - IMPROVE: Add Polish translation (@pepsonEL)

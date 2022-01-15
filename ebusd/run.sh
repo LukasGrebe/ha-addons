@@ -1,8 +1,19 @@
 #!/usr/bin/with-contenv bashio
 
+
+
+MQTT_HOST=$(bashio::services mqtt "host")
+MQTT_USER=$(bashio::services mqtt "username")
+MQTT_PASSWORD=$(bashio::services mqtt "password")
+MQTT_PORT=$(bashio::services mqtt "port")
+
 declare -a ebusd_args
 
 ebusd_args+=("--foreground")
+ebusd_args+=("--mqtthost=$MQTT_HOST")
+ebusd_args+=("--mqttuser=$MQTT_USER")
+ebusd_args+=("--mqttpass=$MQTT_PASSWORD")
+ebusd_args+=("--mqttport=$MQTT_PORT")
 
 #boolean options
 declare options=( "readonly" "scanconfig" "mqttjson" "mqttlog" "mqttretain")
@@ -14,7 +25,7 @@ do
 done
 
 #string options
-declare options=( "configpath" "port" "latency" "mqtthost" "mqttport" "mqttuser" "mqttpass" "accesslevel")
+declare options=( "configpath" "port" "latency" "accesslevel")
 
 for optName in "${options[@]}"
 do
@@ -39,7 +50,7 @@ else
 fi
 
 #logging
-declare options=( "loglevel_all" "loglevel_main" "loglevel_bus" "loglevel_update" "loglevel_network")
+declare options=( "loglevel_all" "loglevel_main" "loglevel_bus" "loglevel_update" "loglevel_network" "loglevel_mqtt")
 for optName in "${options[@]}"
 do
     if ! bashio::config.is_empty ${optName}; then
