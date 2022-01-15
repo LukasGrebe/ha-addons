@@ -9,18 +9,20 @@ This is to run [ebusd](http://ebusd.eu) as supervisor addon (docker container) i
 Deep dive into the [ebusd Wiki](https://github.com/john30/ebusd/wiki).
 The steps **Build and Install are handled by this addon**. You'll need to **configure the options in this addon to run** ebusd.
 
-1. Connect a [hardware interface](https://github.com/john30/ebusd/wiki/6.-Hardware) to your raspberryPi runing Home Assistant OS. (_maybe also other settups running supervisor_)
-2. Configure [Comandline Options](https://github.com/john30/ebusd/wiki/2.-Run) in the Addon Settings
-  <img width="400" alt="Bildschirmfoto 2021-10-07 um 21 54 37" src="https://user-images.githubusercontent.com/1786188/136459269-1976afc2-c572-47cd-84fd-cf002cbc48c5.png">
-
-3. Start the Add-on and check the output logs
+1. Connect a [hardware interface](https://github.com/john30/ebusd/wiki/6.-Hardware) to your device runing Home Assistant OS. USB and network devices are supported.
+2. Define either a USB or network device.  Seperate configuration entries are available via the UI or can be configured manually using ```device: /dev/ttyAMA0``` or ```network_device: enh:192.158.0.7:9999```
+3. It is recommended to configure MQTT but TCP and HTTP client acces is also available.
+4. Start the Add-on and check the output logs
   <img width="512" alt="Bildschirmfoto 2021-10-07 um 21 54 10" src="https://user-images.githubusercontent.com/1786188/136459050-16ab7c10-0fe0-40ff-b20d-b6eb1730630d.png">
 
 
 ## How to get data into Home Assistant
 
-There are propably multiple ways using the different [ebusd clients](https://github.com/john30/ebusd/wiki/3.-Clients-and-commands).
-see also: [the official Mosquitto Broker](https://github.com/home-assistant/addons/blob/master/mosquitto/DOCS.md) as MQTT middleware
+You can communicate with eBUSd using either MQTT, TCP or HTTP clients.  To use TCP or HTTP clients you will need to configure external port numbers in the network config section.  For a list of clients and commands see the [eBUSd wiki](https://github.com/john30/ebusd/wiki/3.-Clients-and-commands).
+
+**Top tip:** If you send an MQTT get message with payload "?1" eBUSd will automatically poll that reading every 30 seconds and publish via MQTT 
+
+For example: ```mosquitto_pub -t ebusd/bai/FlowTemp/get -m ?1```
 
 ## Custom CSV files:
 
@@ -36,9 +38,9 @@ You can add any command line options using the custom command line options field
 
 For example ``` --initsend --dumpconfig```
 
-## BETA - Wireless eBUSd adapter support
+## Network eBUSd adapter support
 
-This release includes beta support for wireless eBUSd adapters.  This is just a proof of concept at this stage and will be improved in the next release.  To test wireless support enter the IP address into the custom device box. You must select a usb device to validate the config but it will be ignored at runtime
+This release now fully supports wireless/network eBUSd adapters.  The configuration options has changed from custom_device to network_device.
 
-For example ```enh:192.168.0.7:9999```
+For example ```network_device: enh:192.168.0.7:9999```
 
