@@ -4,6 +4,7 @@
 
 - IMPROVE: Automatically configure MQTT
 - IMPROVE: Add MQTT log configuration option
+- IMPROVE: Use precompiled eBUSd
 
 ## 0.84
 
