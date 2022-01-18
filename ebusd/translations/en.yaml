@@ -14,6 +14,18 @@ configuration:
   scanconfig:
     name: Scan Config
     description: Pick CSV config files matching initial scan (ADDR="none" or empty for no initial scan message "full" for full scan, or a single hex address to scan, default is to send a broadcast ident message).
+  mqtthost:
+    name: MQTT Host
+    description: Connect to MQTT broker on HOST [localhost]
+  mqttport:
+    name: MQTT serverPort
+    description: Connect to MQTT broker on PORT (usually 1883), 0 to disable [0]
+  mqttuser:
+    name: MQTT User
+    description: Connect as USER to MQTT broker (no default)
+  mqttpass:
+    name: MQTT Password
+    description: Use PASSWORD when connecting to MQTT broker (no default)
   mqttjson:
     name: MQTT Json
     description: Publish in JSON format instead of strings
@@ -24,7 +36,7 @@ configuration:
     name: MQTT Retain
     description: All MQTT messages sent with retain flag
   commandline_options:
-    name: Custom Command Line Options
+    name: Custom Commandline Options
     description: Add any additional commandline options.  See eBUSd wiki for all available options https://github.com/john30/ebusd/wiki/2.-Run
   http:
     name: Enable HTTP access
