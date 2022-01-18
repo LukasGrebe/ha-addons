@@ -1,32 +1,16 @@
 ARG BUILD_FROM
-FROM $BUILD_FROM as builder
+FROM $BUILD_FROM
 
 ENV LANG C.UTF-8
 
-RUN apk add --no-cache \
-    build-base \
-    argp-standalone \
-    git \
-    mosquitto-dev \
-    cmake
+RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/testing" \
+    >> /etc/apk/repositories
+RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" \
+    >> /etc/apk/repositories
 
-WORKDIR /build
-
-RUN git clone https://github.com/john30/ebusd.git /build && cmake . && make
-
-FROM $BUILD_FROM
+RUN apk -U add --no-cache ebusd
 
 LABEL Description="ebusd"
-
-RUN apk add --no-cache \
-    build-base \
-    argp-standalone \
-    mosquitto-dev
-
-COPY --from=builder /build/src/ebusd/ebusd /usr/local/bin/ebusd
-COPY --from=builder /build/src/tools/ebusctl /usr/local/bin/ebusctl
-
-WORKDIR /
 
 COPY run.sh /
 RUN chmod a+x /run.sh
