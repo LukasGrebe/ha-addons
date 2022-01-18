@@ -2,9 +2,16 @@
 
 declare -a ebusd_args
 
+#Alwatys run in the foreground
 ebusd_args+=("--foreground")
 
-#boolean options
+#MQTT
+ebusd_args+=("--mqtthost=$(bashio::services mqtt 'host')")
+ebusd_args+=("--mqttuser=$(bashio::services mqtt 'username')")
+ebusd_args+=("--mqttpass=$(bashio::services mqtt 'password')")
+ebusd_args+=("--mqttport=$(bashio::services mqtt 'port')")
+
+#Boolean options
 declare options=( "readonly" "scanconfig" "mqttjson" "mqttlog" "mqttretain")
 for optName in "${options[@]}"
 do
@@ -13,8 +20,8 @@ do
     fi
 done
 
-#string options
-declare options=( "configpath" "port" "latency" "mqtthost" "mqttport" "mqttuser" "mqttpass" "accesslevel")
+#String options
+declare options=( "configpath" "port" "latency" "accesslevel")
 
 for optName in "${options[@]}"
 do
@@ -23,7 +30,7 @@ do
     fi
 done
 
-#device
+#Device selection
 if bashio::config.has_value "device" && bashio::config.has_value "network_device"; then
     bashio::log.warning "USB and network device defined.  Only one device can be used at a time."
     bashio::log.warning "Ignoring USB device..."

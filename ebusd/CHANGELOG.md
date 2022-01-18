@@ -2,6 +2,7 @@
 
 ## Next release
 
+- IMPROVE: Automatically configure MQTT
 - IMPROVE: Add MQTT log configuration option
 
 ## 0.84
