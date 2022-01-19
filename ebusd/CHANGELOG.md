@@ -1,6 +1,6 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
-## Next release
+## 0.85
 
 - IMPROVE: Automatically configure MQTT
 - IMPROVE: Add MQTT log configuration option
