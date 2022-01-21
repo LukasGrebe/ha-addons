@@ -53,3 +53,15 @@ configuration:
   network_device:
     name: Network adapter address i.e enh:192.168.0.7:9999
     description: Use this option to for network eBUSd adapters ("enh:IP:PORT" for enhanced device or "[udp:]IP:PORT" for network device)
+  mqtthost:
+    name: MQTT Host
+    description: Connect to MQTT broker on HOST [localhost]
+  mqttport:
+    name: MQTT serverPort
+    description: Connect to MQTT broker on PORT (usually 1883), 0 to disable [0]
+  mqttuser:
+    name: MQTT User
+    description: Connect as USER to MQTT broker (no default)
+  mqttpass:
+    name: MQTT Password
+    description: Use PASSWORD when connecting to MQTT broker (no default)
