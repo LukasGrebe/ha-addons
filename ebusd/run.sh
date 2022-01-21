@@ -6,10 +6,29 @@ declare -a ebusd_args
 ebusd_args+=("--foreground")
 
 #MQTT
-ebusd_args+=("--mqtthost=$(bashio::services mqtt 'host')")
-ebusd_args+=("--mqttuser=$(bashio::services mqtt 'username')")
-ebusd_args+=("--mqttpass=$(bashio::services mqtt 'password')")
-ebusd_args+=("--mqttport=$(bashio::services mqtt 'port')")
+if bashio::config.has_value "mqtthost"; then
+    ebusd_args+=("--mqtthost=$(bashio::config mqtthost)")
+else
+    ebusd_args+=("--mqtthost=$(bashio::services mqtt 'host')")
+fi
+
+if bashio::config.has_value "mqttport"; then
+    ebusd_args+=("--mqttport=$(bashio::config mqttport)")
+else
+    ebusd_args+=("--mqttport=$(bashio::services mqtt 'port')")
+fi
+
+if bashio::config.has_value "mqttuser"; then
+    ebusd_args+=("--mqttuser=$(bashio::config mqttuser)")
+else
+    ebusd_args+=("--mqttuser=$(bashio::services mqtt 'username')")
+fi
+
+if bashio::config.has_value "mqttpass"; then
+    ebusd_args+=("--mqttpass=$(bashio::config mqttpass)")
+else
+    ebusd_args+=("--mqttpass=$(bashio::services mqtt 'password')")
+fi
 
 #Boolean options
 declare options=( "readonly" "scanconfig" "mqttjson" "mqttlog" "mqttretain")

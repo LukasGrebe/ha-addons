@@ -1,5 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## 0.86
+
+- IMPROVE: Add option to manually configure MQTT
+
 ## 0.85
 
 - IMPROVE: Automatically configure MQTT
