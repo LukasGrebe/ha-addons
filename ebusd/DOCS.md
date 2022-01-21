@@ -11,7 +11,7 @@ The steps **Build and Install are handled by this addon**. You'll need to **conf
 
 1. Connect a [hardware interface](https://github.com/john30/ebusd/wiki/6.-Hardware) to your device runing Home Assistant OS. USB and network devices are supported.
 2. Define either a USB or network device.  Seperate configuration entries are available via the UI or can be configured manually using ```device: /dev/ttyAMA0``` or ```network_device: enh:192.158.0.7:9999```
-3. MQTT will be configured automatically but TCP and HTTP client acces is also available.
+3. MQTT will be configured automatically to use the Home Assitant MQTT Broker.  This can be overridden in the config options if you would prefer to use an external MQTT server.  TCP and HTTP client acces is also available.
 4. Start the Add-on and check the output logs
   <img width="512" alt="Bildschirmfoto 2021-10-07 um 21 54 10" src="https://user-images.githubusercontent.com/1786188/136459050-16ab7c10-0fe0-40ff-b20d-b6eb1730630d.png">
 
