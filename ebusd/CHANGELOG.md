@@ -3,6 +3,7 @@
 ## Next release
 
 - IMPROVE: Improve logic in run.sh
+- IMPROVE: Add apparmour.txt
 
 ## 0.86
 
