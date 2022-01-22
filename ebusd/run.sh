@@ -2,7 +2,7 @@
 
 declare -a ebusd_args
 
-#Alwatys run in the foreground
+#Always run in the foreground
 ebusd_args+=("--foreground")
 
 #MQTT
@@ -44,7 +44,7 @@ declare options=( "configpath" "port" "latency" "accesslevel")
 
 for optName in "${options[@]}"
 do
-    if ! bashio::config.is_empty ${optName}; then
+    if bashio::config.has_value ${optName}; then
         ebusd_args+=("--${optName}=$(bashio::config ${optName})")
     fi
 done
@@ -60,27 +60,27 @@ elif bashio::config.has_value "network_device"; then
     ebusd_args+=("--device=$(bashio::config network_device)")
 else
     bashio::log.fatal "No network or USB device defined. Configure a device and restart addon"
-    # stop addon, ebusd will not run without defining a device
+    #Stop addon, ebusd will not run without defining a device
     bashio::addon.stop
 fi
 
-#logging
+#Logging
 declare options=( "loglevel_all" "loglevel_main" "loglevel_bus" "loglevel_update" "loglevel_network" "loglevel_mqtt")
 for optName in "${options[@]}"
 do
-    if ! bashio::config.is_empty ${optName}; then
+    if bashio::config.has_value ${optName}; then
         ebusd_args+=("--log=$(echo $optName | sed 's/loglevel_//g'):$(bashio::config ${optName})")
     fi
 done
 
 
-#add additional options
-if ! bashio::config.is_empty commandline_options; then
+#Add additional options
+if bashio::config.has_value commandline_options; then
     ebusd_args+=("$(bashio::config commandline_options)")
 fi
 
-#activate http
-if ! bashio::config.is_empty http; then
+#Activate http
+if bashio::config.true http; then
     ebusd_args+=" --httpport=8889"
 fi
 
