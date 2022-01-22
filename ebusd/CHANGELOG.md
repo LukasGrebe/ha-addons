@@ -1,5 +1,10 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## Next release
+
+- IMPROVE: Improve logic in run.sh
+- IMPROVE: Add apparmor.txt
+
 ## 0.86
 
 - IMPROVE: Add option to manually configure MQTT

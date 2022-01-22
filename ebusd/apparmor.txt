@@ -1,0 +1,26 @@
+#include <tunables/global>
+profile ebusd flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  
+  # Capabilities
+  file, signal,
+  # S6-Overlay
+  /init rix, /bin/** ix, /usr/bin/** ix, /etc/s6/** rix, /run/s6/** 
+  rwix, /etc/services.d/** rwix, /etc/cont-init.d/** rwix, 
+  /etc/cont-finish.d/** rwix, /run/** rwk,
+  # Bashio
+  /usr/lib/bashio/** ix, /tmp/** rw,
+  # Access to options.json and other files within your addon
+  /data/** rw,
+  
+  # Start new profile for service
+  /usr/bin/myprogram cx,
+  
+  profile /usr/bin/ebusd flags=(attach_disconnected,mediate_deleted) 
+  {
+    #include <abstractions/base>
+    
+    # Receive signals from S6-Overlay
+    signal receive,
+  }
+}
