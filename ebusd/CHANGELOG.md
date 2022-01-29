@@ -1,6 +1,6 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
-## Next release
+## 0.87
 
 - IMPROVE: Add poll interval option
 - IMPROVE: Improve option descriptions
