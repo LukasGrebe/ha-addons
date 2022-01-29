@@ -2,7 +2,10 @@
 
 ## Next release
 
+- IMPROVE: Add poll interval option
+- IMPROVE: Improve option descriptions
 - IMPROVE: Improve logic in run.sh
+- FIX: Change MQTT log area to OTHER
 
 ## 0.86
 

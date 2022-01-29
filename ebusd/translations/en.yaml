@@ -3,65 +3,68 @@ configuration:
     name: USB Device
     description: Use this option for USB eBUSd adapters
   latency:
-    name: Latency
+    name: "Latency in MSEC (default: 0 for USB, 10 for IP)"
     description: ebusd --latency=MSEC Transfer latency in ms [0 for USB, 10 for IP]
   readonly:
-    name: Read Only
+    name: "Read Only (default: off)"
     description: Only read from device, never write to it
   configpath:
-    name: Config Path
+    name: Config Path (/config/...)
     description: Read CSV config files from custom path. You can create a local copy of https://github.com/john30/ebusd-configuration in your "/config" folder and change configpath to e.g. "/config/ebusd-configuration/latest/en" [http://ebusd.eu/config/]
   scanconfig:
-    name: Scan Config
+    name: "Scan Config (default: on)"
     description: Pick CSV config files matching initial scan (ADDR="none" or empty for no initial scan message "full" for full scan, or a single hex address to scan, default is to send a broadcast ident message).
   mqttjson:
-    name: MQTT Json
+    name: "MQTT JSON (default: off)"
     description: Publish in JSON format instead of strings
   mqttlog:
-    name: MQTT Log
+    name: "MQTT Log (default: off)"
     description: Log library events
   mqttretain:
-    name: MQTT Retain
+    name: "MQTT Retain (default: off)"
     description: All MQTT messages sent with retain flag
   commandline_options:
     name: Custom Command Line Options
     description: Add any additional commandline options.  See eBUSd wiki for all available options https://github.com/john30/ebusd/wiki/2.-Run
   http:
-    name: Enable HTTP access
+    name: "Enable HTTP access (default: off)"
     description: Enable HTTP client access
   accesslevel:
     name: Access Level
-    description: Set default access level(s) to LEVEL ("*" for everything, multiple levels separated by comma)
+    description: Set default access level(s) to (e.g. "*" for everything)
   loglevel_all:
-    name: Log level for all messages 
-    description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
+    name: "Log level for all messages (default: notice)"
+    description: Set log level for all messages.
   loglevel_network:
     name: Log level for network messages 
-    description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
+    description: Set log level for all messages.
   loglevel_update:
     name: Log level for update messages 
-    description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
+    description: Set log level for update messages.
   loglevel_bus:
     name: Log level for bus messages 
-    description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
+    description: Set log level for bus messages.
   loglevel_main:
     name: Log level for main messages 
-    description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
-  loglevel_mqtt:
-    name: Log level for MQTT messages 
-    description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
+    description: Set log level for main messages
+  loglevel_other:
+    name: Log level for other messages (incl MQTT) 
+    description: Set log level for other messages
   network_device:
     name: Network adapter address i.e enh:192.168.0.7:9999
     description: Use this option to for network eBUSd adapters ("enh:IP:PORT" for enhanced device or "[udp:]IP:PORT" for network device)
   mqtthost:
-    name: MQTT Host
-    description: Connect to MQTT broker on HOST [localhost]
+    name: "MQTT Host (default: blank for autoconfigure)"
+    description: Override automatically configured MQTT host
   mqttport:
-    name: MQTT serverPort
-    description: Connect to MQTT broker on PORT (usually 1883), 0 to disable [0]
+    name: "MQTT Server Port (default: blank for autoconfigure)"
+    description: Override automatically configured MQTT port, 0 to disable
   mqttuser:
-    name: MQTT User
-    description: Connect as USER to MQTT broker (no default)
+    name: "MQTT Username (default: blank for autoconfigure)"
+    description: Override automatically configured MQTT username
   mqttpass:
-    name: MQTT Password
-    description: Use PASSWORD when connecting to MQTT broker (no default)
+    name: "MQTT Password (default: blank for autoconfigure)"
+    description: Override automatically configured MQTT password
+  pollinterval:
+    name: "Poll for data every seconds (default: 5)"
+    description: Poll for data every SEC seconds (0=disable)
