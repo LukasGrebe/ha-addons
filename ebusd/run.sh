@@ -40,7 +40,7 @@ do
 done
 
 #String options
-declare options=( "configpath" "port" "latency" "accesslevel")
+declare options=( "configpath" "port" "latency" "accesslevel" "pollinterval")
 
 for optName in "${options[@]}"
 do
@@ -65,7 +65,7 @@ else
 fi
 
 #Logging
-declare options=( "loglevel_all" "loglevel_main" "loglevel_bus" "loglevel_update" "loglevel_network" "loglevel_mqtt")
+declare options=( "loglevel_all" "loglevel_main" "loglevel_bus" "loglevel_update" "loglevel_network" "loglevel_other")
 for optName in "${options[@]}"
 do
     if bashio::config.has_value ${optName}; then
