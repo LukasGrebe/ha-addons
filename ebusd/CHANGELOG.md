@@ -5,6 +5,7 @@
 - IMPROVE: Add poll interval option
 - IMPROVE: Improve option descriptions
 - IMPROVE: Improve logic in run.sh
+- IMPROVE: Add apparmour.txt
 - FIX: Change MQTT log area to OTHER
 
 ## 0.86
