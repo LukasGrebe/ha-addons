@@ -1,13 +1,15 @@
 # ha-addons
 Addons for http://home-assistant.io
 
+Created by @LukasGrebe.  Improved and maintained by @tim-devel
 
 ## How to Install
 1. In Supervisor go to the Add-on Store,
 2. In the overflow menu click "Repositories"
 3. Add `https://github.com/LukasGrebe/ha-addons/`
 4. Wait for the ebusd Add-on to show up or click reload in the same overflow menu
-5. Follow Documentation, Setup and Install of the Add-on
+5. Install eBUSd.  eBUSd Edge is also available if you want to be on the bleeding edge.  PLEASE NOTE: eBUSd Edge is untested and may be broken.
+6. Follow Documentation, Setup and Install of the Add-on
 
 
 ## [ebusd](https://github.com/LukasGrebe/ha-addons/tree/main/ebusd) 
@@ -22,6 +24,7 @@ Thank you to
 - https://github.com/m-reuter
 - https://github.com/john30
 - https://github.com/ludeeus
+- Https://github.com/tim-devel
 
 And thanks to you for your interest in this project! If it is of any use to you, you can buy me a coffee:
 https://www.paypal.com/paypalme/lukasgrebe
