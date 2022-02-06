@@ -22,6 +22,9 @@ See [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#how-t
 - via Issues and pull requests in the Github repository
 
 ### Updating the Edge add-on
+
+To update eBUSd to latest sources only: **Supervisor → Dashboard → eBUSd Edge → Rebuild**
+
 To update the `edge` version of the add-on, you will need to uninstall and re-install the add-on.
 
 ⚠️ Make sure to backup your config as the procedure will not save this for you.
