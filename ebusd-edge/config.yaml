@@ -1,0 +1,56 @@
+name: eBUSd Edge
+version: "edge"
+slug: ebusd_edge
+description: >
+  This Add-on runs eBUSd, a daemon for handling communication with eBUS devices
+  connected to a 2-wire bus system (“energy bus” used by numerous heating systems)
+  USB and network eBUSd adapters are supported.
+url: https://community.home-assistant.io/t/an-ebusd-add-on/344852
+arch:
+  - armhf
+  - armv7
+  - aarch64
+  - amd64
+  - i386
+init: false
+startup: "system"
+services:
+ - mqtt:need
+boot: "auto"
+watchdog: tcp://[HOST]:8888
+uart: true
+map:
+ - config
+ports:
+  8888/tcp: null
+  8889/tcp: null
+ports_description:
+  8888/tcp: TCP client port
+  8889/tcp: HTTP client port (HTTP must be activated in config)
+options:
+  scanconfig: true
+  loglevel_all: "notice"
+schema:
+  device: "device(subsystem=tty)?"
+  network_device: "str?"
+  latency: "int(0,10000)?"
+  pollinterval: "int(0,3600)?"
+  http: "bool?"
+  readonly: "bool?"
+  scanconfig: "bool?"
+  configpath: "str?"
+  commandline_options: "str?"
+  accesslevel: "str?"
+  loglevel_all: "list(error|notice|info|debug)?"
+  loglevel_network: "list(error|notice|info|debug)?"
+  loglevel_bus: "list(error|notice|info|debug)?"
+  loglevel_update: "list(error|notice|info|debug)?"
+  loglevel_main: "list(error|notice|info|debug)?"
+  loglevel_other: "list(error|notice|info|debug)?"
+  mqtthost: "str?" 
+  mqttport: "int?"
+  mqttuser: "str?"
+  mqttpass: "str?"
+  mqttjson: "bool?"
+  mqttlog: "bool?"
+  mqttretain: "bool?"
