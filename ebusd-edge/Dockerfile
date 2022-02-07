@@ -12,7 +12,9 @@ RUN git clone https://github.com/john30/ebusd.git && \
 	  -DCMAKE_BUILD_TYPE=MinSizeRel \
           -DBUILD_TESTING=ON && \
     cmake --build build && \
-    cmake --install build
+    cmake --install build && \
+    mkdir /etc/ebusd && \
+    cp contrib/etc/ebusd/mqtt*.cfg /etc/ebusd/
 
 LABEL Description="eBUSd edge"
 
