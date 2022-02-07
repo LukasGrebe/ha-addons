@@ -15,7 +15,7 @@ configuration:
     name: "Scan Config (default: on)"
     description: Pick CSV config files matching initial scan (ADDR="none" or empty for no initial scan message "full" for full scan, or a single hex address to scan, default is to send a broadcast ident message).
   mqttjson:
-    name: "MQTT JSON (default: off)"
+    name: "MQTT JSON (default: on)"
     description: Publish in JSON format instead of strings
   mqttlog:
     name: "MQTT Log (default: off)"

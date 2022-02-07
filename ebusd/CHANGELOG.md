@@ -1,11 +1,12 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
-## Nexr release
+## Next release
 
 - IMPROVE: Include MQTT integration cfg files in edge build
 - IMPROVE: Add mqttint option
 - IMPROVE: Add mqtttopic option
 - IMPROVE: Add mqttvar option
+- IMPROVE: Enable MQTT discovery by default
 
 ## 0.87
 

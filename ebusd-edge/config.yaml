@@ -30,7 +30,9 @@ ports_description:
 options:
   scanconfig: true
   loglevel_all: "notice"
-  mqtttopic: ebusd
+  mqtttopic: "ebusd"
+  mqttint: "/etc/ebusd/mqtt-hassio.cfg"
+  mqttjson: true
 schema:
   device: "device(subsystem=tty)?"
   network_device: "str?"
