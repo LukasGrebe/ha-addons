@@ -4,6 +4,8 @@
 
 - IMPROVE: Include MQTT integration cfg files in edge build
 - IMPROVE: Add mqttint option
+- IMPROVE: Add mqtttopic option
+- IMPROVE: Add mqttvar option
 
 ## 0.87
 

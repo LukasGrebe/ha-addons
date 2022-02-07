@@ -71,3 +71,9 @@ configuration:
   pollinterval:
     name: "Poll for data every seconds (default: 5)"
     description: Poll for data every SEC seconds (0=disable)
+  mqttvar:
+    name: Add variable(s) to the read MQTT integration settings.
+    description: Add variable(s) to the read MQTT integration settings.
+  mqtttopic:
+    name: "MQTT topic (default: ebusd)"
+    description: MQTT topic
