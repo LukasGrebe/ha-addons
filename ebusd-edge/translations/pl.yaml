@@ -1,0 +1,67 @@
+configuration:
+  device:
+    name: Urządzenie USB
+    description: Użyj tej opcji dla adapterów USB eBUSd
+  latency:
+    name: Czas oczekiwania
+    description: ebusd --latency=MSEC Opóźnienie transferu w ms [0 dla USB, 10 dla IP]
+  readonly:
+    name: Tylko odczyt
+    description: Tylko odczytuj z urządzenia, nigdy nie zapisuj do niego
+  foreground:
+    name: Na pierwszym planie
+    description: Pokaż dane wyjściowe w dzienniku Supervisor (wymagane do dalszego działania ebusd)
+  configpath:
+    name: Ścieżka konfiguracji
+    description: Czytaj pliki konfiguracyjne CSV z niestandardowej ścieżki. Możesz utworzyć lokalną kopię https://github.com/john30/ebusd-configuration w Twoim folderze "/config" i zmień ścieżkę konfiguracji na np. "/config/ebusd-configuration/latest/en" [http://ebusd.eu/config/]
+  scanconfig:
+    name: Skanowanie konfiguracji
+    description: Wybierz pliki konfiguracyjne CSV pasujące do wstępnego skanowania (ADDR="none" lub puste, jeśli nie ma początkowej wiadomości o skanowaniu "full" dla pełnego skanowania, lub pojedynczy adres szesnastkowy do skanowania, domyślnie wysyłana jest wiadomość z identyfikatorem rozgłoszeniowym).
+  mqtthost:
+    name: MQTT Host
+    description: Połącz się z brokerem MQTT na HOSCIE [localhost]
+  mqttport:
+    name: MQTT port serwera
+    description: Połącz się z brokerem MQTT na PORCIE (zwykle 1883), 0 dla wyłaczenia [0]
+  mqttuser:
+    name: MQTT nazwa użytkownika
+    description: Połącz się jako UŻYTKOWNIK z brokerem MQTT (brak domyślnego)
+  mqttpass:
+    name: MQTT hasło
+    description: Użyj HASŁA podczas łączenia się z brokerem MQTT (brak domyślnego)
+  mqttjson:
+    name: MQTT Json
+    description: Opublikuj w formacie JSON zamiast ciągów
+  mqttlog:
+    name: MQTT Log
+    description: Log library events
+  mqttretain:
+    name: MQTT Retain
+    description: Wysyłaj wszystkie widomości z flagą Retain
+  commandline_options:
+    name: Niestandardowe opcje wiersza poleceń
+    description: Dodaj dodatkowe opcje wiersza poleceń. Zobacz wiki eBUSd, aby zobaczyć wszystkie dostępne opcje https://github.com/john30/ebusd/wiki/2.-Run
+  http:
+    name: Włącz dostęp HTTP
+    description: Włącz dostęp klienta HTTP
+  accesslevel:
+    name: Poziom dostępu
+    description: Ustaw domyślny poziom dostępu na LEVEL ("*" dla wszystkiego, wiele poziomów oddzielone przecinkami)
+  loglevel_all:
+    name: Poziom dziennika dla wszystkich wiadomości 
+    description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
+  loglevel_network:
+    name: Poziom dziennika dla wiadomości sieciowych 
+    description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
+  loglevel_update:
+    name: Poziom dziennika dla wiadomości aktualizowanych 
+    description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
+  loglevel_bus:
+    name: Poziom dziennika dla komunikatów magistrali 
+    description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
+  loglevel_main:
+    name: Poziom dziennika dla głównych wiadomości 
+    description: Only write log for matching AREA(S) below or equal to LEVEL [all:notice].  This is an alternative form to using --logareas/--loglevel and allows to specify an individual level for each area by using the option multiple times. E.g. for having only bus messages in info level and all other in error level, use --log=all:error --log=bus:info
+  network_device:
+    name: Adres adaptera sieciowego np. enh:192.168.0.7:9999
+    description: Użyj tej opcji w przypadku adapterów sieciowych eBUSd ("enh:IP:PORT" dla zaawansowanego urządzenia lub "[udp:]IP:PORT" dla urządzenia sieciowego)

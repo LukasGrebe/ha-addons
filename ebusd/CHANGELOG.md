@@ -3,6 +3,7 @@
 ## Nexr release
 
 - IMPROVE: Include MQTT integration cfg files in edge build
+- IMPROVE: Add mqttint option
 
 ## 0.87
 
