@@ -21,27 +21,27 @@ See [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#how-t
 - via the [Home Assistant Forums Topic](https://community.home-assistant.io/t/an-ebusd-add-on/344852)
 - via Issues and pull requests in the Github repository
 
-### Updating the Edge add-on
+### Updating the Edge add-on:
 
-To update eBUSd binary to latest sources only:
+**To update eBUSd binary to latest sources only:**
 
-**Supervisor → Dashboard → eBUSd Edge → Rebuild**
+- Supervisor → Dashboard → eBUSd Edge → Rebuild
 
-To fully update the add-on, you will need to uninstall and re-install the add-on.
+**To fully update the add-on, you will need to uninstall and re-install the add-on.**
 
 ⚠️ Make sure to backup your config as the procedure will not save this for you.
 
-**Steps**
+**Steps:**
 
-- Backup config: **Supervisor → Dashboard → eBUSd Edge → Configuration → ⋮ → Edit in YAML → Copy config**
+**- Backup config:** Supervisor → Dashboard → eBUSd Edge → Configuration → ⋮ → Edit in YAML → Copy config
 
-- Uninstall: **Supervisor → Dashboard → eBUSd Edge → Uninstall**
+**- Uninstall:** Supervisor → Dashboard → eBUSd Edge → Uninstall
 
-- Refresh repo: **Supervisor → Add-on store → ⋮ → Reload**
+**- Refresh repo:** Supervisor → Add-on store → ⋮ → Reload
 
-- Re-install: **Supervisor → Add-on store → eBUSd Edge → Install**
+**- Re-install:** Supervisor → Add-on store → eBUSd Edge → Install
 
-- Restore config to: **Supervisor → Dashboard → eBUSd Edge → Configuration → ⋮ → Edit in YAML → Paste config**
+**- Restore config to:** Supervisor → Dashboard → eBUSd Edge → Configuration → ⋮ → Edit in YAML → Paste config
 
 
 *Not actually tested on any of these architectures*

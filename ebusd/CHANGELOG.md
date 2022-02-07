@@ -1,5 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## Nexr release
+
+- IMPROVE: Include MQTT integration cfg files in edge build
+
 ## 0.87
 
 - IMPROVE: Add poll interval option
