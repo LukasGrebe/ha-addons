@@ -8,7 +8,7 @@
 - IMPROVE: Add mqttvar option
 - IMPROVE: Enable MQTT discovery by default
 - IMPROVE: Align version number with eBUSd version
-- IMPROVE: Umprove eBUSd edge upgrade process
+- IMPROVE: Improve eBUSd edge upgrade process
 
 ## 0.87
 
