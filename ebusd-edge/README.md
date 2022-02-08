@@ -1,33 +1,33 @@
 # Home Assistant Add-on: eBUSd Edge
 
-⚠️ This is the Edge version ⚠️
+⚠️ This is the Edge version of the eBUSd add-on ⚠️
 
-⚠️ This version pulls latest source from GitHub and builds ⚠️
+⚠️ This version pulls latest source from GitHub and builds locally ⚠️
 
 ⚠️ Most users should use stable version, edge is for those who want to test unreleased features or bug fixes ⚠️
 
 ⚠️ This version is bleeding edge and untested so may be broken ⚠️
 
-creates a supervisor addon to run [ebusd](http://ebusd.eu). Configure ebusd comandline arguments in the settings options.
+This add-on creates a supervisor add-on to run [ebusd](http://ebusd.eu). Configure ebusd comandline arguments using configuration options.
 
-Use ebusd's built-in MQTT client and the [mosquitto](https://github.com/home-assistant/addons/tree/master/mosquitto) add-on to get data from ebusd into home assistant core.
+Use ebusd's built-in MQTT client and the [mosquitto](https://github.com/home-assistant/addons/tree/master/mosquitto) add-on to get data from ebusd into Home Assistant core.
 
+See [repository readme](https://github.com/LukasGrebe/ha-addons#how-to-install) on how to install ebusd addon in supervisor.
 
-See [repository readme](https://github.com/LukasGrebe/ha-addons#how-to-install) on how to install ebusd addon in supervisor
+See [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#how-to-run-ebusd) on how to run ebusd in supervisor.
 
-See [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#how-to-run-ebusd) on how to run ebusd in supervisor
-
-**feedback please**
+**If you have questions or feedback please**
 - via the [Home Assistant Forums Topic](https://community.home-assistant.io/t/an-ebusd-add-on/344852)
 - via Issues and pull requests in the Github repository
 
-### Updating the Edge add-on:
+### Updating the eBUSd Edge add-on:
 
 **To update eBUSd binary to latest sources only:**
 
 - Supervisor → Dashboard → eBUSd Edge → Rebuild
 
 **To fully update the add-on follow the normal add-on update process**
+
 
 *Not actually tested on any of these architectures*
 ![Supports aarch64 Architecture][aarch64-shield]
