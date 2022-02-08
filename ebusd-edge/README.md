@@ -14,7 +14,7 @@ Use ebusd's built-in MQTT client and the [mosquitto](https://github.com/home-ass
 
 See [repository readme](https://github.com/LukasGrebe/ha-addons#how-to-install) on how to install ebusd addon in supervisor.
 
-See [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#how-to-run-ebusd) on how to run ebusd in supervisor.
+See [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd-edge/DOCS.md#how-to-run-ebusd) on how to run ebusd in supervisor.
 
 **If you have questions or feedback please**
 - via the [Home Assistant Forums Topic](https://community.home-assistant.io/t/an-ebusd-add-on/344852)
