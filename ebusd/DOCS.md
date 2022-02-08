@@ -18,18 +18,11 @@ The steps **Build and Install are handled by this addon**. You'll need to **conf
 
 ## How to get data into Home Assistant
 
-MQTT discovery is now automatically configured.  When you start the add-on the global readings (uptime, signal status etc.) will be added to Home Assistant automatically under a device named ebusd.  After around 5 minutes any readings that are being polled, either via an MQTT request or by editing your config files, will be added to Home Assistant automatically.  The device name will be ebusd {circuit} - e.g. "ebusd bai".
+You can communicate with eBUSd using either MQTT, TCP or HTTP clients.  To use TCP or HTTP clients you will need to configure external port numbers in the network config section.  For a list of clients and commands see the [eBUSd wiki](https://github.com/john30/ebusd/wiki/3.-Clients-and-commands).
 
-The mqttvar option can be used to inject MQTT variables or the [mqtt-hassio.cfg](https://github.com/john30/ebusd/blob/master/contrib/etc/ebusd/mqtt-hassio.cfg) can be edited and saved in your /config folder.
+**Top tip:** If you send an MQTT get message with payload "?1" eBUSd will automatically poll that reading every 30 seconds and publish via MQTT 
 
-For more info please see the eBUSd docs - [MQTT Integration}(https://github.com/john30/ebusd/wiki/MQTT-integration)
-
-**Top tips:** 
-
-- If you send an MQTT get message with payload "?1" eBUSd will automatically poll that reading every 30 seconds and publish via MQTT. For example: ```mosquitto_pub -t ebusd/bai/FlowTemp/get -m ?1```
-- Git clone the ebusd-configuration files to your /config folder and edit the config files for your heating system.  Add a number 1-9 (1 high priority, 9 low prioirty) after the r at the start of each line and eBUSd will poll that reading automatically.
-- Once your heating system has been detected change the device name from "ebusd bai" to the name of your boiler e.g. "ecoTEC pro"
-- If some polled readings do not show up in Home Assistant it might be because mqtt-hassio.cfg is configured to filter them out.  Try setting to mqttvar to ```"filter-name="``` and this will remove any filters so you can debug the issue.
+For example: ```mosquitto_pub -t ebusd/bai/FlowTemp/get -m ?1```
 
 ## Custom CSV files:
 
