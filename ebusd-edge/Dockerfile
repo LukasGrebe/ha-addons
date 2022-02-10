@@ -3,7 +3,7 @@ FROM $BUILD_FROM
 
 ENV LANG C.UTF-8
 
-RUN apk add --no-cache build-base argp-standalone git cmake mosquitto-dev
+RUN apk add --no-cache build-base argp-standalone git cmake mosquitto-dev openssl-dev
 
 RUN git clone https://github.com/john30/ebusd.git && \
     cd ebusd && \

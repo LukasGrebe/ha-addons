@@ -1,5 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## 21.3.2
+
+- IMPROVE: Enable SSL
+
 ## 21.3.1
 
 - IMPROVE: Include MQTT integration cfg files (/etc/ebusd/mqtt-hassio.cfg)
