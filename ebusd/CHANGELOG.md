@@ -2,6 +2,8 @@
 
 ## 22.1
 
+**BREAKING CHANGE - MQTT JSON and MQTT Discovery will be enabled after upgrade.  This will break existimg MQTT sensors**
+
 - IMPROVE: Enable SSL
 - IMPROVE: Include MQTT integration cfg files (/etc/ebusd/mqtt-hassio.cfg)
 - IMPROVE: Add mqttint option
