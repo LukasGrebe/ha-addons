@@ -15,7 +15,7 @@ configuration:
     name: "Scan Config (default: on)"
     description: Pick CSV config files matching initial scan (ADDR="none" or empty for no initial scan message "full" for full scan, or a single hex address to scan, default is to send a broadcast ident message).
   mqttjson:
-    name: "MQTT JSON (default: off)"
+    name: "MQTT JSON (default: on)"
     description: Publish in JSON format instead of strings
   mqttlog:
     name: "MQTT Log (default: off)"
@@ -65,6 +65,15 @@ configuration:
   mqttpass:
     name: "MQTT Password (default: blank for autoconfigure)"
     description: Override automatically configured MQTT password
+  mqttint:
+    name: "MQTT Integration cfg file (default: /etc/ebusd/mqtt-hassio.cfg)"
+    description: MQTT integration configuration file
   pollinterval:
     name: "Poll for data every seconds (default: 5)"
     description: Poll for data every SEC seconds (0=disable)
+  mqttvar:
+    name: Add variable(s) to the read MQTT integration settings.
+    description: Add variable(s) to the read MQTT integration settings.
+  mqtttopic:
+    name: "MQTT topic (default: ebusd)"
+    description: MQTT topic

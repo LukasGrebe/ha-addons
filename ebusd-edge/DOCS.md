@@ -2,8 +2,6 @@
 
 This is to run [ebusd](http://ebusd.eu) as supervisor addon (docker container) in Home Assistant OS.
 
-
-
 ## How to run ebusd
 
 Deep dive into the [ebusd Wiki](https://github.com/john30/ebusd/wiki).

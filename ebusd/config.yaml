@@ -1,5 +1,5 @@
 name: eBUSd
-version: "0.87"
+version: "22.1"
 slug: ebusd
 description: >
   This Add-on runs eBUSd, a daemon for handling communication with eBUS devices
@@ -30,6 +30,9 @@ ports_description:
 options:
   scanconfig: true
   loglevel_all: "notice"
+  mqtttopic: "ebusd"
+  mqttint: "/etc/ebusd/mqtt-hassio.cfg"
+  mqttjson: true
 schema:
   device: "device(subsystem=tty)?"
   network_device: "str?"
@@ -54,3 +57,6 @@ schema:
   mqttjson: "bool?"
   mqttlog: "bool?"
   mqttretain: "bool?"
+  mqttint: "str?"
+  mqttvar: "str?"
+  mqtttopic: "str?"

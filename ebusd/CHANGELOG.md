@@ -1,5 +1,15 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## 22.1
+
+- IMPROVE: Enable SSL
+- IMPROVE: Include MQTT integration cfg files (/etc/ebusd/mqtt-hassio.cfg)
+- IMPROVE: Add mqttint option
+- IMPROVE: Add mqtttopic option
+- IMPROVE: Add mqttvar option
+- IMPROVE: Enable MQTT discovery by default
+- IMPROVE: Align version number with eBUSd version
+
 ## 0.87
 
 - IMPROVE: Add poll interval option
