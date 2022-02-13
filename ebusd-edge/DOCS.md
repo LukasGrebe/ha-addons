@@ -20,7 +20,9 @@ MQTT discovery is now automatically configured.  When you start the add-on the g
 
 The mqttvar option can be used to inject MQTT variables or the [mqtt-hassio.cfg](https://github.com/john30/ebusd/blob/master/contrib/etc/ebusd/mqtt-hassio.cfg) can be edited and saved in your /config folder.
 
-For more info please see the eBUSd docs - [MQTT Integration}(https://github.com/john30/ebusd/wiki/MQTT-integration)
+For more info please see the eBUSd docs:
+- [MQTT Integration}(https://github.com/john30/ebusd/wiki/MQTT-integration)
+- [MQTT Discovery}(https://github.com/john30/ebusd/discussions/518)
 
 **Top tips:** 
 
