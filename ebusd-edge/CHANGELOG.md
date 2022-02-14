@@ -1,5 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## 22.1
+
+- IMPROVE: Uninstall build dependencies to reduce container size
+
 ## 21.3.2
 
 - IMPROVE: Enable SSL

@@ -3,7 +3,15 @@ FROM $BUILD_FROM
 
 ENV LANG C.UTF-8
 
-RUN apk add --no-cache build-base argp-standalone git cmake mosquitto-dev openssl-dev
+RUN apk add --no-cache mosquitto-libs libgcc libstdc++
+
+RUN apk add --no-cache --virtual .build-deps \
+    build-base \
+    argp-standalone \
+    git \
+    cmake \
+    mosquitto-dev \
+    openssl-dev
 
 RUN git clone https://github.com/john30/ebusd.git && \
     cd ebusd && \
@@ -14,7 +22,8 @@ RUN git clone https://github.com/john30/ebusd.git && \
     cmake --build build && \
     cmake --install build && \
     mkdir /etc/ebusd && \
-    cp contrib/etc/ebusd/mqtt*.cfg /etc/ebusd/
+    cp contrib/etc/ebusd/mqtt*.cfg /etc/ebusd/ && \
+    apk del .build-deps
 
 LABEL Description="eBUSd edge"
 
