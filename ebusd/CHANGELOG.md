@@ -1,5 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## 22.2
+
+- New eBUSd release
+
 ## 22.1
 
 **BREAKING CHANGE - MQTT JSON and MQTT Discovery will be enabled after upgrade.  This will break existing MQTT sensors**
