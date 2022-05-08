@@ -1,5 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## 22.3
+
+- New eBUSd release
+
 ## 22.2
 
 - New eBUSd release
