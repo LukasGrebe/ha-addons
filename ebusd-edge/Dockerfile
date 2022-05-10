@@ -21,8 +21,6 @@ RUN git clone https://github.com/john30/ebusd.git && \
           -DBUILD_TESTING=ON && \
     cmake --build build && \
     cmake --install build && \
-    mkdir /etc/ebusd && \
-    cp contrib/etc/ebusd/mqtt*.cfg /etc/ebusd/ && \
     apk del .build-deps
 
 LABEL Description="eBUSd edge"
