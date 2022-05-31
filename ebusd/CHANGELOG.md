@@ -1,5 +1,10 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## 22.3.1
+
+- Remove apparmour.txt
+- Add build.yaml
+
 ## 22.3
 
 - New eBUSd release
