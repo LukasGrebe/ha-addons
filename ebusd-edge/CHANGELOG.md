@@ -1,5 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## 22.4
+
+- EBUSd 22.4
+
 ## 22.3.2
 
 - Upgrade to Alpine 3.16
