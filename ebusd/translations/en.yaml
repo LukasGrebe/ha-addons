@@ -77,3 +77,12 @@ configuration:
   mqtttopic:
     name: "MQTT topic (default: ebusd)"
     description: MQTT topic
+  lograwdata:
+    name: "Enable logging of raw data"
+    description: Log messages or all received/sent bytes on the bus
+  lograwdatafile:
+    name: "Raw logging file (e.g. /config/ebusd/raw.log)"
+    description: Write raw log to custom file
+  lograwdatasize:
+    name: "Raw log max file size (default: 100)"
+    description: Make raw log file no larger than SIZE kB

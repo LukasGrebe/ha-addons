@@ -60,3 +60,6 @@ schema:
   mqttint: "str?"
   mqttvar: "str?"
   mqtttopic: "str?"
+  lograwdata: "bool?"
+  lograwdatafile: "str?"
+  lograwdatasize: "int?"

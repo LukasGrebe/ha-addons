@@ -31,7 +31,7 @@ else
 fi
 
 #Boolean options
-declare options=( "readonly" "scanconfig" "mqttjson" "mqttlog" "mqttretain")
+declare options=( "readonly" "scanconfig" "mqttjson" "mqttlog" "mqttretain" "lograwdata")
 for optName in "${options[@]}"
 do
     if bashio::config.true ${optName}; then
@@ -40,7 +40,7 @@ do
 done
 
 #String options
-declare options=( "configpath" "port" "latency" "accesslevel" "pollinterval" "mqttint" "mqttvar" "mqtttopic")
+declare options=( "configpath" "port" "latency" "accesslevel" "pollinterval" "mqttint" "mqttvar" "mqtttopic" "lograwdatafile" "lograwdatasize")
 
 for optName in "${options[@]}"
 do
