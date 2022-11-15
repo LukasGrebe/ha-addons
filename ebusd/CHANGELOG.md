@@ -1,8 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
-## Unreleased
+## 22.4.1
 
 - Add raw logging options
+- Add write permission to config folder
 
 ## 22.4
 
