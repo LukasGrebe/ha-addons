@@ -31,9 +31,11 @@ For more info please see the eBUSd docs:
 - Once your heating system has been detected change the device name from "ebusd bai" to the name of your boiler e.g. "ecoTEC pro"
 - If some polled readings do not show up in Home Assistant it might be because mqtt-hassio.cfg is configured to filter them out.  Try setting to mqttvar to ```"filter-name="``` and this will remove any filters so you can debug the issue.
 
-## Custom CSV files:
+## Custom CSV or MQTT cfg files:
 
-To use custom CSV config files you can use the configpath option. You can create a local copy of https://github.com/john30/ebusd-configuration in your "/config" folder and change configpath to e.g. "/config/ebusd-configuration/latest/en".  Custom CSV files must be in the /config folder.
+To use custom config files you can use the configpath option. You can create a local copy of https://github.com/john30/ebusd-configuration in your "/config" folder and change configpath to e.g. "/config/ebusd-configuration/latest/en".  Custom CSV files must be in the /config folder.
+
+Similarly for MQTT create config file in "/config" folder and link it using the --mqttint=/config/YOUR_FILE_PATH option
 
 ## HTTP and TCP client Access
 
