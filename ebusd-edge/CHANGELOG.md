@@ -1,5 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## TBC
+
+- Updated documentation to cover custom MQTT config files.
+
 ## 22.4.1
 
 - Add raw logging options

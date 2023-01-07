@@ -35,6 +35,8 @@ For more info please see the eBUSd docs:
 
 To use custom CSV config files you can use the configpath option. You can create a local copy of https://github.com/john30/ebusd-configuration in your "/config" folder and change configpath to e.g. "/config/ebusd-configuration/latest/en".  Custom CSV files must be in the /config folder.
 
+Similarly for MQTT create config file in "/config" folder and link it using the --mqttint=/config/YOUR_FILE_PATH option
+
 ## HTTP and TCP client Access
 
 To use HTTP and TCP clients enter port numbers into the add-on network settings and activated in the config.
