@@ -1,5 +1,5 @@
 name: eBUSd Edge
-version: "22.4.1"
+version: "23.1"
 slug: ebusd_edge
 description: >
   This Add-on runs eBUSd, a daemon for handling communication with eBUS devices

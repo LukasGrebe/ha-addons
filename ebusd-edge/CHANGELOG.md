@@ -1,7 +1,8 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
-## TBC
+## 23.1
 
+- EBUSd 23.1
 - Updated documentation to cover custom MQTT config files.
 
 ## 22.4.1
