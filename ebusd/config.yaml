@@ -34,6 +34,7 @@ options:
   mqttint: "/etc/ebusd/mqtt-hassio.cfg"
   mqttjson: true
 schema:
+  mode: "list(enh|ens|udp)?"
   device: "device(subsystem=tty)?"
   network_device: "str?"
   latency: "int(0,10000)?"
