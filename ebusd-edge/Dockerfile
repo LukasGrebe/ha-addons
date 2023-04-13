@@ -16,7 +16,6 @@ RUN apk add --no-cache --virtual .build-deps \
 RUN git clone https://github.com/john30/ebusd.git && \
     cd ebusd && \
     cmake -B build \
-          -DCMAKE_INSTALL_PREFIX=/usr \
 	  -DCMAKE_BUILD_TYPE=MinSizeRel \
           -DBUILD_TESTING=ON && \
     cmake --build build && \
