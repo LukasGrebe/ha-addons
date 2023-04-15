@@ -37,6 +37,6 @@ jobs:
           args: |
             --${{ matrix.arch }} \
             --target ${{matrix.addon}} \
-            --image "${{ steps.info.outputs.image }}" \
-            --docker-hub "ghcr.io/${{ github.repository_owner }}"/ha-addons \
+            --image "ha-addons/ebusd-${{ matrix.addon }}" \
+            --docker-hub "ghcr.io/${{ github.repository_owner }}" \
             --addon
