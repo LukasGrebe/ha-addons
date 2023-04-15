@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        addon: ebusd
         arch: ["aarch64", "amd64", "armhf", "armv7", "i386"]
 
     steps:
@@ -20,7 +21,7 @@ jobs:
         id: info
         uses: home-assistant/actions/helpers/info@master
         with:
-          path: "./ebusd"
+          path: $(pwd)/${{ matrix.addon }}
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2.1.0
@@ -35,7 +36,7 @@ jobs:
         with:
           args: |
             --${{ matrix.arch }} \
-            --target /data \
+            --target $(pwd)/${{ matrix.addon }} \
             --image "${{ steps.info.outputs.image }}" \
             --docker-hub "ghcr.io/${{ github.repository_owner }}" \
-            --addon
+            --addon "./ebusd"
