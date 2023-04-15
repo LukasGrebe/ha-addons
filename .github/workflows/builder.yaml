@@ -29,10 +29,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.CR_PAT }}
-
-      - name: Debug output
-        run: "echo 'Architectures: ${{ steps.info.outputs.image }}'"
-
+          
       - name: Build ${{ matrix.arch }} add-on
         if: contains(steps.info.outputs.architectures, matrix.arch)
         uses: home-assistant/builder@2023.03.0
@@ -40,6 +37,6 @@ jobs:
           args: |
             --${{ matrix.arch }} \
             --target ${{matrix.addon}} \
-            --image "${{ steps.info.outputs.image }}" \
+            --image "ghcr.io/${{ github.repository_owner }}/ha-addons/ebusd-${{ matrix.arch }}" \
             --docker-hub "ghcr.io/${{ github.repository_owner }}" \
             --addon
