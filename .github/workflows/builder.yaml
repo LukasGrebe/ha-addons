@@ -23,7 +23,7 @@ jobs:
           path: "." # Replace this with your add-on directory, if needed
 
       - name: Debug output
-        run: "echo 'Architectures: ${{ steps.info.outputs.architectures }}'""
+        run: "echo 'Architectures: ${{ steps.info.outputs.architectures }}'"
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2.1.0
