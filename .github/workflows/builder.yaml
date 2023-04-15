@@ -20,10 +20,7 @@ jobs:
         id: info
         uses: home-assistant/actions/helpers/info@master
         with:
-          path: "ebusd" # Replace this with your add-on directory, if needed
-
-      - name: Debug output
-        run: "echo 'Architectures: ${{ steps.info.outputs.architectures }}'"
+          path: "./ebusd"
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2.1.0
@@ -33,7 +30,7 @@ jobs:
           password: ${{ secrets.CR_PAT }}
 
       - name: Build ${{ matrix.arch }} add-on
-        # if: contains(steps.info.outputs.architectures, matrix.arch)
+        if: contains(steps.info.outputs.architectures, matrix.arch)
         uses: home-assistant/builder@2023.03.0
         with:
           args: |
