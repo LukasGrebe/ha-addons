@@ -1,8 +1,6 @@
 ARG BUILD_FROM
 FROM $BUILD_FROM
 LABEL org.opencontainers.image.source https://github.com/lukasgrebe/ha-addons
-LABEL org.opencontainers.image.name "ghcr.io/lukasgrebe/ha-addons/ebusd-${BUILD_ARCH}"
-
 
 ENV LANG C.UTF-8
 
