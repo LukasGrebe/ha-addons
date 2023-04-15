@@ -1,8 +1,0 @@
-{
-    "name": "eBUSd",
-    "version": "23.1.0",
-    "slug": "ebusd",
-    "description": "This Add-on runs eBUSd via Supervisor in the Home Assistant OS",
-    "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"]
-  }
-  

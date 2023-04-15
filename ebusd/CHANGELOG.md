@@ -1,5 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
+## version: 23.2.0
+
+- Change build process to use pre-build containers. This should speed up the install of the addon as the addon does not need to be compiled from Supervisor before beeing run.
+
 ## 23.1
 
 - EBUSd 23.1

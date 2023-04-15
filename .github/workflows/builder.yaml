@@ -21,7 +21,7 @@ jobs:
         id: info
         uses: home-assistant/actions/helpers/info@master
         with:
-          path: $(pwd)/${{ matrix.addon }}
+          path: ./${{ matrix.addon }}
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2.1.0
@@ -30,13 +30,16 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.CR_PAT }}
 
+      - name: Debug output
+        run: "echo 'Architectures: ${{ steps.info.outputs.image }}'"
+
       - name: Build ${{ matrix.arch }} add-on
         if: contains(steps.info.outputs.architectures, matrix.arch)
         uses: home-assistant/builder@2023.03.0
         with:
           args: |
             --${{ matrix.arch }} \
-            --target ebusd \
+            --target ${{matrix.addon}} \
             --image "${{ steps.info.outputs.image }}" \
             --docker-hub "ghcr.io/${{ github.repository_owner }}" \
             --addon
