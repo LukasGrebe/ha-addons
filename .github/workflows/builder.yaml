@@ -16,22 +16,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v3.5.0
 
-      - name: Generate config.json for HA Builder from Addon config.yaml
-        run: |
-          echo 'import yaml, json' > generate_config_json.py
-          echo 'with open("./ebusd/config.yaml", "r") as yaml_file, open("./ebusd/config.json", "w") as json_file:' >> generate_config_json.py
-          echo '    yaml_data = yaml.safe_load(yaml_file)' >> generate_config_json.py
-          echo '    json_data = {' >> generate_config_json.py
-          echo '        "name": yaml_data["name"],' >> generate_config_json.py
-          echo '        "version": yaml_data["version"],' >> generate_config_json.py
-          echo '        "slug": yaml_data["slug"],' >> generate_config_json.py
-          echo '        "description": yaml_data["description"],' >> generate_config_json.py
-          echo '        "arch": yaml_data["arch"]' >> generate_config_json.py
-          echo '    }' >> generate_config_json.py
-          echo '    json.dump(json_data, json_file, indent=2)' >> generate_config_json.py
-          python3 -c 'import generate_config_json'
-
-
       - name: Get information
         id: info
         uses: home-assistant/actions/helpers/info@master
