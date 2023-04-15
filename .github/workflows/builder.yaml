@@ -20,7 +20,7 @@ jobs:
         id: info
         uses: home-assistant/actions/helpers/info@master
         with:
-          path: "." # Replace this with your add-on directory, if needed
+          path: "ebusd" # Replace this with your add-on directory, if needed
 
       - name: Debug output
         run: "echo 'Architectures: ${{ steps.info.outputs.architectures }}'"
