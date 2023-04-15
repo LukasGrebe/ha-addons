@@ -16,7 +16,6 @@ init: false
 startup: "system"
 services:
  - mqtt:need
-boot: "auto"
 watchdog: tcp://[HOST]:8888
 uart: true
 map:
