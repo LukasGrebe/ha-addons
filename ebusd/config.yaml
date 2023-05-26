@@ -1,5 +1,5 @@
 name: eBUSd
-version: "23.2.0"
+version: "23.2.1"
 slug: ebusd
 description: >
   This Add-on runs eBUSd, a daemon for handling communication with eBUS devices
@@ -14,7 +14,7 @@ arch:
   - i386
 image: "ghcr.io/lukasgrebe/ha-addon-ebusd-{arch}"
 init: false
-startup: "system"
+startup: services
 services:
  - mqtt:need
 watchdog: tcp://[HOST]:8888
