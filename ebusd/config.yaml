@@ -17,7 +17,6 @@ init: false
 startup: services
 services:
  - mqtt:need
-watchdog: tcp://[HOST]:8888
 uart: true
 map:
  - config:rw
