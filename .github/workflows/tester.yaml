@@ -28,8 +28,8 @@ jobs:
         uses: home-assistant/builder@2023.03.0
         with:
           args: |
-            --test
             --${{ matrix.arch }} \
             --target ${{matrix.addon}} \
             --image "ha-addon-ebusd-${{ matrix.arch }}" \
-            --docker-hub "ghcr.io/${{ github.repository_owner }}"
+            --docker-hub "ghcr.io/${{ github.repository_owner }}" \
+            --test
