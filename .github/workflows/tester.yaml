@@ -31,5 +31,5 @@ jobs:
             --${{ matrix.arch }} \
             --target ${{matrix.addon}} \
             --image "ha-addon-ebusd-${{ matrix.arch }}" \
-            --docker-hub "ghcr.io/${{ github.repository_owner }}"
+            --docker-hub "ghcr.io/${{ github.repository_owner }}" \
             --test
