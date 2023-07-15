@@ -1,4 +1,4 @@
-name: Lint
+name: Lint Add-on
 
 on:
   push:
@@ -11,31 +11,18 @@ on:
     - cron: "0 0 * * *"
 
 jobs:
-  find:
-    name: Find add-ons
-    runs-on: ubuntu-latest
-    outputs:
-      addons: ${{ steps.addons.outputs.addons_list }}
-    steps:
-      - name: ⤵️ Check out code from GitHub
-        uses: actions/checkout@v3.5.0
-
-      - name: 🔍 Find add-on directories
-        id: addons
-        uses: home-assistant/actions/helpers/find-addons@master
-
   lint:
-    name: Lint add-on ${{ matrix.path }}
+    name: Lint add-on ${{ matrix.addon }}
     runs-on: ubuntu-latest
-    needs: find
     strategy:
       matrix:
-        path: ${{ fromJson(needs.find.outputs.addons) }}
+        addon: ["ebusd-edge", "ebusd"]
+
     steps:
       - name: ⤵️ Check out code from GitHub
-        uses: actions/checkout@v3.5.0
+        uses: actions/checkout@v3.5.2
 
       - name: 🚀 Run Home Assistant Add-on Lint
-        uses: frenck/action-addon-linter@v2.11
+        uses: frenck/action-addon-linter@v2.13
         with:
-          path: "./${{ matrix.path }}"
+          path: "./${{ matrix.addon }}"
