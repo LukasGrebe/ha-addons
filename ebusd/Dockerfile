@@ -8,7 +8,7 @@ RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" \
 RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" \
     >> /etc/apk/repositories
 
-RUN apk -U add --no-cache ebusd
+RUN apk add --no-cache ebusd=23.2-r0
 
 LABEL Description="ebusd"
 
