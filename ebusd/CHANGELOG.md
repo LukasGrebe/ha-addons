@@ -1,4 +1,7 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
+## version: 23.2.3
+
+- fix Healthcheck. This should solve [#61](https://github.com/LukasGrebe/ha-addons/issues/61) thanks @cociweb
 
 ## version: 23.2.0
 
