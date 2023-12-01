@@ -40,6 +40,12 @@ Similarly for MQTT create config file in "/config" folder and link it using the 
 ## HTTP and TCP client Access
 
 To use HTTP and TCP clients enter port numbers into the add-on network settings and activated in the config.
+After TCP clients activation you can connect from any system with installed [ebusd clients](https://github.com/john30/ebusd/wiki/3.-Clients-and-commands).
+
+The following example will force a reading of all messages from loaded csv config files and can be included via crontab for regular message updates:
+
+```ebusctl -s 192.168.178.17 f -l "*" -a|awk '{print $2}' | xargs -L1 -t ebusctl -s 192.168.178.17 r```
+
 
 ## Custom command line options
 
