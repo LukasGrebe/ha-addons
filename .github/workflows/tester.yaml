@@ -1,7 +1,7 @@
-name: Build and Publish Add-on
+name: Build and Test Add-on
 
 on:
-  push:
+  pull_request:
     branches:
       - main
 
@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        addon: ["ebusd"]
+        addon: ["ebusd-edge", "ebusd"]
         arch: ["aarch64", "amd64", "armhf", "armv7", "i386"]
 
     steps:
@@ -23,13 +23,6 @@ jobs:
         with:
           path: ./${{ matrix.addon }}
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3.0.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build ${{ matrix.arch }} add-on
         if: contains(steps.info.outputs.architectures, matrix.arch)
         uses: home-assistant/builder@2023.09.0
@@ -38,4 +31,5 @@ jobs:
             --${{ matrix.arch }} \
             --target ${{matrix.addon}} \
             --image "ha-addon-ebusd-${{ matrix.arch }}" \
-            --docker-hub "ghcr.io/${{ github.repository_owner }}"
+            --docker-hub "ghcr.io/${{ github.repository_owner }}" \
+            --test
