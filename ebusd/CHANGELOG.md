@@ -6,6 +6,7 @@
 ## version: 23.2.0
 
 - Change build process to use pre-build containers. This should speed up the install of the addon as the addon does not need to be compiled from Supervisor before beeing run.
+- EBUSd 23.2
 
 ## 23.1
 
