@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        addon: ["ebusd-edge", "ebusd"]
+        addon: ["ebusd"]
         arch: ["aarch64", "amd64", "armhf", "armv7", "i386"]
 
     steps:
