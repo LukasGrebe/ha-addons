@@ -8,8 +8,8 @@ Created by @LukasGrebe.  Improved and maintained by @tim-devel
 2. In the overflow menu click "Repositories"
 3. Add `https://github.com/LukasGrebe/ha-addons/`
 4. Wait for the ebusd Add-on to show up or click reload in the same overflow menu
-5. Install eBUSd.  eBUSd Edge is also available if you want to be on the bleeding edge.  PLEASE NOTE: eBUSd Edge is untested and may be broken.
-6. Follow Documentation, Setup and Install of the Add-on
+5. Install eBUSd.
+6. 6. Follow Documentation, Setup and Install of the Add-on
 
 
 ## [ebusd](https://github.com/LukasGrebe/ha-addons/tree/main/ebusd) 
