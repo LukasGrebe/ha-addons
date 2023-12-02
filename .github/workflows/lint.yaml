@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        addon: ["ebusd-edge", "ebusd"]
+        addon: ["ebusd"]
 
     steps:
       - name: ⤵️ Check out code from GitHub
