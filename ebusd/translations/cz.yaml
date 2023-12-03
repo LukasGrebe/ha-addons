@@ -1,0 +1,88 @@
+configuration:
+  device:
+    name: USB Zařízení
+    description: Použijte toto nastavení pro USB eBUSd adaptéry
+  latency:
+    name: "Zpoždění v MSEC (výchozí: 0 pro USB, 10 pro IP)"
+    description: ebusd --latency=MSEC Zpoždění přenosu v ms [0 pro USB, 10 pro IP]
+  readonly:
+    name: "Pouze ke čtení (výchozí: vypnuto)"
+    description: Pouze číst ze zažízení, nikdy nezapisovat
+  configpath:
+    name: Cesta k nastavení (/config/...)
+    description: Načíst konfigurační soubory CSV z vlastního umístění. Můžete vytvořit lokální kopii https://github.com/john30/ebusd-configuration ve vašem "/config" adresáři a změnit cestu k nastavení např. "/config/ebusd-configuration/latest/cz" [http://ebusd.eu/config/]
+  scanconfig:
+    name: "Hledat konfiguraci (výchozí: zapnuto)"
+    description: Vybere CSV konfigurační soubor odpovídající výchozímu skenu (ADDR="none" nebo prázdné pro výchozí prohledání, "full" pro kompletní prohledání, nebo jedna hex addresa k prohledání, výchozí je odeslání "broadcast ident" zprávy).
+  mqttjson:
+    name: "MQTT JSON (výchozí: zapnuto)"
+    description: Publikovat v JSON formátu namísto textových řetěců (strings)
+  mqttlog:
+    name: "MQTT Log (výchozí: vypnuto)"
+    description: Logovat události knihovny
+  mqttretain:
+    name: "MQTT Držet (výchozí: vypnuto)"
+    description: Všechny MQTT zprávy posílat s příznakem držet (retain)
+  commandline_options:
+    name: Vlastní parametry příkazové řádky
+    description: Jakékoliv další parametry příkazové řáadky. Navštivte eBUSd wiki pro všechna dostupná nastavení https://github.com/john30/ebusd/wiki/2.-Run
+  http:
+    name: "Zapnout přístup přes HTTP (výchozí: vypnuto)"
+    description: Zapnout HTTP přístup pro klienty
+  accesslevel:
+    name: Úroveň přístupu
+    description: Nastavte výchozí úroveň pro přístup (např. "*" pro všechny)
+  loglevel_all:
+    name: "Úroveň logování pro všechny zprávy (výchozí: oznámení (notice))"
+    description: Nastavte úroveň logování pro všechny zprávy.
+  loglevel_network:
+    name: Úroveň logování pro všechny síťové zprávy
+    description: Nastavte úroveň logování pro síťové zprávy.
+  loglevel_update:
+    name: Úroveň logování pro aktualizační (update) zprávy.
+    description: Nastavte úroveň logování pro aktualizační (update) zprávy.
+  loglevel_bus:
+    name: Úroveň logování pro zprávy na sběrnici (bus).
+    description: Nastavte úroveň logování pro zprávy na sběrnici (bus).
+  loglevel_main:
+    name: Úroveň logování pro hlavní (main) zprávy.
+    description: Nastavte úroveň logování pro hlavní (main) zprávy.
+  loglevel_other:
+    name: Úroveň logování pro ostatní zprávy (včetně MQTT) 
+    description: Nastavte úroveň logování pro ostatní zprávy (včetně MQTT).
+  network_device:
+    name: Adresa síťového adaptéru například enh:192.168.0.7:9999
+    description: Použijte toto nastavení pro síťové eBUSd adaptéry ("enh:IP:PORT" pro rozšířená zařízení nebo "[udp:]IP:PORT" síťová zařízení)
+  mqtthost:
+    name: "MQTT Server (výchozí: prázdné pro automtické nastavení)"
+    description: Přepíše automaticky nastavený MQTT server
+  mqttport:
+    name: "Port MQTT Serveru (výchozí: prázdné pro automtické nastavení)"
+    description: Přepíše automaticky nastavený MQTT port, použijte 0 pro vypnutí
+  mqttuser:
+    name: "Uživatelské jméno pro MQTT (výchozí: prázdné pro automtické nastavení)"
+    description:  Přepíše automaticky nastavené uživatelské jméno pro MQTT
+  mqttpass:
+    name: "Heslo pro MQTT (výchozí: prázdné pro automtické nastavení)"
+    description: řepíše automaticky nastavené uživatelské heslo pro MQTT
+  mqttint:
+    name: "Soubor nastavení pro MQTT integraci (výchozí: /etc/ebusd/mqtt-hassio.cfg)"
+    description: Soubor nastavení pro MQTT integraci
+  pollinterval:
+    name: "Vyžádat data každých (výchozí: 5) sekund"
+    description: Vyžádat data každých SEC sekund (0=vypnuto)
+  mqttvar:
+    name: Přidat proměnné pro čtení do nastavení MQTT integrace.
+    description: Přidat proměnné pro čtení do nastavení MQTT integrace.
+  mqtttopic:
+    name: "MQTT topic (výchozí: ebusd)"
+    description: MQTT topic
+  lograwdata:
+    name: "Zapnout logování syrových (raw) dat"
+    description: Zaznamenat všechny zprávy či všechny přijaté/odeslané byte na sběrnici
+  lograwdatafile:
+    name: "Soubor pro záznam syrových (raw) dat (např. /config/ebusd/raw.log)"
+    description: Zaznamenat syrová data do vlastního souboru
+  lograwdatasize:
+    name: "Limit pro velikost souboru se syrovými daty (výchozí: 100)"
+    description: Velikost souboru syrových dat nepřekročí VELIKOST kB
