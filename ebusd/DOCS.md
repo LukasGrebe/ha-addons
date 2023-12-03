@@ -40,6 +40,13 @@ Similarly for MQTT create config file in "/config" folder and link it using the 
 ## HTTP and TCP client Access
 
 To use HTTP and TCP clients enter port numbers into the add-on network settings and activated in the config.
+After TCP clients activation you can connect from any system with installed [ebusd clients](https://github.com/john30/ebusd/wiki/3.-Clients-and-commands).
+
+The following example will force a reading of all messages from loaded csv config files and can be included via crontab for regular message updates:
+
+```ebusctl -s X.X.X.X f -l "*" -a|awk '{print $2}' | xargs -L1 -t ebusctl -s X.X.X.X r```
+Where ```X.X.X.X``` is the address of the ebusd add-on.
+
 
 ## Custom command line options
 
@@ -47,9 +54,10 @@ You can add any command line options using the custom command line options field
 
 For example ``` --initsend --dumpconfig```
 
-## Network eBUSd adapter support
+## Network eBUS adapter support
 
-This release now fully supports wireless/network eBUSd adapters.  The configuration options has changed from custom_device to network_device.
+This release now fully supports wireless/network [eBUS adapters](https://adapter.ebusd.eu/index.en.html). The configuration options has changed from custom_device to network_device.
 
-For example ```network_device: enh:192.168.0.7:9999```
+For example ```network_device: enh:Y.Y.Y.Y:9999```
+Where ```Y.Y.Y.Y``` is the address of the eBUS asapter.
 
