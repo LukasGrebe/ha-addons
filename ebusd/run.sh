@@ -5,18 +5,20 @@ declare -a ebusd_args
 #Always run in the foreground
 ebusd_args+=("--foreground")
 
-#MQTT
+#MQTT, save some values into vars for later use
 if bashio::config.has_value "mqtthost"; then
-    ebusd_args+=("--mqtthost=$(bashio::config mqtthost)")
+    mqtthost=$(bashio::config mqtthost)
 else
-    ebusd_args+=("--mqtthost=$(bashio::services mqtt 'host')")
+    mqtthost=$(bashio::services mqtt 'host')
 fi
+ebusd_args+=("--mqtthost=${mqtthost}")
 
 if bashio::config.has_value "mqttport"; then
-    ebusd_args+=("--mqttport=$(bashio::config mqttport)")
+    mqttport=$(bashio::config mqttport)
 else
-    ebusd_args+=("--mqttport=$(bashio::services mqtt 'port')")
+    mqttport=$(bashio::services mqtt 'port')
 fi
+ebusd_args+=("--mqttport=${mqttport}")
 
 if bashio::config.has_value "mqttuser"; then
     ebusd_args+=("--mqttuser=$(bashio::config mqttuser)")
@@ -90,6 +92,13 @@ fi
 #Activate http
 if bashio::config.true http; then
     ebusd_args+=" --httpport=8889"
+fi
+
+bashio::log.info "Checking if MQTT is up, 60 seconds timeout"
+TIMEOUT_CODE=0
+basio::net.wait_for ${mqttport} ${mqtthost} || TIMEOUT_CODE=$?
+if [ TIMEOUT_CODE -ne 0 ]; then
+    bashio::log.warning "MQTT doesn't seem to be running, trying to run ebusd nevertheless"
 fi
 
 echo "> ebusd ${ebusd_args[*]}"
