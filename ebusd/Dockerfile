@@ -8,7 +8,12 @@ RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" \
 RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" \
     >> /etc/apk/repositories
 
-RUN apk add --no-cache ebusd=23.2-r0
+#RUN apk add --no-cache ebusd=23.2-r0
+#Temporal block to v23.3 -->
+WORKDIR /tmp
+COPY alpine/ebusd-23.3-prebuilt.apk ./
+RUN apk add --no-cache ebusd-23.3-prebuilt.apk
+#<--End of tempral block
 
 LABEL Description="ebusd"
 

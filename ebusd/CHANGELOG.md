@@ -1,4 +1,10 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
+## version: 23.3.0-rc
+
+- Update EBUSd 23.3-rc prebuilt from source on master code base at 2024.01.23.
+- Bump HA add-on base package to 3.19
+
+
 ## version: 23.2.3
 
 - fix Healthcheck. This should solve [#61](https://github.com/LukasGrebe/ha-addons/issues/61) thanks @cociweb
