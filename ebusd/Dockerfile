@@ -9,11 +9,11 @@ RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" \
     >> /etc/apk/repositories
 
 #RUN apk add --no-cache ebusd=23.2-r0
-#Temporal block to v23.3 -->
-WORKDIR /tmp
-COPY /alpine/ebusd-23.3-prebuilt.apk ./
+#Temporal block for v23.3 -->
+WORKDIR /
+ADD https://github.com/LukasGrebe/ha-addons/blob/7a3c1113f2777ee7fdaa15b1157b626b91b5f58b/alpine/ebusd-23.3-prebuilt.apk /ebusd-23.3-prebuilt.apk
 RUN apk add --no-cache ebusd-23.3-prebuilt.apk
-#<--End of tempral block
+#<--End of temporal block
 
 LABEL Description="ebusd"
 
