@@ -47,6 +47,19 @@ The following example will force a reading of all messages from loaded csv confi
 ```ebusctl -s X.X.X.X f -l "*" -a|awk '{print $2}' | xargs -L1 -t ebusctl -s X.X.X.X r```
 Where ```X.X.X.X``` is the address of the ebusd add-on.
 
+## Running ebusd and ebusctl directly
+
+To run ebusctl and/or ebusd directly (as suggested on other forums for debugging purposses) you need to SSH into the Docker container. For this you need the [**Advanced** SSH & Web Terminal](https://github.com/hassio-addons/addon-ssh) (not the standard one). 
+
+After getting the addon, you need to set a password in the configuration of the SSH addon otherwise it will not start.
+
+Last step in preparing the addon is to disable the 'Protection mode' on the *Info* page of the addon.
+
+Afterwards, in the SSH you can type in
+
+```docker exec -it `docker ps | grep ebusd | awk '{print $1}'` /bin/bash```
+
+and you are inside the docker container, where you can easily run `ebusctl` or `ebusd`.
 
 ## Custom command line options
 
