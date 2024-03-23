@@ -92,6 +92,23 @@ if bashio::config.true http; then
     ebusd_args+=" --httpport=8889"
 fi
 
-echo "> ebusd ${ebusd_args[*]}"
+#Check for s6-log options
+if bashio::config.has_value logdir_name; then
+    if bashio::config.has_value logdir_files_number; then
+        logdir_files_number="n$(bashio::config logdir_files_number)"
+    else
+        logdir_files_number="n5"
+    fi
 
-ebusd ${ebusd_args[*]}
+    if bashio::config.has_value logdir_files_size; then
+        logdir_files_size=("s$(bashio::config logdir_files_size)")
+    else
+        logdir_files_size="s1000000"
+    fi
+
+    echo "> ebusd ${ebusd_args[*]} | s6-log 1 ${logdir_files_number} ${logdir_files_size} $(bashio::config logdir_name)"
+    ebusd ${ebusd_args[*]} | s6-log 1 ${logdir_files_number} ${logdir_files_size} $(bashio::config logdir_name)
+else
+    echo "> ebusd ${ebusd_args[*]}"
+    ebusd ${ebusd_args[*]}
+fi

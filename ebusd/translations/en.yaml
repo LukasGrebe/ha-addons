@@ -32,23 +32,32 @@ configuration:
   accesslevel:
     name: Access Level
     description: Set default access level(s) to (e.g. "*" for everything)
+  logdir_name:
+    name: Log Rotate Directory
+    description: Directory where log output will be stored via s6-log (e.g. /config/ebusd-logs)
+  logdir_files_number:
+    name: Log Rotate Max Files
+    description: Maximum number of rotated log files in Log Rotate Directory. Default:5
+  logdir_files_size:
+    name: Log Rotate Max File Size
+    description: Maximum size of rotated log file in Log Rotate Directory. Per File, in bytes. Default:1000000
   loglevel_all:
     name: "Log level for all messages (default: notice)"
     description: Set log level for all messages.
   loglevel_network:
-    name: Log level for network messages 
+    name: Log level for network messages
     description: Set log level for all messages.
   loglevel_update:
-    name: Log level for update messages 
+    name: Log level for update messages
     description: Set log level for update messages.
   loglevel_bus:
-    name: Log level for bus messages 
+    name: Log level for bus messages
     description: Set log level for bus messages.
   loglevel_main:
-    name: Log level for main messages 
+    name: Log level for main messages
     description: Set log level for main messages
   loglevel_other:
-    name: Log level for other messages (incl MQTT) 
+    name: Log level for other messages (incl MQTT)
     description: Set log level for other messages
   network_device:
     name: Network adapter address i.e enh:192.168.0.7:9999

@@ -32,6 +32,15 @@ configuration:
   accesslevel:
     name: Úroveň přístupu
     description: Nastavte výchozí úroveň pro přístup (např. "*" pro všechny)
+  logdir_name:
+    name: Složka logování
+    description: Složka, kam se budou ukádat logy skrze s6-log (např. /config/ebusd-logs)
+  logdir_files_number:
+    name: Maximální počet souborů ve složce logování
+    description: Výchozí:5
+  logdir_files_size:
+    name: Maximální velikost souboru ve složce logování
+    description: Pro jednotlivý soubor, v bytech. Výchozí:1000000
   loglevel_all:
     name: "Úroveň logování pro všechny zprávy (výchozí: oznámení (notice))"
     description: Nastavte úroveň logování pro všechny zprávy.
@@ -48,7 +57,7 @@ configuration:
     name: Úroveň logování pro hlavní (main) zprávy.
     description: Nastavte úroveň logování pro hlavní (main) zprávy.
   loglevel_other:
-    name: Úroveň logování pro ostatní zprávy (včetně MQTT) 
+    name: Úroveň logování pro ostatní zprávy (včetně MQTT)
     description: Nastavte úroveň logování pro ostatní zprávy (včetně MQTT).
   network_device:
     name: Adresa síťového adaptéru například enh:192.168.0.7:9999
@@ -61,7 +70,7 @@ configuration:
     description: Přepíše automaticky nastavený MQTT port, použijte 0 pro vypnutí
   mqttuser:
     name: "Uživatelské jméno pro MQTT (výchozí: prázdné pro automtické nastavení)"
-    description:  Přepíše automaticky nastavené uživatelské jméno pro MQTT
+    description: Přepíše automaticky nastavené uživatelské jméno pro MQTT
   mqttpass:
     name: "Heslo pro MQTT (výchozí: prázdné pro automtické nastavení)"
     description: řepíše automaticky nastavené uživatelské heslo pro MQTT
