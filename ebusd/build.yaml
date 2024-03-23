@@ -9,3 +9,6 @@ labels:
   org.opencontainers.image.description: "This Add-on runs eBUSd, a daemon for handling communication with eBUS devices"
   org.opencontainers.image.source: "https://github.com/LukasGrebe/ha-addons"
   org.opencontainers.image.licenses: "Apache License 2.0"
+codenotary:
+  signer: notary@home-assistant.io
+  base_image: notary@home-assistant.io
