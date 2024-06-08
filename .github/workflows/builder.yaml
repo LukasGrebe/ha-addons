@@ -5,13 +5,15 @@ on:
     branches:
       - main
 
+permissions: read-all
+
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        addon: ["ebusd"]
-        arch: ["aarch64", "amd64", "armhf", "armv7", "i386"]
+        addon: [ebusd]
+        arch: [aarch64, amd64, armhf, armv7, i386]
 
     steps:
       - name: ⤵️ Check out code from GitHub
@@ -37,5 +39,5 @@ jobs:
           args: |
             --${{ matrix.arch }} \
             --target ${{matrix.addon}} \
-            --image "ha-addon-ebusd-${{ matrix.arch }}" \
-            --docker-hub "ghcr.io/${{ github.repository_owner }}"
+            --image ha-addon-ebusd-${{ matrix.arch }} \
+            --docker-hub ghcr.io/${{ github.repository_owner }}

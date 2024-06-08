@@ -8,7 +8,9 @@ on:
     branches:
       - main
   schedule:
-    - cron: "0 0 * * *"
+    - cron: 0 0 * * *
+
+permissions: read-all
 
 jobs:
   lint:
@@ -16,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        addon: ["ebusd"]
+        addon: [ebusd]
 
     steps:
       - name: ⤵️ Check out code from GitHub
