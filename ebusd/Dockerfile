@@ -18,4 +18,4 @@ CMD [ "/run.sh" ]
 
 # Health check
 HEALTHCHECK --interval=5m --timeout=3s --start-period=90s \
-   CMD nc -z localhost 8888 || exit 1
+   CMD nc -z 127.0.0.1 8888 || exit 1
