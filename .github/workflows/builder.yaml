@@ -24,7 +24,7 @@ jobs:
           path: ./${{ matrix.addon }}
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3.2.0
+        uses: docker/login-action@v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
