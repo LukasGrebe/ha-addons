@@ -32,7 +32,7 @@ jobs:
 
       - name: Build ${{ matrix.arch }} add-on
         if: contains(steps.info.outputs.architectures, matrix.arch)
-        uses: home-assistant/builder@2024.03.5
+        uses: home-assistant/builder@2024.08.1
         with:
           args: |
             --${{ matrix.arch }} \
