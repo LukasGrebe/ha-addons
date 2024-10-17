@@ -1,7 +1,15 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
+## version: 23.2.6
+
+- Update HEALTHCHECK in Dockerfile to not use DNS [#126](https://github.com/LukasGrebe/ha-addons/issues/126) thanks @StCyr
+
+## version: 23.2.5
+
+- Revert required mode [#116](https://github.com/LukasGrebe/ha-addons/issues/116) thanks @tjorim
+
 ## version: 23.2.4
 
-- added the option to store rotated logs in /config through s6-log
+- added the option to store rotated logs in /config through s6-log [#102](https://github.com/LukasGrebe/ha-addons/issues/102) thanks @pvyleta
 
 ## version: 23.2.3
 
