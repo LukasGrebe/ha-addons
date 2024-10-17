@@ -1,9 +1,12 @@
 name: Build and Test Add-on
 
 on:
-  pull_request:
+  push:
     branches:
-      - main
+      - '**'
+      - '!main'
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
