@@ -1,0 +1,75 @@
+name: Create Changelog and Release
+# Stick the format to v0.0.0 or V0.0.0 or 0.0.0
+on:
+  push:
+    tags:
+      - '[vV]*.*.*'
+      - '*.*.*'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+
+  release-notes:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v4.2.1
+
+      - name: Get information
+        id: info
+        uses: home-assistant/actions/helpers/info@master
+        with:
+          path: ./${{ matrix.addon }}
+
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v4.2.1
+
+      - name: Extract release notes and version
+        id: extract
+        run: |
+          RELEASE_INFO=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest)
+          VERSION_WITH_PREFIX=$(echo $RELEASE_INFO | jq -r .tag_name)
+          VERSION=$(echo $VERSION_WITH_PREFIX | sed 's/^[vV]//')
+          NOTES=$(echo $RELEASE_INFO | jq -r .body)
+          echo "VERSION_WITH_PREFIX=$VERSION_WITH_PREFIX" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "NOTES=$(echo \"$NOTES\" | sed ':a;N;$!ba;s/\\n/ /g')" >> $GITHUB_ENV
+
+      - name: Append release notes to changelog.md
+        run: |
+          VERSION_WITH_PREFIX=${{ env.VERSION_WITH_PREFIX }}
+          NOTES=${{ env.NOTES }}
+          sed -i "/<!-- append new version here -->/ a ## $VERSION_WITH_PREFIX\n$NOTES\n" ${{ github.workspace }}/ebusd/CHANGELOG.md
+
+
+      - name: Update version in config.yaml
+        run: |
+          VERSION=${{ env.VERSION }}
+          sed -i "s/version: .*/version: \"$VERSION\"/" ${{ github.workspace }}/ebusd/config.yaml
+          
+      - name: Configure git
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+
+          
+      - name: Commit and push changes
+        run: |
+          VERSION=${{ env.VERSION }}
+          git add ${{ github.workspace }}/ebusd/CHANGELOG.md ${{ github.workspace }}/ebusd/config.yaml
+          git commit -m "Release version $VERSION"
+          git push origin HEAD:main # Update 'main' to your branch name
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger the builder workflow
+        run: |
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/builder.yaml/dispatches \
+            -d '{"ref":"main"}'
