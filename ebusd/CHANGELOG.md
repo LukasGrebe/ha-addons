@@ -1,6 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
 <!-- append new version here -->
+## 4.4.4
+- **Full Changelog**: https://github.com/cociweb/ebusd-ha_addon/compare/v2.3.6...4.4.4
+
 ## 23.2.6
 
 - Update HEALTHCHECK in Dockerfile to not use DNS [#126](https://github.com/LukasGrebe/ha-addons/issues/126) thanks @StCyr
