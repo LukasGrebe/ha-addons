@@ -24,7 +24,6 @@ jobs:
         uses: home-assistant/actions/helpers/info@master
         with:
           path: ./${{ matrix.addon }}
-          
 
       - name: Build ${{ matrix.arch }} add-on
         if: contains(steps.info.outputs.architectures, matrix.arch)
