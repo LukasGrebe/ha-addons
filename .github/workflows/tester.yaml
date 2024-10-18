@@ -3,8 +3,7 @@ name: Build and Test Add-on
 on:
   push:
     branches:
-      - '**'
-      - '!main'
+      - main
   pull_request:
   workflow_dispatch:
 
