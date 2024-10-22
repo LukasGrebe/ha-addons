@@ -1,5 +1,5 @@
 name: Create Changelog and Release
-# Stick the format to v0.0.0 or V0.0.0 or 0.0.0
+# Trigger on tags matching the format: v0.0.0, V0.0.0, or 0.0.0
 on:
   push:
     tags:
