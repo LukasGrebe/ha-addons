@@ -1,4 +1,9 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
+
+## version: 24.1.1
+
+- Added color to logo to identify addon as running. This solves [#81](https://github.com/LukasGrebe/ha-addons/issues/81)
+
 ## version: 24.1.0
 
 - EBUSd 24.1
@@ -60,7 +65,7 @@
 
 ## 22.1
 
-**BREAKING CHANGE - MQTT JSON and MQTT Discovery will be enabled after upgrade.  This will break existing MQTT sensors**
+**BREAKING CHANGE - MQTT JSON and MQTT Discovery will be enabled after upgrade. This will break existing MQTT sensors**
 
 - IMPROVE: Enable SSL
 - IMPROVE: Include MQTT integration cfg files (/etc/ebusd/mqtt-hassio.cfg)
@@ -93,20 +98,19 @@
 - IMPROVE: Add Polish translation (@pepsonEL)
 - IMPROVE: Improve configuration of network eBUSd adapters.
 
-- BREAKING: Remove foreground option.  eBUSd will now run in foreground by default.
-- BREAKING: Network device config has changed.  Custom_device has now changed to wireless_device
-
+- BREAKING: Remove foreground option. eBUSd will now run in foreground by default.
+- BREAKING: Network device config has changed. Custom_device has now changed to wireless_device
 
 ## 0.83
 
 - BREAKING: Remove old style loglevel and logareas option
-- BREAKING: Remove TCP port option.  Port will default to port 8888 internally.  External port can be configured in network options
+- BREAKING: Remove TCP port option. Port will default to port 8888 internally. External port can be configured in network options
 
 - IMPROVE: Add access level config option
 - IMPROVE: Enable custom config files (save in config folder)
 - IMPROVE: Configure logger for individual areas
 - IMPROVE: Add watchdog URL so Home Assistant can restart eBUSd if it crashes
-- IMPROVE: Allow  access with HTTP and TCP client
+- IMPROVE: Allow access with HTTP and TCP client
 - IMPROVE: Add MQTT retain option
 - IMPROVE: Add custom commandline options
 
