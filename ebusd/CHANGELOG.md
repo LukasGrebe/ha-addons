@@ -1,25 +1,32 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
-## version: 24.1.0
+
+# Changelog
+
+## 24.1.1
+
+- Added color to logo to identify addon as running. This solves [#81](https://github.com/LukasGrebe/ha-addons/issues/81)
+
+## 24.1.0
 
 - EBUSd 24.1
 
-## version: 23.2.6
+## 23.2.6
 
 - Update HEALTHCHECK in Dockerfile to not use DNS [#126](https://github.com/LukasGrebe/ha-addons/issues/126) thanks @StCyr
 
-## version: 23.2.5
+## 23.2.5
 
 - Revert required mode [#116](https://github.com/LukasGrebe/ha-addons/issues/116) thanks @tjorim
 
-## version: 23.2.4
+## 23.2.4
 
 - added the option to store rotated logs in /config through s6-log [#102](https://github.com/LukasGrebe/ha-addons/issues/102) thanks @pvyleta
 
-## version: 23.2.3
+## 23.2.3
 
 - fix Healthcheck. This should solve [#61](https://github.com/LukasGrebe/ha-addons/issues/61) thanks @cociweb
 
-## version: 23.2.0
+## 23.2.0
 
 - Change build process to use pre-build containers. This should speed up the install of the addon as the addon does not need to be compiled from Supervisor before beeing run.
 - EBUSd 23.2
@@ -60,7 +67,7 @@
 
 ## 22.1
 
-**BREAKING CHANGE - MQTT JSON and MQTT Discovery will be enabled after upgrade.  This will break existing MQTT sensors**
+**BREAKING CHANGE - MQTT JSON and MQTT Discovery will be enabled after upgrade. This will break existing MQTT sensors**
 
 - IMPROVE: Enable SSL
 - IMPROVE: Include MQTT integration cfg files (/etc/ebusd/mqtt-hassio.cfg)
@@ -93,20 +100,19 @@
 - IMPROVE: Add Polish translation (@pepsonEL)
 - IMPROVE: Improve configuration of network eBUSd adapters.
 
-- BREAKING: Remove foreground option.  eBUSd will now run in foreground by default.
-- BREAKING: Network device config has changed.  Custom_device has now changed to wireless_device
-
+- BREAKING: Remove foreground option. eBUSd will now run in foreground by default.
+- BREAKING: Network device config has changed. Custom_device has now changed to wireless_device
 
 ## 0.83
 
 - BREAKING: Remove old style loglevel and logareas option
-- BREAKING: Remove TCP port option.  Port will default to port 8888 internally.  External port can be configured in network options
+- BREAKING: Remove TCP port option. Port will default to port 8888 internally. External port can be configured in network options
 
 - IMPROVE: Add access level config option
 - IMPROVE: Enable custom config files (save in config folder)
 - IMPROVE: Configure logger for individual areas
 - IMPROVE: Add watchdog URL so Home Assistant can restart eBUSd if it crashes
-- IMPROVE: Allow  access with HTTP and TCP client
+- IMPROVE: Allow access with HTTP and TCP client
 - IMPROVE: Add MQTT retain option
 - IMPROVE: Add custom commandline options
 
