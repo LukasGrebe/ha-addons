@@ -1,30 +1,32 @@
 <!-- https://developers.home-assistant.io/docs/add-ons/presentation#keeping-a-changelog -->
 
-## version: 24.1.1
+# Changelog
+
+## 24.1.1
 
 - Added color to logo to identify addon as running. This solves [#81](https://github.com/LukasGrebe/ha-addons/issues/81)
 
-## version: 24.1.0
+## 24.1.0
 
 - EBUSd 24.1
 
-## version: 23.2.6
+## 23.2.6
 
 - Update HEALTHCHECK in Dockerfile to not use DNS [#126](https://github.com/LukasGrebe/ha-addons/issues/126) thanks @StCyr
 
-## version: 23.2.5
+## 23.2.5
 
 - Revert required mode [#116](https://github.com/LukasGrebe/ha-addons/issues/116) thanks @tjorim
 
-## version: 23.2.4
+## 23.2.4
 
 - added the option to store rotated logs in /config through s6-log [#102](https://github.com/LukasGrebe/ha-addons/issues/102) thanks @pvyleta
 
-## version: 23.2.3
+## 23.2.3
 
 - fix Healthcheck. This should solve [#61](https://github.com/LukasGrebe/ha-addons/issues/61) thanks @cociweb
 
-## version: 23.2.0
+## 23.2.0
 
 - Change build process to use pre-build containers. This should speed up the install of the addon as the addon does not need to be compiled from Supervisor before beeing run.
 - EBUSd 23.2
