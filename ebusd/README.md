@@ -8,19 +8,20 @@ See [repository readme](https://github.com/LukasGrebe/ha-addons#how-to-install) 
 
 See [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#how-to-run-ebusd) on how to run ebusd in supervisor.
 
-**If you have questions or feedback please**
-- via the [Home Assistant Forums Topic](https://community.home-assistant.io/t/an-ebusd-add-on/344852)
-- via Issues and pull requests in the Github repository
+## Support
 
-*Not actually tested on any of these architectures*
-![Supports aarch64 Architecture][aarch64-shield]
-![Supports amd64 Architecture][amd64-shield]
-![Supports armhf Architecture][armhf-shield]
-![Supports armv7 Architecture][armv7-shield]
-![Supports i386 Architecture][i386-shield]
+**Issues in Configuration and Usage**
+Many issues result from incomplete [ebusd configuration](https://github.com/john30/ebusd/wiki/4.-Configuration) files. This project only runs ebusd, configurationfiles are **not** managed by this project. Please see the offical [ebusd project](https://ebusd.eu) and [community](https://github.com/john30/ebusd/discussions) for more information. 
 
-[aarch64-shield]: https://img.shields.io/badge/aarch64-yes-green.svg
-[amd64-shield]: https://img.shields.io/badge/amd64-yes-green.svg
-[armhf-shield]: https://img.shields.io/badge/armhf-yes-green.svg
-[armv7-shield]: https://img.shields.io/badge/armv7-yes-green.svg
-[i386-shield]: https://img.shields.io/badge/i386-yes-green.svg
+**If you have questions or feedback on running ebusd via supervisor**
+- use [Issues](https://github.com/LukasGrebe/ha-addons/issues) and [pull requests](https://github.com/LukasGrebe/ha-addons/pulls) in the Github repository
+- alternativly - but not checked as often - the [Home Assistant Forums Topic](https://community.home-assistant.io/t/an-ebusd-add-on/344852)
+
+## Versioning Scheme
+
+This add-on is versioned in a way that [mirrors the `ebusd` version](https://github.com/john30/ebusd/releases).
+Addon specific iterations are denoted by the patch number.
+
+- **<ebusd Major>.<ebusd Minor>.<Addon-specific Iteration> **: Mirrors the [corresponding `ebusd` version](https://github.com/john30/ebusd/releases). while the `Addon-specific Iteration` denote add-on-specific iterations.
+
+**Example**: `24.1.1`
