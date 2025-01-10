@@ -1,36 +1,10 @@
 # Changelog
 
-# next (tbd)
-## Home Assistant Add-on
-
-### Features
-* Add Home Assistant Ingress (Web UI) [#147](https://github.com/LukasGrebe/ha-addons/issues/147)
-* Colorize Logo to identify Add-on as running in Home Assistant [#81](https://github.com/LukasGrebe/ha-addons/issues/81)
-* Easier custom MQTT device configuration [#162](https://github.com/LukasGrebe/ha-addons/issues/162)
-* Include configuration files with Add-on Backups by following [HA Changes](https://developers.home-assistant.io/blog/2023/11/06/public-addon-config/) [#160](https://github.com/LukasGrebe/ha-addons/issues/160)
-
-### Improvements
-* Drastically reduce Settings UI [#85](https://github.com/LukasGrebe/ha-addons/issues/85)
-* Increase security classification by creating an apparmor profile [#83](https://github.com/LukasGrebe/ha-addons/issues/83)
-* Update documentation [#146](https://github.com/LukasGrebe/ha-addons/issues/146)
-
-## [ebusd](https://github.com/john30/ebusd/blob/master/ChangeLog.md)
-### Bug Fixes
-* fix for device string symlink with colon
-* fix "read" and "write" command response
-* fix dump of divisor
-* fix max value for S3N, S3N, SLG, and SLR types
-* fix socket options for KNXnet/IP integration
-
-### Features
-* add "-m" option to "encode" and "decode" commands
-* add output for commands executed with "--inject=stop"
-
-# 24.1.1-ha-addon.1
+# 24.1.1
 ## Home Assistant Add-on
 
 ### Improvements
-* Fix semantic versioning: Add-on specific iterations are denoted by a pre-release identifier (e.g., `-ha-addon.1`). ebusd version is mirrored.
+* Fix semantic versioning: ebusd version is mirrored; Add-on specific iterations are denoted by the patch number. 
 
 ### Bug Fixes
 * Bump Home Assistant base image version from 2.18 to 3.21
@@ -62,6 +36,35 @@
 * change default config path to https://ebus.github.io/ serving files generated from new TypeSpec message definition sources
 * change validation of identifiers to no longer accept unusual characters
 * change default device connection to be resolved automatically via mDNS
+
+
+# next (tbd)
+## Home Assistant Add-on
+
+### Features
+* Add Home Assistant Ingress (Web UI) [#147](https://github.com/LukasGrebe/ha-addons/issues/147)
+* Colorize Logo to identify Add-on as running in Home Assistant [#81](https://github.com/LukasGrebe/ha-addons/issues/81)
+* Easier custom MQTT device configuration [#162](https://github.com/LukasGrebe/ha-addons/issues/162)
+* Include configuration files with Add-on Backups by following [HA Changes](https://developers.home-assistant.io/blog/2023/11/06/public-addon-config/) [#160](https://github.com/LukasGrebe/ha-addons/issues/160)
+
+### Improvements
+* Drastically reduce Settings UI [#85](https://github.com/LukasGrebe/ha-addons/issues/85)
+* Increase security classification by creating an apparmor profile [#83](https://github.com/LukasGrebe/ha-addons/issues/83)
+* Update documentation [#146](https://github.com/LukasGrebe/ha-addons/issues/146)
+
+## [ebusd](https://github.com/john30/ebusd/blob/master/ChangeLog.md)
+### Bug Fixes
+* fix for device string symlink with colon
+* fix "read" and "write" command response
+* fix dump of divisor
+* fix max value for S3N, S3N, SLG, and SLR types
+* fix socket options for KNXnet/IP integration
+
+### Features
+* add "-m" option to "encode" and "decode" commands
+* add output for commands executed with "--inject=stop"
+
+# Older Releases
 
 ## 23.2.6
 

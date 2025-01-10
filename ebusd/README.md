@@ -20,9 +20,8 @@ Many issues result from incomplete [ebusd configuration](https://github.com/john
 ## Versioning Scheme
 
 This add-on is versioned in a way that [mirrors the `ebusd` version](https://github.com/john30/ebusd/releases).
-Addon specific iterations are denoted by a pre-release identifier (e.g., `-ha-addon.1`).
+Addon specific iterations are denoted by the patch number.
 
-- **Major.Minor.Patch**: Mirrors the [corresponding `ebusd` version](https://github.com/john30/ebusd/releases).
-- **Pre-release Identifier**: Used to denote add-on-specific iterations (e.g., `-ha-addon.1`).
+- **<ebusd Major>.<ebusd Minor>.<Addon-specific Iteration> **: Mirrors the [corresponding `ebusd` version](https://github.com/john30/ebusd/releases). while the `Addon-specific Iteration` denote add-on-specific iterations.
 
-**Example**: `24.1.1-ha-addon.1`
+**Example**: `24.1.1`
