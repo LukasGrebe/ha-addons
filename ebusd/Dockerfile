@@ -3,11 +3,6 @@ FROM $BUILD_FROM
 
 ENV LANG C.UTF-8
 
-RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" \
-    >> /etc/apk/repositories
-RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" \
-    >> /etc/apk/repositories
-
 RUN apk add --no-cache ebusd=24.1-r0
 
 LABEL Description="ebusd"
