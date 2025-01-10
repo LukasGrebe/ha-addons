@@ -8,9 +8,27 @@ See [repository readme](https://github.com/LukasGrebe/ha-addons#how-to-install) 
 
 See [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#how-to-run-ebusd) on how to run ebusd in supervisor.
 
-**If you have questions or feedback please**
-- via the [Home Assistant Forums Topic](https://community.home-assistant.io/t/an-ebusd-add-on/344852)
-- via Issues and pull requests in the Github repository
+## Support
+
+**Issues in Configuration and Usage**
+Lots of issues result from incomplete [ebusd configuration](https://github.com/john30/ebusd/wiki/4.-Configuration) files. This project only runs ebusd, configurationfiles are **not** managed by this project. Please see the offical [ebusd project](https://ebusd.eu) and [community](https://github.com/john30/ebusd/discussions) for more information. 
+
+
+**If you have questions or feedback on running ebusd via supervisor**
+- use [Issues](https://github.com/LukasGrebe/ha-addons/issues) and [pull requests](https://github.com/LukasGrebe/ha-addons/pulls) in the Github repository
+- alternativly - but not checked as often - the [Home Assistant Forums Topic](https://community.home-assistant.io/t/an-ebusd-add-on/344852)
+
+## Versioning Scheme
+This add-on is versioned in a way that [mirrors the `ebusd` version](https://github.com/john30/ebusd/releases).
+Addon specific iterations are denoted by a pre-release identifier (e.g., `-ha-addon.1`).
+
+- **Major.Minor.Patch**: Mirrors the [corresponding `ebusd` version](https://github.com/john30/ebusd/releases).
+- **Pre-release Identifier**: Used to denote add-on-specific iterations (e.g., `-ha-addon.1`).
+
+**Example**: `24.1.1-ha-addon.1`
+
+
+
 
 *Not actually tested on any of these architectures*
 ![Supports aarch64 Architecture][aarch64-shield]
