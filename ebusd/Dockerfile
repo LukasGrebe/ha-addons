@@ -12,7 +12,9 @@ RUN curl -s -o /etc/apt/sources.list.d/ebusd.list \
 
 RUN apt-get update
 
-RUN apt-get install ebusd
+RUN apt-get install ebusd -y
+
+RUN apt-get autoremove -y
 
 RUN apt-get clean
 
