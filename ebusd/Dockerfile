@@ -3,7 +3,17 @@ FROM $BUILD_FROM
 
 ENV LANG C.UTF-8
 
-RUN apk add --no-cache ebusd=24.1-r0
+RUN mkdir -p /etc/apt/keyrings && wget -q -O /etc/apt/keyrings/ebusd.gpg \
+    https://raw.githubusercontent.com/john30/ebusd-debian/master/ebusd.gpg
+
+RUN wget -O /etc/apt/sources.list.d/ebusd.list \
+    https://raw.githubusercontent.com/john30/ebusd-debian/master/ebusd-default-bookworm.list
+
+RUN apt-get update
+
+RUN apt-get install ebusd
+
+RUN apt-get clean
 
 LABEL Description="ebusd"
 
