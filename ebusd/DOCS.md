@@ -70,7 +70,7 @@ For example, `--initsend --dumpconfig`
 
 ## Network eBUS adapter support
 
-This release now fully supports wireless/network [eBUS adapters](https://adapter.ebusd.eu/index.en.html). The configuration options has changed from custom_device to network_device.
+This release now fully supports wireless/network [eBUS adapters](https://adapter.ebusd.eu/index.en.html). The configuration options have changed from custom_device to network_device.
 
 For example, `network_device: ens:Y.Y.Y.Y:9999`
 Where `Y.Y.Y.Y` is the address of the eBUS adapter.
