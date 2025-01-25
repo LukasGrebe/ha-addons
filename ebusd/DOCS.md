@@ -33,7 +33,7 @@ For more info please see the eBUSd docs:
 
 ## Custom CSV or MQTT cfg files:
 
-To use custom config files you can use the `configpath` option. You can create a local copy of https://github.com/john30/ebusd-configuration in your "/config" folder and change `configpath`, to e.g. "/config/ebusd-configuration/latest/en".  Custom CSV files must be in the /config folder.
+To use custom config files, you can use the `configpath` option. You can create a local copy of https://github.com/john30/ebusd-configuration in your "/config" folder and change `configpath`, to e.g. "/config/ebusd-configuration/latest/en". Custom CSV files must be in the /config folder.
 
 Similarly for MQTT, create a config file in "/config" folder and link it using the `--mqttint=/config/YOUR_FILE_PATH` option
 
@@ -45,7 +45,6 @@ After TCP clients activation you can connect from any system with installed [ebu
 The following example will force a reading of all messages from loaded csv config files and can be included via crontab for regular message updates:
 
 `ebusctl -s X.X.X.X f -l "*" -a|awk '{print $2}' | xargs -L1 -t ebusctl -s X.X.X.X r`
-
 
 Where `X.X.X.X` is the address of the ebusd add-on.
 
@@ -67,12 +66,12 @@ and you are inside the docker container, where you can easily run `ebusctl` or `
 
 You can add any command line options using the custom command line options field.  Check the eBUSd wiki for all available options - https://github.com/john30/ebusd/wiki/2.-Run
 
-For example ` --initsend --dumpconfig`
+For example, `--initsend --dumpconfig`
 
 ## Network eBUS adapter support
 
 This release now fully supports wireless/network [eBUS adapters](https://adapter.ebusd.eu/index.en.html). The configuration options has changed from custom_device to network_device.
 
-For example `network_device: ens:Y.Y.Y.Y:9999`
-Where `Y.Y.Y.Y` is the address of the eBUS asapter.
+For example, `network_device: ens:Y.Y.Y.Y:9999`
+Where `Y.Y.Y.Y` is the address of the eBUS adapter.
 
