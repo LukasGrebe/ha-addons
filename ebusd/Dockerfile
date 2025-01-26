@@ -12,7 +12,7 @@ RUN curl -s -o /etc/apt/sources.list.d/ebusd.list \
 
 RUN apt-get update
 
-RUN apt-get install ebusd -y
+RUN apt-get install netcat-traditional ebusd -y
 
 RUN apt-get autoremove -y
 
@@ -25,5 +25,5 @@ RUN chmod a+x /run.sh
 CMD [ "/run.sh" ]
 
 # Health check
-HEALTHCHECK --interval=5m --timeout=3s --start-period=90s \
+HEALTHCHECK --interval=30s --timeout=3s --start-period=60s \
    CMD nc -z 127.0.0.1 8888 || exit 1
