@@ -3,7 +3,20 @@ FROM $BUILD_FROM
 
 ENV LANG C.UTF-8
 
-RUN apk add --no-cache ebusd=24.1-r0
+RUN mkdir -p /etc/apt/keyrings && curl -s -o /etc/apt/keyrings/ebusd.gpg \
+    https://raw.githubusercontent.com/john30/ebusd-debian/master/ebusd.gpg
+
+
+RUN curl -s -o /etc/apt/sources.list.d/ebusd.list \
+    https://raw.githubusercontent.com/john30/ebusd-debian/master/ebusd-default-bookworm.list
+
+RUN apt-get update
+
+RUN apt-get install netcat-traditional ebusd -y
+
+RUN apt-get autoremove -y
+
+RUN apt-get clean
 
 LABEL Description="ebusd"
 
@@ -12,5 +25,5 @@ RUN chmod a+x /run.sh
 CMD [ "/run.sh" ]
 
 # Health check
-HEALTHCHECK --interval=5m --timeout=3s --start-period=90s \
+HEALTHCHECK --interval=30s --timeout=3s --start-period=60s \
    CMD nc -z 127.0.0.1 8888 || exit 1

@@ -1,5 +1,5 @@
 name: eBUSd
-version: "24.1.1"
+version: "24.1.2"
 slug: ebusd
 description: >
   This Add-on runs eBUSd, a daemon for handling communication with eBUS devices
@@ -7,7 +7,6 @@ description: >
   USB and network eBUSd adapters are supported.
 url: https://community.home-assistant.io/t/an-ebusd-add-on/344852
 arch:
-  - armhf
   - armv7
   - aarch64
   - amd64
@@ -20,6 +19,7 @@ services:
 uart: true
 map:
   - config:rw
+  - ssl:rw
 ports:
   8888/tcp: null
   8889/tcp: null
