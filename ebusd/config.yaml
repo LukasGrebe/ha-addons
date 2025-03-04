@@ -1,4 +1,4 @@
-name: eBUSd
+name: eBUSd2
 version: "24.1.1"
 slug: ebusd
 description: >
@@ -29,7 +29,7 @@ ports_description:
 options:
   scanconfig: true
   loglevel_all: "notice"
-  mqtttopic: "ebusd"
+  mqtttopic: "ebusd2"
   mqttint: "/etc/ebusd/mqtt-hassio.cfg"
   mqttjson: true
 schema:
