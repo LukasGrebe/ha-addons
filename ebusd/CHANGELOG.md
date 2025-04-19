@@ -4,7 +4,7 @@
 ## 25.1
 ### Home Assistant Add-on
 * Bump EBUSd to 25.1
-### [ebusd](https://github.com/john30/ebusd/blob/master/ChangeLog.md)
+### [ebusd](https://github.com/john30/ebusd/blob/master/ChangeLog.md) (2025-04-14)
 
 
 ## Next Release (tbd)
@@ -41,8 +41,8 @@
 #### Bug Fixes
 * Bump Home Assistant base image version from 2.18 to 3.21
 
-## 24.1 (2024-10-27)
-### [ebusd](https://github.com/john30/ebusd/blob/master/ChangeLog.md)
+## 24.1
+### [ebusd](https://github.com/john30/ebusd/blob/master/ChangeLog.md) (2024-10-27)
 #### Bug Fixes
 * fix conditional messages not being sent to message definition in MQTT integration and not being used in KNX group association
 * fix CSV dump of config files on command line
