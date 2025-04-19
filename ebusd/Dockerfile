@@ -3,7 +3,7 @@ FROM $BUILD_FROM
 
 ENV LANG C.UTF-8
 
-RUN apk add --no-cache ebusd=24.1-r0
+RUN apk add --no-cache ebusd=25.1-r0
 
 LABEL Description="ebusd"
 
