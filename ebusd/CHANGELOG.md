@@ -1,17 +1,71 @@
 # Changelog
 
-# 24.1.1
-## Home Assistant Add-on
+Current Release:
 
-### Improvements
+## 25.1
+### Home Assistant Add-on
+
+* Bump EBUSd to 25.1
+
+### [ebusd](https://github.com/john30/ebusd/blob/master/ChangeLog.md) (2025-04-14)
+
+## Bug Fixes
+
+* fix for device string symlink with colon
+* fix "read" and "write" command response
+* fix dump of divisor
+* fix max value for S3N, S3N, SLG, and SLR types
+* fix socket options for KNXnet/IP integration
+* fix constant encoding in json
+* fix parsing unexpected mDNS response
+* fix longer message key and check
+* fix unnecessary poll on scan messages
+
+## Features
+
+* add "-m" option to "encode" and "decode" commands
+* add output for commands executed with "--inject=stop"
+* add secondary replacement value for date types
+* add value range and step support for numeric types
+* add numeric base types without replacement value (e.g. "U1L", "S1L", "U2L", "S2L", "U2B", "S2B", etc.)
+* add also include write messages as read-only ones in MQTT definition topic if writes are excluded
+
+
+
+# Next Release (tbd)
+### Home Assistant Add-on
+
+#### Features
+
+* Add Home Assistant Ingress (Web UI) [#147](https://github.com/LukasGrebe/ha-addons/issues/147)
+* Colorize Logo to identify Add-on as running in Home Assistant [#81](https://github.com/LukasGrebe/ha-addons/issues/81)
+* Easier custom MQTT device configuration [#162](https://github.com/LukasGrebe/ha-addons/issues/162)
+* Include configuration files with Add-on Backups by following [HA Changes](https://developers.home-assistant.io/blog/2023/11/06/public-addon-config/) [#160](https://github.com/LukasGrebe/ha-addons/issues/160)
+
+##### Improvements
+
+* Drastically reduce Settings UI [#85](https://github.com/LukasGrebe/ha-addons/issues/85)
+* Increase security classification by creating an apparmor profile [#83](https://github.com/LukasGrebe/ha-addons/issues/83)
+* Update documentation [#146](https://github.com/LukasGrebe/ha-addons/issues/146)
+
+
+# Older Releases
+
+## 24.1.1
+### Home Assistant Add-on
+
+#### Improvements
+
 * Fix semantic versioning: ebusd version is mirrored; Add-on specific iterations are denoted by the patch number. 
 
-### Bug Fixes
+#### Bug Fixes
+
 * Bump Home Assistant base image version from 2.18 to 3.21
 
-# 24.1 (2024-10-27)
-## [ebusd](https://github.com/john30/ebusd/blob/master/ChangeLog.md)
-### Bug Fixes
+## 24.1
+### [ebusd](https://github.com/john30/ebusd/blob/master/ChangeLog.md) (2024-10-27)
+#### Bug Fixes
+
 * fix conditional messages not being sent to message definition in MQTT integration and not being used in KNX group association
 * fix CSV dump of config files on command line
 * fix DTM type with recent dates
@@ -20,7 +74,9 @@
 * fix for "reload" command not starting the scan again
 * fix datetime type mapping in MQTT
 
-### Features
+
+#### Features
+
 * add "inject" command
 * add config path to verbose "info" command
 * add "answer" command
@@ -32,39 +88,11 @@
 * add option to extend MQTT variables from env/cmdline
 * add date+datetime mapping, better device update check, and remove single-field-message field names in Home Assistant MQTT discovery integration
 
-### Breaking Changes
+#### Breaking Changes
+
 * change default config path to https://ebus.github.io/ serving files generated from new TypeSpec message definition sources
 * change validation of identifiers to no longer accept unusual characters
 * change default device connection to be resolved automatically via mDNS
-
-
-# next (tbd)
-## Home Assistant Add-on
-
-### Features
-* Add Home Assistant Ingress (Web UI) [#147](https://github.com/LukasGrebe/ha-addons/issues/147)
-* Colorize Logo to identify Add-on as running in Home Assistant [#81](https://github.com/LukasGrebe/ha-addons/issues/81)
-* Easier custom MQTT device configuration [#162](https://github.com/LukasGrebe/ha-addons/issues/162)
-* Include configuration files with Add-on Backups by following [HA Changes](https://developers.home-assistant.io/blog/2023/11/06/public-addon-config/) [#160](https://github.com/LukasGrebe/ha-addons/issues/160)
-
-### Improvements
-* Drastically reduce Settings UI [#85](https://github.com/LukasGrebe/ha-addons/issues/85)
-* Increase security classification by creating an apparmor profile [#83](https://github.com/LukasGrebe/ha-addons/issues/83)
-* Update documentation [#146](https://github.com/LukasGrebe/ha-addons/issues/146)
-
-## [ebusd](https://github.com/john30/ebusd/blob/master/ChangeLog.md)
-### Bug Fixes
-* fix for device string symlink with colon
-* fix "read" and "write" command response
-* fix dump of divisor
-* fix max value for S3N, S3N, SLG, and SLR types
-* fix socket options for KNXnet/IP integration
-
-### Features
-* add "-m" option to "encode" and "decode" commands
-* add output for commands executed with "--inject=stop"
-
-# Older Releases
 
 ## 23.2.6
 
