@@ -3,12 +3,21 @@ FROM $BUILD_FROM
 
 ENV LANG C.UTF-8
 
-RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" \
-    >> /etc/apk/repositories
-RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" \
-    >> /etc/apk/repositories
-
-RUN apk add --no-cache ebusd=25.1-r0
+# Download and install ebusd 26.1 from official Debian packages
+# The BUILDPLATFORM is automatically set by Docker buildx
+RUN apk add --no-cache ca-certificates curl dpkg && \
+    ARCH=$(case "$(apk --print-arch)" in \
+        x86_64) echo "amd64" ;; \
+        x86) echo "386" ;; \
+        aarch64) echo "arm64" ;; \
+        armv7l) echo "armv7" ;; \
+        armhf) echo "armv7" ;; \
+        *) echo "unknown" ;; \
+    esac) && \
+    curl -L -o /tmp/ebusd.deb "https://github.com/john30/ebusd/releases/download/26.1/ebusd-26.1_${ARCH}-trixie_mqtt1.deb" && \
+    dpkg --extract /tmp/ebusd.deb / && \
+    rm /tmp/ebusd.deb && \
+    apk del --no-cache ca-certificates curl dpkg
 
 LABEL Description="ebusd"
 

@@ -2,97 +2,116 @@
 
 Current Release:
 
-## 25.1
+## 26.1
+
 ### Home Assistant Add-on
 
-* Bump EBUSd to 25.1
+- Bump EBUSd to 26.1
+
+### [ebusd](https://github.com/john30/ebusd/blob/master/ChangeLog.md) (2026-02-09)
+
+## Bug Fixes
+
+- fix memory leak
+- fix write-only and broadcast message cache reading
+
+## Features
+
+- add multi-level load instructions support
+- add `--mqttcaos` option for MQTT CA certificates
+
+## 25.1
+
+### Home Assistant Add-on
+
+- Bump EBUSd to 25.1
 
 ### [ebusd](https://github.com/john30/ebusd/blob/master/ChangeLog.md) (2025-04-14)
 
 ## Bug Fixes
 
-* fix for device string symlink with colon
-* fix "read" and "write" command response
-* fix dump of divisor
-* fix max value for S3N, S3N, SLG, and SLR types
-* fix socket options for KNXnet/IP integration
-* fix constant encoding in json
-* fix parsing unexpected mDNS response
-* fix longer message key and check
-* fix unnecessary poll on scan messages
+- fix for device string symlink with colon
+- fix "read" and "write" command response
+- fix dump of divisor
+- fix max value for S3N, S3N, SLG, and SLR types
+- fix socket options for KNXnet/IP integration
+- fix constant encoding in json
+- fix parsing unexpected mDNS response
+- fix longer message key and check
+- fix unnecessary poll on scan messages
 
 ## Features
 
-* add "-m" option to "encode" and "decode" commands
-* add output for commands executed with "--inject=stop"
-* add secondary replacement value for date types
-* add value range and step support for numeric types
-* add numeric base types without replacement value (e.g. "U1L", "S1L", "U2L", "S2L", "U2B", "S2B", etc.)
-* add also include write messages as read-only ones in MQTT definition topic if writes are excluded
-
-
+- add "-m" option to "encode" and "decode" commands
+- add output for commands executed with "--inject=stop"
+- add secondary replacement value for date types
+- add value range and step support for numeric types
+- add numeric base types without replacement value (e.g. "U1L", "S1L", "U2L", "S2L", "U2B", "S2B", etc.)
+- add also include write messages as read-only ones in MQTT definition topic if writes are excluded
 
 # Next Release (tbd)
+
 ### Home Assistant Add-on
 
 #### Features
 
-* Add Home Assistant Ingress (Web UI) [#147](https://github.com/LukasGrebe/ha-addons/issues/147)
-* Colorize Logo to identify Add-on as running in Home Assistant [#81](https://github.com/LukasGrebe/ha-addons/issues/81)
-* Easier custom MQTT device configuration [#162](https://github.com/LukasGrebe/ha-addons/issues/162)
-* Include configuration files with Add-on Backups by following [HA Changes](https://developers.home-assistant.io/blog/2023/11/06/public-addon-config/) [#160](https://github.com/LukasGrebe/ha-addons/issues/160)
+- Add Home Assistant Ingress (Web UI) [#147](https://github.com/LukasGrebe/ha-addons/issues/147)
+- Colorize Logo to identify Add-on as running in Home Assistant [#81](https://github.com/LukasGrebe/ha-addons/issues/81)
+- Easier custom MQTT device configuration [#162](https://github.com/LukasGrebe/ha-addons/issues/162)
+- Include configuration files with Add-on Backups by following [HA Changes](https://developers.home-assistant.io/blog/2023/11/06/public-addon-config/) [#160](https://github.com/LukasGrebe/ha-addons/issues/160)
 
 ##### Improvements
 
-* Drastically reduce Settings UI [#85](https://github.com/LukasGrebe/ha-addons/issues/85)
-* Increase security classification by creating an apparmor profile [#83](https://github.com/LukasGrebe/ha-addons/issues/83)
-* Update documentation [#146](https://github.com/LukasGrebe/ha-addons/issues/146)
-
+- Drastically reduce Settings UI [#85](https://github.com/LukasGrebe/ha-addons/issues/85)
+- Increase security classification by creating an apparmor profile [#83](https://github.com/LukasGrebe/ha-addons/issues/83)
+- Update documentation [#146](https://github.com/LukasGrebe/ha-addons/issues/146)
 
 # Older Releases
 
 ## 24.1.1
+
 ### Home Assistant Add-on
 
 #### Improvements
 
-* Fix semantic versioning: ebusd version is mirrored; Add-on specific iterations are denoted by the patch number. 
+- Fix semantic versioning: ebusd version is mirrored; Add-on specific iterations are denoted by the patch number.
 
 #### Bug Fixes
 
-* Bump Home Assistant base image version from 2.18 to 3.21
+- Bump Home Assistant base image version from 2.18 to 3.21
 
 ## 24.1
+
 ### [ebusd](https://github.com/john30/ebusd/blob/master/ChangeLog.md) (2024-10-27)
+
 #### Bug Fixes
 
-* fix conditional messages not being sent to message definition in MQTT integration and not being used in KNX group association
-* fix CSV dump of config files on command line
-* fix DTM type with recent dates
-* fix for some updated messages not appearing on KNX or MQTT
-* fix for parsing certain condition ranges
-* fix for "reload" command not starting the scan again
-* fix datetime type mapping in MQTT
-
+- fix conditional messages not being sent to message definition in MQTT integration and not being used in KNX group association
+- fix CSV dump of config files on command line
+- fix DTM type with recent dates
+- fix for some updated messages not appearing on KNX or MQTT
+- fix for parsing certain condition ranges
+- fix for "reload" command not starting the scan again
+- fix datetime type mapping in MQTT
 
 #### Features
 
-* add "inject" command
-* add config path to verbose "info" command
-* add "answer" command
-* add option to inject start-up commands
-* add verbose raw data option to "read" and "write" commands
-* add option to allow write direction in "read" command when inline defining a new message
-* add option to discover device via mDNS
-* add dedicated log level for device messages
-* add option to extend MQTT variables from env/cmdline
-* add date+datetime mapping, better device update check, and remove single-field-message field names in Home Assistant MQTT discovery integration
+- add "inject" command
+- add config path to verbose "info" command
+- add "answer" command
+- add option to inject start-up commands
+- add verbose raw data option to "read" and "write" commands
+- add option to allow write direction in "read" command when inline defining a new message
+- add option to discover device via mDNS
+- add dedicated log level for device messages
+- add option to extend MQTT variables from env/cmdline
+- add date+datetime mapping, better device update check, and remove single-field-message field names in Home Assistant MQTT discovery integration
 
 #### Breaking Changes
 
-* change default config path to https://ebus.github.io/ serving files generated from new TypeSpec message definition sources
-* change validation of identifiers to no longer accept unusual characters
-* change default device connection to be resolved automatically via mDNS
+- change default config path to https://ebus.github.io/ serving files generated from new TypeSpec message definition sources
+- change validation of identifiers to no longer accept unusual characters
+- change default device connection to be resolved automatically via mDNS
 
 ## 23.2.6
 
@@ -151,7 +170,7 @@ Current Release:
 
 ## 22.1
 
-**BREAKING CHANGE - MQTT JSON and MQTT Discovery will be enabled after upgrade.  This will break existing MQTT sensors**
+**BREAKING CHANGE - MQTT JSON and MQTT Discovery will be enabled after upgrade. This will break existing MQTT sensors**
 
 - IMPROVE: Enable SSL
 - IMPROVE: Include MQTT integration cfg files (/etc/ebusd/mqtt-hassio.cfg)
@@ -182,20 +201,19 @@ Current Release:
 - IMPROVE: Add Polish translation (@pepsonEL)
 - IMPROVE: Improve configuration of network eBUSd adapters.
 
-- BREAKING: Remove foreground option.  eBUSd will now run in foreground by default.
-- BREAKING: Network device config has changed.  Custom_device has now changed to wireless_device
-
+- BREAKING: Remove foreground option. eBUSd will now run in foreground by default.
+- BREAKING: Network device config has changed. Custom_device has now changed to wireless_device
 
 ## 0.83
 
 - BREAKING: Remove old style loglevel and logareas option
-- BREAKING: Remove TCP port option.  Port will default to port 8888 internally.  External port can be configured in network options
+- BREAKING: Remove TCP port option. Port will default to port 8888 internally. External port can be configured in network options
 
 - IMPROVE: Add access level config option
 - IMPROVE: Enable custom config files (save in config folder)
 - IMPROVE: Configure logger for individual areas
 - IMPROVE: Add watchdog URL so Home Assistant can restart eBUSd if it crashes
-- IMPROVE: Allow  access with HTTP and TCP client
+- IMPROVE: Allow access with HTTP and TCP client
 - IMPROVE: Add MQTT retain option
 - IMPROVE: Add custom commandline options
 
