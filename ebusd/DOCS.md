@@ -106,21 +106,21 @@ auto-configured from the Mosquitto broker — remove them from your config entir
 
 ## App config folder
 
-The app config folder is at `/addon_configs/ebusd/` on the HA host and mounted at
+The app config folder is at `/addon_configs/2ad9b828_ebusd/` on the HA host and mounted at
 `/config` inside the running container. It is included in HA backups.
 
 Access it via:
 
-- **Studio Code Server** (VS Code in browser addon) — full filesystem access, browse to `/addon_configs/ebusd/`
-- **SSH** (Advanced SSH addon) — `cd /addon_configs/ebusd/`
+- **Studio Code Server** (VS Code in browser addon) — full filesystem access, browse to `/addon_configs/2ad9b828_ebusd/`
+- **SSH** (Advanced SSH addon) — `cd /addon_configs/2ad9b828_ebusd/`
 - **Samba** — exposed as the `addon_configs` share
 
 > Note: the built-in **File Editor** cannot access app config folders — use one of the above instead.
 
 | Host path | Container path | Purpose |
 |---|---|---|
-| `/addon_configs/ebusd/mqtt-hassio.cfg` | `/config/mqtt-hassio.cfg` | MQTT integration config (seeded on first start) |
-| `/addon_configs/ebusd/` | `/config/` | Local message definition CSV files |
+| `/addon_configs/2ad9b828_ebusd/mqtt-hassio.cfg` | `/config/mqtt-hassio.cfg` | MQTT integration config (seeded on first start) |
+| `/addon_configs/2ad9b828_ebusd/` | `/config/` | Local message definition CSV files |
 
 ## Migrating config folder from version 25.1 or older
 
@@ -130,8 +130,8 @@ files) need to be copied to the new location.
 
 | Old path (≤25.1) | New path (≥26.1) |
 |---|---|
-| `/config/mqtt-hassio.cfg` | `/addon_configs/ebusd/mqtt-hassio.cfg` |
-| `/config/ebusd-configuration/` | `/addon_configs/ebusd/` |
+| `/config/mqtt-hassio.cfg` | `/addon_configs/2ad9b828_ebusd/mqtt-hassio.cfg` |
+| `/config/ebusd-configuration/` | `/addon_configs/2ad9b828_ebusd/` |
 
 Copy your files via SSH or Studio Code Server. The `mqtt-hassio.cfg` is seeded
 automatically on first start if it doesn't exist yet — you only need to copy it if you
