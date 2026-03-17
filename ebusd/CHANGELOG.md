@@ -1,3 +1,7 @@
+# 26.1.3 (2026-03-17)
+## App Changes
+* Fix startup regression introduced in 26.1.2: `commandline_options` not set caused a literal `null` argument to be passed to ebusd, resulting in `invalid arguments` and a restart loop
+
 # 26.1.2 (2026-03-17)
 ## App Changes
 * Fix `commandline_options` passing multiple flags as a single argument — each space-separated flag is now correctly split into individual CLI arguments (fixes [#201](https://github.com/LukasGrebe/ha-addons/issues/201))

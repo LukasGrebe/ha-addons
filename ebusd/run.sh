@@ -31,5 +31,11 @@ fi
 
 ttyd --port 7681 --writable bash &
 
-bashio::log.info "ebusd $(printf '%s ' "${ebusd_args[@]}" $(bashio::config 'commandline_options') | sed 's/--mqttuser=[^ ]*/--mqttuser=<redacted>/g; s/--mqttpass=[^ ]*/--mqttpass=<redacted>/g')"
-exec ebusd "${ebusd_args[@]}" $(bashio::config 'commandline_options')
+if bashio::config.has_value "commandline_options"; then
+    extra_opts=$(bashio::config 'commandline_options')
+else
+    extra_opts=""
+fi
+
+bashio::log.info "ebusd $(printf '%s ' "${ebusd_args[@]}" $extra_opts | sed 's/--mqttuser=[^ ]*/--mqttuser=<redacted>/g; s/--mqttpass=[^ ]*/--mqttpass=<redacted>/g')"
+exec ebusd "${ebusd_args[@]}" $extra_opts
