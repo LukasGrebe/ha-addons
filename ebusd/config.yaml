@@ -13,7 +13,6 @@ arch:
   - aarch64
   - amd64
 image: "ghcr.io/lukasgrebe/ha-addon-ebusd-{arch}"
-apparmor: true
 init: false
 startup: services
 services:
