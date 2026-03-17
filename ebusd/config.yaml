@@ -10,8 +10,6 @@ description: >
   releases automatically. USB and network eBUS adapters supported.
 url: https://github.com/john30/ebusd
 arch:
-  - armhf
-  - armv7
   - aarch64
   - amd64
 image: "ghcr.io/lukasgrebe/ha-addon-ebusd-{arch}"
