@@ -14,7 +14,6 @@ arch:
   - armv7
   - aarch64
   - amd64
-  - i386
 image: "ghcr.io/lukasgrebe/ha-addon-ebusd-{arch}"
 init: false
 startup: services
@@ -29,7 +28,6 @@ ports:
 ports_description:
   8888/tcp: eBUSd TCP command port
   8889/tcp: eBUSd HTTP port (set --httpport=8889 in commandline_options to enable)
-options: {}
 schema:
   device: "device(subsystem=tty)?"
   network_device: "str?"
