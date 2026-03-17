@@ -33,5 +33,5 @@ if [ ! -f /config/mqtt-hassio.cfg ]; then
     cp /etc/ebusd/mqtt-hassio.cfg /config/mqtt-hassio.cfg
 fi
 
-bashio::log.info "ebusd ${ebusd_args[*]}"
+bashio::log.info "ebusd $(printf '%s ' "${ebusd_args[@]}" | sed 's/--mqttuser=[^ ]*/--mqttuser=<redacted>/g; s/--mqttpass=[^ ]*/--mqttpass=<redacted>/g')"
 exec ebusd "${ebusd_args[@]}"
