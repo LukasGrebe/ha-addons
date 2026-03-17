@@ -1,7 +1,10 @@
+# 26.1.2 (2026-03-17)
+## App Changes
+* Fix `commandline_options` passing multiple flags as a single argument — each space-separated flag is now correctly split into individual CLI arguments (fixes [#201](https://github.com/LukasGrebe/ha-addons/issues/201))
+
 # 26.1.1 (2026-03-17)
 ## App Changes
 * Add web terminal (ttyd via xterm.js) accessible via Open Web UI on the addon Info page — supports interactive commands, long-running output, and Ctrl+C/D
-* Fix `commandline_options` passing multiple flags as a single argument — each space-separated flag is now correctly split into individual CLI arguments (fixes [#201](https://github.com/LukasGrebe/ha-addons/issues/201))
 * Redact MQTT username and password from addon logs
 * Modify .github/workflows/update-ebusd.yml to preserve App Changes sections when prepending new upstream releases to CHANGELOG.md
 
