@@ -1,0 +1,95 @@
+name: Update ebusd
+# Checks for new john30/ebusd releases and opens a PR that bumps:
+#   - ebusd/config.yaml  version field  (single source of truth; HA Supervisor reads this)
+#   - ebusd/Dockerfile   FROM tag       (kept in sync for readability)
+#
+# Triggers:
+#   1. Weekly schedule  — catches any release automatically
+#   2. workflow_dispatch — run manually at any time
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'  # Every Monday at 08:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Get latest ebusd release
+        id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE=$(gh api repos/john30/ebusd/releases/latest)
+          VERSION=$(echo "$RELEASE" | jq -r '.tag_name')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Latest ebusd release: ${VERSION}"
+
+      - name: Get current version from config.yaml
+        id: current
+        run: |
+          VERSION=$(grep '^version:' ebusd/config.yaml \
+            | sed 's/version: "\([0-9.]*\)\.0"/\1/')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Current: ${VERSION}"
+
+      - name: Check if update is needed
+        id: check
+        run: |
+          LATEST="${{ steps.latest.outputs.version }}"
+          CURRENT="${{ steps.current.outputs.version }}"
+          if [ "$LATEST" != "$CURRENT" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "Update needed: $CURRENT → $LATEST"
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "Already up to date: $LATEST"
+          fi
+
+      - name: Update config.yaml, Dockerfile, and CHANGELOG.md
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          VERSION="${{ steps.latest.outputs.version }}"
+          # config.yaml: HA Supervisor version format is X.Y.0
+          sed -i "s/^version:.*/version: \"${VERSION}.0\"/" ebusd/config.yaml
+          # Dockerfile: Docker Hub image uses "v" prefix; GitHub tag does not
+          sed -i "s|FROM john30/ebusd:v.*|FROM john30/ebusd:v${VERSION} AS upstream|" \
+            ebusd/Dockerfile
+          # Fetch upstream ChangeLog (GitHub tag has no "v" prefix, matching $VERSION directly)
+          curl -fsSL "https://raw.githubusercontent.com/john30/ebusd/${VERSION}/ChangeLog.md" \
+            -o ebusd/CHANGELOG.md
+          echo "Bumped to ${VERSION} and refreshed CHANGELOG.md"
+
+      - name: Create Pull Request
+        if: steps.check.outputs.needed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "Bump ebusd from ${{ steps.current.outputs.version }} to ${{ steps.latest.outputs.version }}"
+          title: "Bump ebusd from ${{ steps.current.outputs.version }} to ${{ steps.latest.outputs.version }}"
+          body: |
+            ## ebusd ${{ steps.latest.outputs.version }}
+
+            | | Version |
+            |---|---|
+            | Before | `${{ steps.current.outputs.version }}` |
+            | After  | `${{ steps.latest.outputs.version }}` |
+
+            Full [ebusd release notes](https://github.com/john30/ebusd/releases/tag/${{ steps.latest.outputs.version }}).
+
+            `ebusd/CHANGELOG.md` has been refreshed from upstream.
+
+            After merging: builder.yaml builds and publishes the updated app image.
+
+            ---
+            *Automated PR — created by the [update-ebusd workflow](.github/workflows/update-ebusd.yml)*
+          branch: "update/ebusd-${{ steps.latest.outputs.version }}"
+          delete-branch: true

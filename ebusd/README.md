@@ -1,27 +1,28 @@
-# Home Assistant Add-on: ebusd
+# Home Assistant App: eBUSd
 
-This add-on creates a supervisor add-on to run [ebusd](http://ebusd.eu). Configure ebusd comandline arguments using configuration options.
+A transparent wrapper of [ebusd](https://ebusd.eu) for Home Assistant.
+Tracks upstream [john30/ebusd](https://github.com/john30/ebusd) releases automatically.
 
-Use ebusd's built-in MQTT client and the [mosquitto](https://github.com/home-assistant/addons/tree/master/mosquitto) add-on to get data from ebusd into Home Assistant core.
+## What this app does
 
-See [repository readme](https://github.com/LukasGrebe/ha-addons#how-to-install) on how to install ebusd addon in supervisor.
+- Runs ebusd as a Home Assistant supervised app (container).
+- Exposes ebusd's own command-line options as HA configuration fields.
+- Auto-configures the MQTT connection to the HA MQTT broker.
+- Seeds `mqtt-hassio.cfg` (MQTT–Home Assistant integration config) into the app config folder on first start.
 
-See [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#how-to-run-ebusd) on how to run ebusd in supervisor.
+## Installation
+
+See the [repository readme](https://github.com/LukasGrebe/ha-addons#how-to-install) for how to add this repository to Home Assistant.
+
+## Versioning
+
+This app version mirrors [john30/ebusd releases](https://github.com/john30/ebusd/releases) — `MAJOR.MINOR` matches ebusd, `.PATCH` is reserved for app-specific changes.
+
+For the changelog, see the upstream [ebusd releases page](https://github.com/john30/ebusd/releases).
 
 ## Support
 
-**Issues in Configuration and Usage**
-Many issues result from incomplete [ebusd configuration](https://github.com/john30/ebusd/wiki/4.-Configuration) files. This project only runs ebusd, configurationfiles are **not** managed by this project. Please see the offical [ebusd project](https://ebusd.eu) and [community](https://github.com/john30/ebusd/discussions) for more information. 
+**Configuration and device issues** — this app only runs ebusd; CSV message definition files are not managed here.
+Please see the official [ebusd project](https://ebusd.eu) and [community](https://github.com/john30/ebusd/discussions).
 
-**If you have questions or feedback on running ebusd via supervisor**
-- use [Issues](https://github.com/LukasGrebe/ha-addons/issues) and [pull requests](https://github.com/LukasGrebe/ha-addons/pulls) in the Github repository
-- alternativly - but not checked as often - the [Home Assistant Forums Topic](https://community.home-assistant.io/t/an-ebusd-add-on/344852)
-
-## Versioning Scheme
-
-This add-on is versioned in a way that [mirrors the `ebusd` version](https://github.com/john30/ebusd/releases).
-Addon specific iterations are denoted by the patch number.
-
-- **<ebusd Major>.<ebusd Minor>.<Addon-specific Iteration> **: Mirrors the [corresponding `ebusd` version](https://github.com/john30/ebusd/releases). while the `Addon-specific Iteration` denote add-on-specific iterations.
-
-**Example**: `24.1.1`
+**Issues specific to running ebusd via HA Supervisor** — use [Issues](https://github.com/LukasGrebe/ha-addons/issues) or [Pull Requests](https://github.com/LukasGrebe/ha-addons/pulls).

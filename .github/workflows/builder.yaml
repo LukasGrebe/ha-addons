@@ -1,4 +1,4 @@
-name: Build and Publish Add-on
+name: Build and Publish App
 
 on:
   push:
@@ -26,15 +26,15 @@ jobs:
           path: ./${{ matrix.addon }}
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v4.0.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build ${{ matrix.arch }} add-on
+      - name: Build ${{ matrix.arch }} app
         if: contains(steps.info.outputs.architectures, matrix.arch)
-        uses: home-assistant/builder@2024.08.2
+        uses: home-assistant/builder@2026.02.1
         with:
           args: |
             --${{ matrix.arch }} \

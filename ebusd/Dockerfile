@@ -1,21 +1,29 @@
+# Pull ebusd binary and config directly from john30's official multi-arch image.
+# Docker automatically selects the right arch variant from the manifest.
+# The tag here is kept in sync with config.yaml (single source of truth) by
+# update-ebusd.yml, which bumps both files together in each version-bump PR.
+FROM john30/ebusd:v26.1 AS upstream
+
 ARG BUILD_FROM
-FROM $BUILD_FROM
+FROM ${BUILD_FROM}
 
 ENV LANG C.UTF-8
 
-RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" \
-    >> /etc/apk/repositories
-RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" \
-    >> /etc/apk/repositories
+# Install only the runtime libraries the ebusd binary links against
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libmosquitto1 \
+      ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
-RUN apk add --no-cache ebusd=25.1-r0
+COPY --from=upstream /usr/bin/ebusd  /usr/bin/ebusd
+COPY --from=upstream /etc/ebusd/     /etc/ebusd/
 
 LABEL Description="ebusd"
 
 COPY run.sh /
 RUN chmod a+x /run.sh
-CMD [ "/run.sh" ]
+CMD ["/run.sh"]
 
-# Health check
-HEALTHCHECK --interval=5m --timeout=3s --start-period=90s \
+HEALTHCHECK --interval=1m --timeout=3s --start-period=120s \
    CMD nc -z 127.0.0.1 8888 || exit 1
