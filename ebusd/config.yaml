@@ -1,5 +1,5 @@
 name: eBUSd
-version: "26.1.4"
+version: "26.1.5"
 slug: ebusd
 description: >
   Run ebusd — a daemon for communicating with eBUS devices (heating systems connected
@@ -25,6 +25,9 @@ ports:
 ports_description:
   8888/tcp: eBUSd TCP command port
   8889/tcp: eBUSd HTTP port (set --httpport=8889 in commandline_options to enable)
+options:
+  commandline_options:
+    - "--mqttjson"
 schema:
   device: "device(subsystem=tty)?"
   network_device: "str?"

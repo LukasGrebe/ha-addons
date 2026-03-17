@@ -1,35 +1,22 @@
 configuration:
   device:
     name: USB eBUS adapter (--device)
-    description: >
-      Select a USB/serial eBUS adapter. HA shows detected TTY devices on the host.
-      For enhanced-speed protocol (enh:/dev/ttyUSB0), use network_device instead —
-      the picker gives the raw path only, not the protocol prefix.
+    description: "Select a USB/serial eBUS adapter. For enhanced-speed protocol (enh:) use network_device instead."
   network_device:
     name: Network / enhanced-protocol adapter (--device)
-    description: >
-      Full ebusd device string including protocol prefix. Examples:
-      mdns: (mDNS auto-discovery, default when left blank),
-      ens:192.168.1.1:9999 or enh:192.168.1.1:9999 (enhanced high-speed/normal-speed),
-      udp:192.168.1.1:9999 (plain UDP),
-      enh:/dev/ttyUSB0 (enhanced-speed USB).
-      Takes precedence over the USB picker if both are set.
+    description: "Full device string incl. protocol prefix, e.g. ens:192.168.1.1:9999, enh:/dev/ttyUSB0, or mdns: for auto-discovery."
   commandline_options:
-    name: Additional ebusd options
-    description: >
-      Pass any ebusd CLI flag not set automatically (see below for what is pre-configured).
-      Full reference: https://github.com/john30/ebusd/wiki/2.-Run
-
-      Pre-configured by this app (override by repeating the flag here):
-        --updatecheck=off     HA handles update notifications
-        --mqttjson            JSON format required for HA MQTT discovery
-        --mqttint=/config/mqtt-hassio.cfg  MQTT integration config
-
-      Managed internally, cannot be overridden:
-        --foreground          required for HA process management
-        --mqtthost/port/user/pass  auto-configured from the HA Mosquitto broker
-
-      Examples:
-        --pollinterval=30
-        --pollinterval=10 --httpport=8889 --log=bus:debug
-        --updatecheck=on --mqttint=/config/my-custom.cfg
+    name: Additional ebusd options (one flag per entry)
+    description: "ebusd CLI flags, one per entry. --foreground, --updatecheck=off, --mqtthost/port/user/pass and --mqttint are pre-configured."
+    options:
+      - "--mqttjson"
+      - "--scanconfig"
+      - "--pollinterval=30"
+      - "--httpport=8889"
+      - "--log=bus:debug"
+      - "--log=all:notice"
+      - "--readonly"
+      - "--configlang=de"
+      - "--configpath=/config/ebusd/"
+      - "--mqtttopic=ebusd"
+      - "--mqttretain"

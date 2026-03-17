@@ -1,3 +1,25 @@
+# 26.1.5 (2026-03-17)
+## App Changes
+
+> ### ⚠️ Breaking change: `commandline_options` is now a list
+>
+> **`commandline_options` has changed from a single text field to a list of individual flags.**
+> Each ebusd flag must be a separate entry. The default list contains `--mqttjson` which is
+> required for HA MQTT discovery — **do not remove it unless you know what you are doing.**
+>
+> **If you used `commandline_options` before:** your existing value is detected and used as-is
+> with a warning in the logs. Convert it manually: split your flags into one entry per line.
+>
+> **If you upgraded from version 25.1 or older:** your old config fields (`scanconfig`,
+> `loglevel_all`, `mqtttopic`, `mode`, `readonly`, etc.) are **no longer applied**.
+> The addon will warn you in the logs at startup. You must re-add them as entries in
+> `commandline_options`. See the [migration guide](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#migrating-from-version-251-or-older).
+
+* `commandline_options` changed from a single string to a **list of flags** — one entry per flag, no more word-splitting issues; `--mqttjson` pre-filled as default (fixes [#201](https://github.com/LukasGrebe/ha-addons/issues/201), [#202](https://github.com/LukasGrebe/ha-addons/issues/202))
+* Detect old (≤25.1) config fields at startup and log a clear warning with migration instructions
+* Log addon version as first line on every startup to simplify debugging
+* MQTT gracefully skipped when Supervisor service unavailable; configure manually via `commandline_options` if using an external broker (fixes [#204](https://github.com/LukasGrebe/ha-addons/issues/204))
+
 # 26.1.4 (2026-03-17)
 ## App Changes
 * Fix crash on startup when Mosquitto integration is not available — MQTT is auto-configured when the Supervisor service is present; when not available the addon starts without it and MQTT can still be configured manually via `commandline_options` (fixes [#204](https://github.com/LukasGrebe/ha-addons/issues/204))
