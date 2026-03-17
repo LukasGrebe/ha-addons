@@ -24,10 +24,6 @@ else
     bashio::log.info "No device configured — ebusd will attempt mDNS auto-discovery."
 fi
 
-if bashio::config.has_value "commandline_options"; then
-    ebusd_args+=("$(bashio::config 'commandline_options')")
-fi
-
 if [ ! -f /config/mqtt-hassio.cfg ]; then
     bashio::log.info "Seeding default mqtt-hassio.cfg into addon config folder."
     cp /etc/ebusd/mqtt-hassio.cfg /config/mqtt-hassio.cfg
@@ -35,5 +31,5 @@ fi
 
 ttyd --port 7681 --writable bash &
 
-bashio::log.info "ebusd $(printf '%s ' "${ebusd_args[@]}" | sed 's/--mqttuser=[^ ]*/--mqttuser=<redacted>/g; s/--mqttpass=[^ ]*/--mqttpass=<redacted>/g')"
-exec ebusd "${ebusd_args[@]}"
+bashio::log.info "ebusd $(printf '%s ' "${ebusd_args[@]}" $(bashio::config 'commandline_options') | sed 's/--mqttuser=[^ ]*/--mqttuser=<redacted>/g; s/--mqttpass=[^ ]*/--mqttpass=<redacted>/g')"
+exec ebusd "${ebusd_args[@]}" $(bashio::config 'commandline_options')
