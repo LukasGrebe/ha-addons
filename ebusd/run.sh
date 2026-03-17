@@ -25,7 +25,8 @@ else
 fi
 
 if bashio::config.has_value "commandline_options"; then
-    ebusd_args+=("$(bashio::config 'commandline_options')")
+    read -ra extra_args <<< "$(bashio::config 'commandline_options')"
+    ebusd_args+=("${extra_args[@]}")
 fi
 
 if [ ! -f /config/mqtt-hassio.cfg ]; then
