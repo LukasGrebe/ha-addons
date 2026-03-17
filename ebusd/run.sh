@@ -1,17 +1,26 @@
 #!/usr/bin/with-contenv bashio
 
+bashio::log.info "eBUSd addon version $(bashio::addon.version)"
+
 declare -a ebusd_args
 
 ebusd_args+=(
     "--foreground"
     "--updatecheck=off"
-    "--mqtthost=$(bashio::services mqtt 'host')"
-    "--mqttport=$(bashio::services mqtt 'port')"
-    "--mqttuser=$(bashio::services mqtt 'username')"
-    "--mqttpass=$(bashio::services mqtt 'password')"
-    "--mqttjson"
-    "--mqttint=/config/mqtt-hassio.cfg"
 )
+
+if bashio::services.available 'mqtt'; then
+    ebusd_args+=(
+        "--mqtthost=$(bashio::services mqtt 'host')"
+        "--mqttport=$(bashio::services mqtt 'port')"
+        "--mqttuser=$(bashio::services mqtt 'username')"
+        "--mqttpass=$(bashio::services mqtt 'password')"
+        "--mqttjson"
+        "--mqttint=/config/mqtt-hassio.cfg"
+    )
+else
+    bashio::log.warning "MQTT service not available via Supervisor. MQTT integration disabled. Pass --mqtt* flags manually via commandline_options if using an external broker."
+fi
 
 if bashio::config.has_value "network_device"; then
     if bashio::config.has_value "device"; then
