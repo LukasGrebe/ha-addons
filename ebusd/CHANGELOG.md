@@ -1,3 +1,10 @@
+<<<<<<< fix/issue204
+# 26.1.4 (2026-03-17)
+## App Changes
+* Fix crash on startup when Mosquitto integration is not available — MQTT is auto-configured when the Supervisor service is present; when not available the addon starts without it and MQTT can still be configured manually via `commandline_options` (fixes [#204](https://github.com/LukasGrebe/ha-addons/issues/204))
+
+=======
+>>>>>>> main
 # 26.1.3 (2026-03-17)
 ## App Changes
 * Fix startup regression introduced in 26.1.2: `commandline_options` not set caused a literal `null` argument to be passed to ebusd, resulting in `invalid arguments` and a restart loop
@@ -9,6 +16,10 @@
 # 26.1.1 (2026-03-17)
 ## App Changes
 * Add web terminal (ttyd via xterm.js) accessible via Open Web UI on the addon Info page — supports interactive commands, long-running output, and Ctrl+C/D
+<<<<<<< fix/issue204
+* Fix `commandline_options` passing multiple flags as a single argument — each space-separated flag is now correctly split into individual CLI arguments (fixes [#201](https://github.com/LukasGrebe/ha-addons/issues/201))
+=======
+>>>>>>> main
 * Redact MQTT username and password from addon logs
 * Modify .github/workflows/update-ebusd.yml to preserve App Changes sections when prepending new upstream releases to CHANGELOG.md
 

@@ -1,8 +1,5 @@
 name: eBUSd
-# version is the single source of truth for the upstream release.
-# HA Supervisor reads this from git to show the installed version and update badge.
-# update-ebusd.yml bumps this and the Dockerfile FROM tag together in each version PR.
-version: "26.1.3"
+version: "26.1.4"
 slug: ebusd
 description: >
   Run ebusd — a daemon for communicating with eBUS devices (heating systems connected
@@ -18,7 +15,7 @@ startup: services
 ingress: true
 ingress_port: 7681
 services:
-  - mqtt:need
+  - mqtt:want
 uart: true
 map:
   - addon_config:rw
