@@ -16,6 +16,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       libmosquitto1 \
       ca-certificates \
+      netcat-openbsd \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=upstream /usr/bin/ebusd  /usr/bin/ebusd
@@ -27,5 +28,5 @@ COPY run.sh /
 RUN chmod a+x /run.sh
 CMD ["/run.sh"]
 
-HEALTHCHECK --interval=1m --timeout=3s --start-period=120s \
+HEALTHCHECK --interval=10s --timeout=3s --start-period=30s \
    CMD nc -z 127.0.0.1 8888 || exit 1
