@@ -50,10 +50,112 @@ For any ebusd option not in the UI, use **commandline\_options**.
 The app config folder is mounted at `/config` inside the container and at
 `/addon_configs/ebusd/` on the host. Included in HA backups.
 
-| Path | Purpose |
+| Host path | Container path | Purpose |
+|---|---|---|
+| `/addon_configs/ebusd/mqtt-hassio.cfg` | `/config/mqtt-hassio.cfg` | MQTT integration config |
+| `/addon_configs/ebusd/ebusd-configuration/` | `/config/ebusd-configuration/` | Local CSV message definitions |
+
+---
+
+## MQTT configuration
+
+ebusd talks to Home Assistant via MQTT. The broker connection (host, port, credentials)
+is injected automatically by the Supervisor — you don't configure that.
+
+What you *can* customise is the MQTT integration behaviour via `mqtt-hassio.cfg`.
+On first start, the default file is seeded into the app config folder. Edit it at:
+
+- **SSH / Terminal**: `/addon_configs/ebusd/mqtt-hassio.cfg`
+- **Studio Code Server** addon (VS Code in browser): has full filesystem access, browse to `/addon_configs/ebusd/`
+- **Samba share**: exposed as the `addon_configs` share if you have the Samba addon installed
+
+The file is passed to ebusd as `--mqttint=/config/mqtt-hassio.cfg`. See the
+[ebusd MQTT integration docs](https://github.com/john30/ebusd/wiki/5.1-MQTT-integration)
+for all available options.
+
+If you want to use a different file, set in **commandline\_options**:
+```
+--mqttint=/config/my-custom.cfg
+```
+
+---
+
+## CSV message definitions
+
+By default ebusd fetches message definitions from [ebus.github.io](https://ebus.github.io)
+— a CDN serving pre-compiled CSV files. **You don't need to configure anything for this to work.**
+
+Files are organised by language and manufacturer (e.g. `/en/vaillant/`). ebusd picks
+the right file automatically when `--scanconfig` is used.
+
+To change the preferred language:
+```
+--configlang=de
+```
+
+To use a **local offline copy** of the pre-compiled CSVs, clone
+[ebus.github.io](https://github.com/eBUS/ebus.github.io) into the app config folder
+and point ebusd at the language subfolder:
+
+```
+--configpath=/config/ebusd-configuration/en
+```
+
+See [ebus.github.io](https://ebus.github.io) and the
+[ebusd configuration docs](https://github.com/john30/ebusd/wiki/4.-Configuration)
+for folder structure and source mapping details.
+
+---
+
+## Writing custom message definitions (VS Code)
+
+Message definitions are authored as [TypeSpec](https://typespec.io) `.tsp` files
+(found in the `/src/` folder of [ebusd-configuration](https://github.com/john30/ebusd-configuration))
+and compiled to CSV using the [ebus-typespec](https://github.com/john30/ebus-typespec) library.
+**You work with `.tsp` source files, not CSV directly.**
+
+The official tool for this is the
+[ebus-notebook](https://github.com/john30/ebus-notebook) VS Code extension by john30 —
+a notebook interface that handles authoring, compilation, and live testing in one place.
+
+### Setup
+
+1. Install the [TypeSpec for VS Code](https://marketplace.visualstudio.com/items?itemName=typespec.typespec-vscode) extension from the marketplace.
+2. Install the eBUS TypeSpec package in your workspace:
+   ```bash
+   npm i @ebusd/ebus-typespec
+   ```
+3. Install [ebus-notebook](https://github.com/john30/ebus-notebook) from the repo
+   (clone and install via VS Code's *Install from VSIX* if not yet on the marketplace).
+
+### Connect to your running ebusd instance
+
+The extension can talk directly to your ebusd instance for live testing and decoding.
+Enable it by adding to **commandline\_options**:
+
+```
+--enabledefine
+```
+
+Then configure the extension in VS Code settings:
+
+| Setting | Value |
 |---|---|
-| `/config/mqtt-hassio.cfg` | MQTT integration config — seeded on first start, edit to customise |
-| `/config/ebusd-configuration/` | Optional local [CSV message definitions](https://github.com/john30/ebusd-configuration) |
+| `ebus-notebook.ebusd.host` | IP of your Home Assistant instance |
+| `ebus-notebook.ebusd.port` | `8888` (or whatever port you exposed) |
+
+> Port 8888 must be mapped in the app's **Network** settings for the extension to reach it.
+
+### Workflow
+
+1. Run `Create New eBUS Notebook` in the VS Code command palette to get started.
+2. Write TypeSpec definitions in the notebook cells (`.tsp` format).
+3. The extension compiles them to CSV and can test them live against your running ebusd.
+4. Place the compiled CSV files in `/addon_configs/ebusd/ebusd-configuration/` and
+   point ebusd at that folder:
+   ```
+   --configpath=/config/ebusd-configuration
+   ```
 
 ---
 
