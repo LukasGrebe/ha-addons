@@ -7,6 +7,10 @@ ARG BUILD_FROM
 # update-ebusd.yml, which bumps both files together in each version-bump PR.
 FROM john30/ebusd:v26.1 AS upstream
 
+# ttyd: web terminal (xterm.js over WebSocket) served on the HA ingress port.
+# Multi-arch image — Docker picks the right variant automatically.
+FROM ghcr.io/tsl0922/ttyd:latest AS ttyd-upstream
+
 FROM ${BUILD_FROM}
 
 ENV LANG C.UTF-8
@@ -21,7 +25,8 @@ RUN apt-get update \
 
 COPY --from=upstream /usr/bin/ebusd   /usr/bin/ebusd
 COPY --from=upstream /usr/bin/ebusctl /usr/bin/ebusctl
-COPY --from=upstream /etc/ebusd/     /etc/ebusd/
+COPY --from=upstream /etc/ebusd/      /etc/ebusd/
+COPY --from=ttyd-upstream /usr/bin/ttyd /usr/bin/ttyd
 
 LABEL Description="ebusd"
 

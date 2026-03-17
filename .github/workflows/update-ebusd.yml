@@ -36,8 +36,11 @@ jobs:
       - name: Get current version from config.yaml
         id: current
         run: |
+          # Strip trailing patch number (.0, .1, .2 …) to get the upstream version.
+          # Container releases append a patch suffix (e.g. 26.1.1) that must be
+          # ignored when comparing against upstream tags (e.g. v26.1).
           VERSION=$(grep '^version:' ebusd/config.yaml \
-            | sed 's/version: "\([0-9.]*\)\.0"/\1/')
+            | sed 's/version: "\([0-9]*\.[0-9]*\)\.[0-9]*"/\1/')
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Current: ${VERSION}"
 
@@ -63,10 +66,19 @@ jobs:
           # Dockerfile: Docker Hub image uses "v" prefix; GitHub tag does not
           sed -i "s|FROM john30/ebusd:v.*|FROM john30/ebusd:v${VERSION} AS upstream|" \
             ebusd/Dockerfile
-          # Fetch upstream ChangeLog (GitHub tag has no "v" prefix, matching $VERSION directly)
+          # Prepend the new upstream release section to our CHANGELOG.md.
+          # We extract only the section for VERSION so that container-specific
+          # patch releases (e.g. 26.1.1, 26.1.2) added between upstream bumps
+          # are preserved below the new entry.
           curl -fsSL "https://raw.githubusercontent.com/john30/ebusd/${VERSION}/ChangeLog.md" \
-            -o ebusd/CHANGELOG.md
-          echo "Bumped to ${VERSION} and refreshed CHANGELOG.md"
+            -o /tmp/upstream_changelog.md
+          # Extract the section starting at "# VERSION" up to (not including) the next "# " heading
+          awk "/^# ${VERSION} /{found=1} found && /^# / && !/^# ${VERSION} /{exit} found{print}" \
+            /tmp/upstream_changelog.md > /tmp/new_entry.md
+          # Prepend new entry to our existing changelog
+          cat /tmp/new_entry.md ebusd/CHANGELOG.md > /tmp/merged.md
+          mv /tmp/merged.md ebusd/CHANGELOG.md
+          echo "Bumped to ${VERSION} and prepended upstream entry to CHANGELOG.md"
 
       - name: Create Pull Request
         if: steps.check.outputs.needed == 'true'

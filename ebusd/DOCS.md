@@ -107,62 +107,24 @@ for folder structure and source mapping details.
 
 ---
 
-## Writing custom message definitions (VS Code)
-
-Message definitions are authored as [TypeSpec](https://typespec.io) `.tsp` files
-(found in the `/src/` folder of [ebusd-configuration](https://github.com/john30/ebusd-configuration))
-and compiled to CSV using the [ebus-typespec](https://github.com/john30/ebus-typespec) library.
-**You work with `.tsp` source files, not CSV directly.**
-
-The official tool for this is the
-[ebus-notebook](https://github.com/john30/ebus-notebook) VS Code extension by john30 —
-a notebook interface that handles authoring, compilation, and live testing in one place.
-
-### Setup
-
-1. Install the [TypeSpec for VS Code](https://marketplace.visualstudio.com/items?itemName=typespec.typespec-vscode) extension from the marketplace.
-2. Install the eBUS TypeSpec package in your workspace:
-   ```bash
-   npm i @ebusd/ebus-typespec
-   ```
-3. Install [ebus-notebook](https://github.com/john30/ebus-notebook) from the repo
-   (clone and install via VS Code's *Install from VSIX* if not yet on the marketplace).
-
-### Connect to your running ebusd instance
-
-The extension can talk directly to your ebusd instance for live testing and decoding.
-Enable it by adding to **commandline\_options**:
-
-```
---enabledefine
-```
-
-Then configure the extension in VS Code settings:
-
-| Setting | Value |
-|---|---|
-| `ebus-notebook.ebusd.host` | IP of your Home Assistant instance |
-| `ebus-notebook.ebusd.port` | `8888` (or whatever port you exposed) |
-
-> Port 8888 must be mapped in the app's **Network** settings for the extension to reach it.
-
-### Workflow
-
-1. Run `Create New eBUS Notebook` in the VS Code command palette to get started.
-2. Write TypeSpec definitions in the notebook cells (`.tsp` format).
-3. The extension compiles them to CSV and can test them live against your running ebusd.
-4. Place the compiled CSV files in `/addon_configs/ebusd/ebusd-configuration/` and
-   point ebusd at that folder:
-   ```
-   --configpath=/config/ebusd-configuration
-   ```
-
----
-
 ## Using ebusctl (interactive shell)
 
 `ebusctl` is the command-line client bundled with ebusd for querying the bus directly.
-To use it, SSH into the addon container using the
+
+### Via the built-in terminal (easiest)
+
+The app includes a web terminal. Open it by clicking **Open Web UI** on the addon's Info page.
+It opens a full shell inside the running container — no extra addons or configuration needed.
+
+```bash
+ebusctl info
+ebusctl read -f Hc1HeatCurveShift
+ebusctl find -d -r
+```
+
+### Via SSH (alternative)
+
+SSH into the addon container using the
 [Advanced SSH & Web Terminal](https://github.com/hassio-addons/addon-ssh) addon
 (the standard SSH addon cannot exec into other containers — you also need to disable
 **Protection mode** on the addon's Info page).
@@ -170,14 +132,11 @@ To use it, SSH into the addon container using the
 ```bash
 # Open a shell inside the running ebusd container
 docker exec -it $(docker ps --filter name=ebusd --format '{{.ID}}') /bin/bash
-
-# Then run ebusctl commands, e.g.:
-ebusctl info
-ebusctl read -f Hc1HeatCurveShift
-ebusctl find -d -r
 ```
 
-Port 8888 also accepts raw TCP connections, so you can use telnet or PuTTY:
+### Via raw TCP
+
+Port 8888 accepts raw TCP connections — useful for scripting or quick queries without a shell:
 ```
 telnet <HA-IP> 8888
 ```
@@ -213,5 +172,62 @@ Restart the app after copying.
 All individual options have been removed and replaced with direct ebusd CLI equivalents.
 Pass any options that are no longer in the UI via `commandline_options`.
 
+
+---
+
+## Writing custom message definitions (VS Code)
+
+Message definitions are authored as [TypeSpec](https://typespec.io) `.tsp` files
+(found in the `/src/` folder of [ebusd-configuration](https://github.com/john30/ebusd-configuration))
+and compiled to CSV using the [ebus-typespec](https://github.com/john30/ebus-typespec) library.
+**You work with `.tsp` source files, not CSV directly.**
+
+The official tool for this is the
+[ebus-notebook](https://github.com/john30/ebus-notebook) VS Code extension by john30 —
+a notebook interface that handles authoring, compilation, and live testing in one place.
+
+> **Note:** There is not yet a good, established practice on getting this toolchain up and running in Home Assistant + App
+
+### Setup
+
+1. Install [Node.js](https://nodejs.org) on your local machine if not already present.
+2. Install the [TypeSpec for VS Code](https://marketplace.visualstudio.com/items?itemName=typespec.typespec-vscode) extension from the marketplace.
+3. Install the eBUS TypeSpec package in your workspace:
+   ```bash
+   npm i @ebusd/ebus-typespec
+   ```
+4. Install [ebus-notebook](https://github.com/john30/ebus-notebook) from the repo
+   (clone and install via VS Code's *Install from VSIX* if not yet on the marketplace).
+
+### Connect to your running ebusd instance
+
+The extension can talk directly to your ebusd instance for live testing and decoding.
+Enable it by adding to **commandline\_options**:
+
+```
+--enabledefine
+```
+
+Then configure the extension in VS Code settings:
+
+| Setting | Value |
+|---|---|
+| `ebus-notebook.ebusd.host` | IP of your Home Assistant instance |
+| `ebus-notebook.ebusd.port` | `8888` (or whatever port you exposed) |
+
+> Port 8888 must be mapped in the app's **Network** settings for the extension to reach it.
+
+### Workflow
+
+1. Run `Create New eBUS Notebook` in the VS Code command palette to get started.
+2. Write TypeSpec definitions in the notebook cells (`.tsp` format).
+3. The extension compiles them to CSV and can test them live against your running ebusd.
+4. Place the compiled CSV files in `/addon_configs/ebusd/ebusd-configuration/` and
+   point ebusd at that folder:
+   ```
+   --configpath=/config/ebusd-configuration
+   ```
+
+---
 
 

@@ -1,3 +1,9 @@
+# 26.1.1 (2026-03-17)
+## App Changes
+* Add web terminal (ttyd via xterm.js) accessible from the HA sidebar — supports interactive commands, long-running output, and Ctrl+C/D
+* Modify .github/workflows/update-ebusd.yml to ignore App Changes when comparing upstream Changes and prepend the new upstream release section to our CHANGELOG.md.
+
+
 # 26.1 (2026-02-08)
 ## Bug Fixes
 * fix potential memory leak

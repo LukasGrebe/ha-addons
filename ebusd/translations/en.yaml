@@ -30,6 +30,6 @@ configuration:
         --mqtthost/port/user/pass  auto-configured from the HA Mosquitto broker
 
       Examples:
-        --scanconfig=full --configpath=/config/ebusd-configuration/latest/en
+        --pollinterval=30
         --pollinterval=10 --httpport=8889 --log=bus:debug
         --updatecheck=on --mqttint=/config/my-custom.cfg
