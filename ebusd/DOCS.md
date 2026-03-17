@@ -159,6 +159,34 @@ Then configure the extension in VS Code settings:
 
 ---
 
+## Using ebusctl (interactive shell)
+
+`ebusctl` is the command-line client bundled with ebusd for querying the bus directly.
+To use it, SSH into the addon container using the
+[Advanced SSH & Web Terminal](https://github.com/hassio-addons/addon-ssh) addon
+(the standard SSH addon cannot exec into other containers — you also need to disable
+**Protection mode** on the addon's Info page).
+
+```bash
+# Open a shell inside the running ebusd container
+docker exec -it $(docker ps --filter name=ebusd --format '{{.ID}}') /bin/bash
+
+# Then run ebusctl commands, e.g.:
+ebusctl info
+ebusctl read -f Hc1HeatCurveShift
+ebusctl find -d -r
+```
+
+Port 8888 also accepts raw TCP connections, so you can use telnet or PuTTY:
+```
+telnet <HA-IP> 8888
+```
+
+See [ebusd wiki: TCP client commands](https://github.com/john30/ebusd/wiki/3.1.-TCP-client-commands)
+for the full command reference.
+
+---
+
 ## Upgrading from a previous version
 
 ### Config folder change

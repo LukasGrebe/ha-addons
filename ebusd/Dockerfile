@@ -19,7 +19,8 @@ RUN apt-get update \
       netcat-openbsd \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=upstream /usr/bin/ebusd  /usr/bin/ebusd
+COPY --from=upstream /usr/bin/ebusd   /usr/bin/ebusd
+COPY --from=upstream /usr/bin/ebusctl /usr/bin/ebusctl
 COPY --from=upstream /etc/ebusd/     /etc/ebusd/
 
 LABEL Description="ebusd"
