@@ -1,10 +1,12 @@
+# ARG before any FROM so it can be used in the FROM below (Docker requirement)
+ARG BUILD_FROM
+
 # Pull ebusd binary and config directly from john30's official multi-arch image.
 # Docker automatically selects the right arch variant from the manifest.
 # The tag here is kept in sync with config.yaml (single source of truth) by
 # update-ebusd.yml, which bumps both files together in each version-bump PR.
 FROM john30/ebusd:v26.1 AS upstream
 
-ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
 ENV LANG C.UTF-8
