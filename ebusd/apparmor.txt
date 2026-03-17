@@ -1,0 +1,25 @@
+#include <tunables/global>
+
+profile ebusd flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  # Allow file operations and signal handling
+  file,
+  signal (send) set=(kill,term,int,hup,cont),
+
+  # Network: MQTT broker, eBUS TCP/UDP network adapters, HTTPS for ebus.github.io config CDN
+  network tcp,
+  network udp,
+
+  # Serial/USB eBUS adapters (--device /dev/ttyUSB0, /dev/ttyAMA0, etc.)
+  /dev/tty* rw,
+  /dev/bus/usb/** rw,
+
+  # Device and mDNS discovery
+  @{PROC}/** r,
+  /sys/bus/ r,
+  /sys/class/ r,
+  /sys/class/tty/ r,
+  /sys/devices/** r,
+}
