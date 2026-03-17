@@ -33,11 +33,6 @@ else
     bashio::log.info "No device configured — ebusd will attempt mDNS auto-discovery."
 fi
 
-if bashio::config.has_value "commandline_options"; then
-    read -ra extra_args <<< "$(bashio::config 'commandline_options')"
-    ebusd_args+=("${extra_args[@]}")
-fi
-
 if [ ! -f /config/mqtt-hassio.cfg ]; then
     bashio::log.info "Seeding default mqtt-hassio.cfg into addon config folder."
     cp /etc/ebusd/mqtt-hassio.cfg /config/mqtt-hassio.cfg
@@ -45,5 +40,12 @@ fi
 
 ttyd --port 7681 --writable bash &
 
-bashio::log.info "ebusd $(printf '%s ' "${ebusd_args[@]}" | sed 's/--mqttuser=[^ ]*/--mqttuser=<redacted>/g; s/--mqttpass=[^ ]*/--mqttpass=<redacted>/g')"
-exec ebusd "${ebusd_args[@]}"
+if bashio::config.has_value "commandline_options"; then
+    extra_opts=$(bashio::config 'commandline_options')
+else
+    extra_opts=""
+    bashio::log.warning "commandline_options is not set. If you upgraded from an older version of this addon, your previous options (e.g. scanconfig, loglevel, mqtttopic) are no longer applied. Please migrate them to the commandline_options field. See the addon documentation for examples."
+fi
+
+bashio::log.info "ebusd $(printf '%s ' "${ebusd_args[@]}" $extra_opts | sed 's/--mqttuser=[^ ]*/--mqttuser=<redacted>/g; s/--mqttpass=[^ ]*/--mqttpass=<redacted>/g')"
+exec ebusd "${ebusd_args[@]}" $extra_opts
