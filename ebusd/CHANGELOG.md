@@ -1,7 +1,5 @@
-# 26.1.5 (2026-03-17)
-## App Changes
-
-> ### ⚠️ Breaking change: `commandline_options` is now a list
+# 26.1.6 (2026-03-17)
+> ### ⚠️ Breaking in app configuration: use `commandline_options` for ebusd run flags instead of individual options
 >
 > **`commandline_options` has changed from a single text field to a list of individual flags.**
 > Each ebusd flag must be a separate entry. The default list contains `--mqttjson` which is
@@ -14,6 +12,16 @@
 > `loglevel_all`, `mqtttopic`, `mode`, `readonly`, etc.) are **no longer applied**.
 > The addon will warn you in the logs at startup. You must re-add them as entries in
 > `commandline_options`. See the [migration guide](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#migrating-from-version-251-or-older).
+
+## App Changes
+* Fix missing ebusd command log line when `commandline_options` was in old string format
+* Silence ttyd startup noise — web terminal output redirected to /dev/null
+* Docs: add port-opening requirement for raw TCP access on port 8888
+* Docs: add config folder path migration guide for users upgrading from ≤25.1
+
+# 26.1.5 (2026-03-17)
+## App Changes
+
 
 * `commandline_options` changed from a single string to a **list of flags** — one entry per flag, no more word-splitting issues; `--mqttjson` pre-filled as default (fixes [#201](https://github.com/LukasGrebe/ha-addons/issues/201), [#202](https://github.com/LukasGrebe/ha-addons/issues/202))
 * Detect old (≤25.1) config fields at startup and log a clear warning with migration instructions

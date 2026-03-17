@@ -70,7 +70,9 @@ _opts_type=$(jq -r '.commandline_options | type' /data/options.json 2>/dev/null)
 
 if [ "$_opts_type" = "string" ]; then
     bashio::log.warning "commandline_options is a plain string — please convert it to a list (one flag per entry). Using it as-is for now."
-    exec ebusd "${ebusd_args[@]}" $(jq -r '.commandline_options' /data/options.json)
+    _str_opts=$(jq -r '.commandline_options' /data/options.json)
+    bashio::log.info "ebusd $(printf '%s ' "${ebusd_args[@]}" ${_str_opts} | sed 's/--mqttuser=[^ ]*/--mqttuser=<redacted>/g; s/--mqttpass=[^ ]*/--mqttpass=<redacted>/g')"
+    exec ebusd "${ebusd_args[@]}" ${_str_opts}
 elif [ "$_opts_type" = "array" ]; then
     while IFS= read -r _opt; do
         [ -n "$_opt" ] && ebusd_args+=("$_opt")
