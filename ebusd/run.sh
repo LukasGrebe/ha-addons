@@ -35,6 +35,7 @@ if bashio::config.has_value "commandline_options"; then
     extra_opts=$(bashio::config 'commandline_options')
 else
     extra_opts=""
+    bashio::log.warning "commandline_options is not set. If you upgraded from an older version of this addon, your previous options (e.g. scanconfig, loglevel, mqtttopic) are no longer applied. Please migrate them to the commandline_options field. See the addon documentation for examples."
 fi
 
 bashio::log.info "ebusd $(printf '%s ' "${ebusd_args[@]}" $extra_opts | sed 's/--mqttuser=[^ ]*/--mqttuser=<redacted>/g; s/--mqttpass=[^ ]*/--mqttpass=<redacted>/g')"
