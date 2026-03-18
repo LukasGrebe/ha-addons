@@ -37,7 +37,7 @@ In the app configuration, set one of:
 
 - **USB eBUS adapter** — select the TTY device from the picker (e.g. `/dev/serial/by-id/...`)
 - **Network / enhanced-protocol adapter** — enter the full device string including
-  protocol prefix, e.g. `ens:192.168.1.100:9999` or `enh:192.168.1.100:9999`
+  protocol prefix, default port 9999 may be omited e.g. `ens:192.168.1.100` or `enh:192.168.1.100:123`
 
 Leave both blank to let ebusd attempt mDNS auto-discovery.
 
@@ -52,13 +52,13 @@ Common flags to add:
 
 | Flag | Purpose |
 |---|---|
-| `--scanconfig` | Scan the bus for known devices on startup |
-| `--pollinterval=30` | Poll interval in seconds |
+| `-s` or `--scanconfig` | Scan the bus for known devices on startup |
+| `--pollinterval=30` | Increase default 5 second Poll interval to 30 seconds |
 | `--httpport=8889` | Enable HTTP port for the ebusd web interface |
 | `--log=bus:debug` | Enable debug logging for the bus |
 | `--configlang=de` | Prefer German message definitions |
-| `--configpath=/config/ebusd/` | Use local message definition files |
-| `--mqtttopic=ebusd` | Override the MQTT topic prefix |
+| `--configpath=/config/` | Use local message definition files. `/config` folder maps to `/addon_configs/2ad9b828_ebusd/` on the HA Host (see below) |
+| `--mqtttopic=myheating` | Override the default `ebusd` MQTT topic prefix |
 
 Full flag reference: [ebusd wiki: Run](https://github.com/john30/ebusd/wiki/2.-Run)
 
@@ -71,7 +71,7 @@ Start the app and watch the log. A successful startup looks like:
 [INFO] ebusd --foreground --updatecheck=off --mqtthost=... --mqttjson ...
 ```
 
-Entities appear in HA under a device named *ebusd* after the first successful bus scan.
+Entities appear in HA in [the MQTT Domain](https://my.home-assistant.io/redirect/integration/?domain=mqtt) after the first successful bus scan.
 
 ---
 
@@ -87,20 +87,20 @@ To migrate, translate your old fields into `commandline_options` list entries:
 
 | Old field | New entry in commandline_options |
 |---|---|
-| `scanconfig: true` | `--scanconfig` |
-| `loglevel_all: notice` | `--log=all:notice` |
+| `scanconfig: true` | `-s` or `--scanconfig` |
+| `loglevel_all: info` | `--log=all:info` |
 | `loglevel_bus: debug` | `--log=bus:debug` |
-| `mqtttopic: ebusd` | `--mqtttopic=ebusd` |
-| `mqttint: /etc/ebusd/mqtt-hassio.cfg` | `--mqttint=/config/mqtt-hassio.cfg` |
+| `mqtttopic: foobar` | `--mqtttopic=foobar` |
+| `mqttint: /etc/ebusd/custom_mqtt.cfg` | `--mqttint=/config/custom_mqtt.cfg` (see below) |
 | `readonly: true` | `--readonly` |
 | `pollinterval: 30` | `--pollinterval=30` |
 | `http: true` | `--httpport=8889` |
-| `configpath: /some/path` | `--configpath=/some/path` |
-| `mode: ens` + `network_device: 192.168.1.1:9999` | set **network\_device** to `ens:192.168.1.1:9999` |
+| `configpath: /config/ebusd/` | `--configpath=/config/` (see below) |
+| `mode: ens` + `network_device: 192.168.1.1:9999` | set **network\_device** to `ens:192.168.1.1` (default port 9999 can be omited) |
 | `mqttvar: filter-direction=r` | `--mqttvar=filter-direction=r` |
 
 MQTT credentials (`mqtthost`, `mqttport`, `mqttuser`, `mqttpass`) are now always
-auto-configured from the Mosquitto broker — remove them from your config entirely.
+auto-configured if the HA Mosquitto broker is used — remove them from your config entirely. A default `--mqttint=/config/mqtt_hassio.cfg` is added to the config folder.
 
 ---
 
@@ -115,11 +115,10 @@ Access it via:
 - **SSH** (Advanced SSH addon) — `cd /addon_configs/2ad9b828_ebusd/`
 - **Samba** — exposed as the `addon_configs` share
 
-> Note: the built-in **File Editor** cannot access app config folders — use one of the above instead.
 
 | Host path | Container path | Purpose |
 |---|---|---|
-| `/addon_configs/2ad9b828_ebusd/mqtt-hassio.cfg` | `/config/mqtt-hassio.cfg` | MQTT integration config (seeded on first start) |
+| `/addon_configs/2ad9b828_ebusd/mqtt-hassio.cfg` | `/config/mqtt-hassio.cfg` | MQTT integration config (seeded if HA Mosquitto broker App is used) |
 | `/addon_configs/2ad9b828_ebusd/` | `/config/` | Local message definition CSV files |
 
 ## Migrating config folder from version 25.1 or older
