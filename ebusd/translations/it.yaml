@@ -5,9 +5,22 @@ configuration:
   network_device:
     name: Network / enhanced-protocol adapter (--device)
     description: "Stringa completa del dispositivo, compreso il prefisso del protocollo, ad esempio ens:192.168.1.1:9999, enh:/dev/ttyUSB0 o mdns: per il rilevamento automatico."
+  seed_mqtt_cfg:
+    name: Inizializzazione config integrazione MQTT (solo una volta)
+    description: >
+      Se abilitato (predefinito), il file mqtt-hassio.cfg incluso viene copiato in
+      /addon_configs/<slug>/mqtt-hassio.cfg al primo avvio se il file non esiste già.
+      --mqttint=/config/mqtt-hassio.cfg e --mqttjson vengono aggiunti automaticamente
+      agli argomenti di ebusd. Questo file definisce quali valori eBUS vengono pubblicati
+      su MQTT per Home Assistant discovery. Disabilitare e aggiungere --mqttint=/config/tuo/percorso
+      se si gestiscono le proprie entità MQTT e non si desidera la configurazione integrazione inclusa.
+      Fornire il proprio --mqttint= tramite commandline_options disabilita questa impostazione.
   commandline_options:
-    name: Additional ebusd options (one flag per entry)
-    description: "Opzioni della CLI di ebusd, una per ogni voce. --foreground, --updatecheck=off, --mqtthost/port/user/pass and --mqttint sono preconfigurate."
+    name: Opzioni aggiuntive ebusd (un flag per voce)
+    description: >
+      Flag CLI di ebusd, uno per voce. --foreground e --updatecheck=off sono sempre aggiunti.
+      Le credenziali MQTT (--mqtthost/port/user/pass) vengono acquisite automaticamente dal
+      servizio MQTT del Supervisor; aggiungere --mqtthost manualmente per usare un broker esterno.
     options:
       - "--mqttjson"
       - "--scanconfig"

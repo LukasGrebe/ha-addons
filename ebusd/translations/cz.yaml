@@ -5,9 +5,22 @@ configuration:
   network_device:
     name: Síťový / rozšířený protokol adaptér (--device)
     description: "Celý řetězec zařízení vč. předpony protokolu, např. ens:192.168.1.1:9999, enh:/dev/ttyUSB0 nebo mdns: pro automatické rozpoznání."
+  seed_mqtt_cfg:
+    name: Inicializace konfigurace MQTT integrace (pouze jednou)
+    description: >
+      Pokud je povoleno (výchozí), bundlovaný soubor mqtt-hassio.cfg je zkopírován do
+      /addon_configs/<slug>/mqtt-hassio.cfg při prvním spuštění, pokud soubor ještě neexistuje.
+      Automaticky se přidá --mqttint=/config/mqtt-hassio.cfg a --mqttjson do argumentů ebusd.
+      Tento soubor definuje, které hodnoty eBUS jsou publikovány do MQTT pro Home Assistant discovery.
+      Vypněte a přidejte --mqttint=/config/vase/cesta pokud spravujete vlastní MQTT entity
+      a nechcete použít bundlovanou konfiguraci integrace.
+      Zadání vlastního --mqttint= přes commandline_options toto nastavení deaktivuje.
   commandline_options:
     name: Další možnosti ebusd (jeden příznak na záznam)
-    description: "Příznaky CLI ebusd, jeden na záznam. --foreground, --updatecheck=off, --mqtthost/port/user/pass a --mqttint jsou předkonfigurovány."
+    description: >
+      Příznaky CLI ebusd, jeden na záznam. --foreground a --updatecheck=off jsou vždy přidány.
+      MQTT přihlašovací údaje (--mqtthost/port/user/pass) jsou automaticky získány ze
+      služby Supervisor MQTT; přidejte --mqtthost ručně pro použití externího brokera.
     options:
       - "--mqttjson"
       - "--scanconfig"
