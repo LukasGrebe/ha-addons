@@ -19,6 +19,7 @@ services:
 uart: true
 map:
   - addon_config:rw
+  - share
 ports:
   8888/tcp: null
   8889/tcp: null
