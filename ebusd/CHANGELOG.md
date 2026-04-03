@@ -1,8 +1,10 @@
 # 26.1.7 (2026-04-03)
 
-## App Changes
+## Features
+* Mount `/share` — the HA shared folder (`/share` on the host) is now accessible inside the container, allowing ebusd CSV files or other assets stored there to be referenced directly via `--configpath=/share/...` (thanks @muewe, [#226](https://github.com/LukasGrebe/ha-addons/pull/226))
 
-* Add `seed_mqtt_cfg` option (default: `true`) — replaces the previous behaviour of unconditionally injecting `--mqttjson` and `--mqttint=/config/mqtt-hassio.cfg` whenever the Mosquitto broker was detected. The addon now seeds `mqtt-hassio.cfg` into the config folder on first start and adds both flags only when this option is enabled, giving power users a clean opt-out without touching `commandline_options` (fixes [#219](https://github.com/LukasGrebe/ha-addons/issues/219))
+## App Changes
+* Add `seed_mqtt_cfg` option (default: `true`) — replaces the previous behaviour of unconditionally injecting `--mqttjson` and `--mqttint=/config/mqtt-hassio.cfg` whenever the Mosquitto broker was detected. The addon now seeds `mqtt-hassio.cfg` into the config folder on first start and adds both flags only when this option is enabled, giving power users a clean opt-out (fixes [#219](https://github.com/LukasGrebe/ha-addons/issues/219))
 * `--mqttjson` is no longer force-added by the addon — it lives in `commandline_options` as a removable default. Users managing their own MQTT entities via CSV/YAML can remove it freely
 * Skip Supervisor MQTT credential auto-fill when `--mqtthost` is already present in `commandline_options` — use an external broker without credential conflicts
 * Warn at startup when `--configpath` points to a local directory containing no CSV files at the locations ebusd expects; suggests the correct path including parent directories and CDN language subdirectories (`en/`, `de/`, etc.) — addresses the common mistake of pointing at a repo root instead of the language subfolder
