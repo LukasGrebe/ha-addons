@@ -1,5 +1,5 @@
 name: eBUSd
-version: "26.1.7-alpha"
+version: "26.1.7"
 slug: ebusd
 description: >
   Run ebusd — a daemon for communicating with eBUS devices (heating systems connected
@@ -9,6 +9,7 @@ url: https://github.com/john30/ebusd
 arch:
   - aarch64
   - amd64
+image: "ghcr.io/lukasgrebe/ha-addon-ebusd-{arch}"
 
 init: false
 startup: services
