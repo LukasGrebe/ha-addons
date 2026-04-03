@@ -17,6 +17,6 @@ configuration:
       - "--log=all:notice"
       - "--readonly"
       - "--configlang=de"
-      - "--configpath=/config/ebusd/"
-      - "--mqtttopic=ebusd"
+      - "--configpath=/config/"
+      - "--mqtttopic=myheating"
       - "--mqttretain"
