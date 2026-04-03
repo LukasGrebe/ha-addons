@@ -1,3 +1,17 @@
+# 26.1.7 (2026-04-03)
+
+## App Changes
+
+* Add `seed_mqtt_cfg` option (default: `true`) — replaces the previous behaviour of unconditionally injecting `--mqttjson` and `--mqttint=/config/mqtt-hassio.cfg` whenever the Mosquitto broker was detected. The addon now seeds `mqtt-hassio.cfg` into the config folder on first start and adds both flags only when this option is enabled, giving power users a clean opt-out without touching `commandline_options` (fixes [#219](https://github.com/LukasGrebe/ha-addons/issues/219))
+* `--mqttjson` is no longer force-added by the addon — it lives in `commandline_options` as a removable default. Users managing their own MQTT entities via CSV/YAML can remove it freely
+* Skip Supervisor MQTT credential auto-fill when `--mqtthost` is already present in `commandline_options` — use an external broker without credential conflicts
+* Warn at startup when `--configpath` points to a local directory containing no CSV files at the locations ebusd expects; suggests the correct path including parent directories and CDN language subdirectories (`en/`, `de/`, etc.) — addresses the common mistake of pointing at a repo root instead of the language subfolder
+* Warn when `--configpath` language folder and `--configlang` do not match when using a local CDN clone
+* Warn when a `commandline_options` entry contains multiple flags in one line, or when the same flag appears more than once
+* Add German translation (`de.yaml`)
+* Update all translations (cz, it, pl) with `seed_mqtt_cfg` and revised `commandline_options` descriptions
+* Expand DOCS.md: dedicated MQTT section, `seed_mqtt_cfg` usage, external broker setup, `--configpath`/`--configlang` guidance, startup log reference table
+
 # 26.1.6 (2026-03-17)
 > ### ⚠️ Breaking in app configuration: use `commandline_options` for ebusd run flags instead of individual options
 >
