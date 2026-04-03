@@ -1,0 +1,22 @@
+configuration:
+  device:
+    name: USB eBUS adapter (--device)
+    description: "Selezionare un adattatore eBUS USB/seriale. Per il protocollo ad alta velocità (enh:) usare network_device."
+  network_device:
+    name: Network / enhanced-protocol adapter (--device)
+    description: "Stringa completa del dispositivo, compreso il prefisso del protocollo, ad esempio ens:192.168.1.1:9999, enh:/dev/ttyUSB0 o mdns: per il rilevamento automatico."
+  commandline_options:
+    name: Additional ebusd options (one flag per entry)
+    description: "Opzioni della CLI di ebusd, una per ogni voce. --foreground, --updatecheck=off, --mqtthost/port/user/pass and --mqttint sono preconfigurate."
+    options:
+      - "--mqttjson"
+      - "--scanconfig"
+      - "--pollinterval=30"
+      - "--httpport=8889"
+      - "--log=bus:debug"
+      - "--log=all:notice"
+      - "--readonly"
+      - "--configlang=de"
+      - "--configpath=/config/ebusd/"
+      - "--mqtttopic=ebusd"
+      - "--mqttretain"
