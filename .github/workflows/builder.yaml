@@ -34,7 +34,7 @@ jobs:
 
       - name: Build ${{ matrix.arch }} app
         if: contains(steps.info.outputs.architectures, matrix.arch)
-        uses: home-assistant/builder@2026.02.1
+        uses: home-assistant/builder@2026.03.2
         with:
           args: |
             --${{ matrix.arch }} \
