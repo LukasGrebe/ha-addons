@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: ⤵️ Check out code from GitHub
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v6.0.2
 
       - name: Get information
         id: info
@@ -26,7 +26,7 @@ jobs:
           path: ./${{ matrix.addon }}
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v4.0.0
+        uses: docker/login-action@v4.1.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
@@ -34,7 +34,7 @@ jobs:
 
       - name: Build ${{ matrix.arch }} app
         if: contains(steps.info.outputs.architectures, matrix.arch)
-        uses: home-assistant/builder@2026.02.1
+        uses: home-assistant/builder@2026.03.2
         with:
           args: |
             --${{ matrix.arch }} \
