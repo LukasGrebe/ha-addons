@@ -1,3 +1,8 @@
+# 26.1.8 (2026-04-11)
+
+## Bug Fixes
+* Fix crash at startup when `--configpath` or `--configlang` are absent from `commandline_options` — `grep` returned exit code 1 (no match), which with `set -o pipefail` and `set -o errexit` (both set by bashio) caused the script to exit silently after printing the version line. This broke every user who did not have these flags set, which is most users.
+
 # 26.1.7 (2026-04-03)
 
 ## Features

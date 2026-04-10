@@ -116,10 +116,10 @@ ttyd --port 7681 --writable bash >/dev/null 2>&1 &
 #   root/<manufacturer>/ — *.csv files here loaded per-device via --scanconfig
 # A CDN clone (ebus.github.io) adds a language layer: root/en/, root/de/ etc.
 # ---------------------------------------------------------------------------
-_configpath=$(printf '%s' "$_user_opts" | grep -o -- '--configpath=[^ ]*' | head -1 | cut -d= -f2-)
+_configpath=$(printf '%s' "$_user_opts" | grep -o -- '--configpath=[^ ]*' | head -1 | cut -d= -f2-) || true
 # --configlang selects inline column translations within CSV files; when using a local
 # CDN clone it should also match the language subfolder chosen via --configpath.
-_configlang=$(printf '%s' "$_user_opts" | grep -o -- '--configlang=[^ ]*' | head -1 | cut -d= -f2- | tr '[:upper:]' '[:lower:]')
+_configlang=$(printf '%s' "$_user_opts" | grep -o -- '--configlang=[^ ]*' | head -1 | cut -d= -f2- | tr '[:upper:]' '[:lower:]') || true
 
 if [ -n "$_configpath" ]; then
     case "$_configpath" in

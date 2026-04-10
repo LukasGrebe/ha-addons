@@ -1,5 +1,5 @@
 name: eBUSd
-version: "26.1.7"
+version: "26.1.8"
 slug: ebusd
 description: >
   Run ebusd — a daemon for communicating with eBUS devices (heating systems connected
