@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Stand-in for the real ebusd binary. run.sh ends with `exec ebusd "$@"`, so
+# this becomes the test process; it just prints what it was called with and
+# exits cleanly instead of actually starting a daemon.
+printf 'MOCK_EBUSD_ARGS:'
+printf ' %s' "$@"
+printf '\n'

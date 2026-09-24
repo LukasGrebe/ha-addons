@@ -1,3 +1,11 @@
+# 26.1.9 (2026-09-24)
+
+## App Changes
+* Add a `tests/` bats test suite covering `run.sh`'s options validation, MQTT credential handling, and `--mqttint`/`seed_mqtt_cfg` seeding logic, run in CI on every push and PR alongside shellcheck (`.github/workflows/test.yaml`)
+* `run.sh` now reads its paths (`options.json`, `mqtt-hassio.cfg` source/destination) through `OPTIONS_JSON_PATH`, `EBUSD_CONFIG_DIR`, `EBUSD_ETC_DIR` env vars, defaulting to the same HA paths as before — this is what makes the test suite possible without touching a real `/data` or `/config`
+* Add `CONTRIBUTING.md` and `VERSIONING.md` documenting the repo layout, how to run tests locally, and how the addon's version number (`<upstream-major.minor>.<patch>`) is bumped
+* Add a PR template and bug report / feature request issue templates
+
 # 26.1.8 (2026-04-11)
 
 ## Bug Fixes

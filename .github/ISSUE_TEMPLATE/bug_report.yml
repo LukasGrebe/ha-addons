@@ -1,0 +1,43 @@
+name: Bug report
+description: Something in the eBUSd add-on isn't working as expected
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Add-on version
+      description: Shown on the add-on's Info tab in the Supervisor UI (e.g. 26.1.8)
+    validations:
+      required: true
+
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant OS / Supervisor version
+    validations:
+      required: false
+
+  - type: textarea
+    id: commandline-options
+    attributes:
+      label: commandline_options (from the add-on's Configuration tab)
+      description: Redact any MQTT password if it isn't already masked.
+      render: yaml
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Supervisor / add-on log lines
+      description: The add-on's Log tab, or `docker logs addon_*_ebusd` — include the startup lines.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen, and what happened instead?
+    validations:
+      required: true

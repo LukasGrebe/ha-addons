@@ -1,0 +1,4 @@
+# Add-on entrypoints use the Home Assistant "#!/usr/bin/with-contenv bashio"
+# shebang, which shellcheck doesn't recognize. Tell it to parse everything as
+# bash instead of guessing from the shebang.
+shell=bash

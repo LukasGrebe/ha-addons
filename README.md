@@ -17,6 +17,14 @@ Created by @LukasGrebe.  Improved and maintained by @tim-devel
 This Add-on runs [ebusd](http://ebusd.eu), a daemon for handling communication with eBUS devices connected to a 2-wire bus system (“energy bus” used by numerous heating systems), in [Home Assistant OS](https://www.home-assistant.io/installation/raspberrypi). You can simply plugin a ebus hardware interface into your RaspberryPi, and install the addon to run ebusd.
 
 
+## Contributing
+
+Bug reports, feature requests and PRs are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the repo layout, how to run the test
+suite, and the PR checklist. See [VERSIONING.md](VERSIONING.md) for how the
+add-on's version number works.
+
+
 # Thanks ...
 
 Thank you to

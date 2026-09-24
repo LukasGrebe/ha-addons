@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: ebusd usage / configuration questions
+    url: https://github.com/john30/ebusd/wiki
+    about: For questions about ebusd itself (not this add-on's packaging), see upstream's wiki.

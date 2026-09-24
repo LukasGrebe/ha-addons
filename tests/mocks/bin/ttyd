@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# run.sh launches ttyd as a backgrounded web terminal; tests don't need one.
+exit 0

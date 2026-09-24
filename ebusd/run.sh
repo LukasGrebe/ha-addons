@@ -1,5 +1,14 @@
 #!/usr/bin/with-contenv bashio
 
+# ---------------------------------------------------------------------------
+# Path overrides — always the HA defaults in production. Tests (see tests/)
+# point these at a temp directory so the suite never touches a real /data,
+# /config or /etc/ebusd.
+# ---------------------------------------------------------------------------
+: "${OPTIONS_JSON_PATH:=/data/options.json}"
+: "${EBUSD_CONFIG_DIR:=/config}"
+: "${EBUSD_ETC_DIR:=/etc/ebusd}"
+
 bashio::log.info "eBUSd addon version $(bashio::addon.version)"
 
 declare -a ebusd_args
@@ -12,7 +21,7 @@ ebusd_args+=(
 # ---------------------------------------------------------------------------
 # Read options.json once — all subsequent jq calls pipe from this variable
 # ---------------------------------------------------------------------------
-_options_json=$(cat /data/options.json 2>/dev/null)
+_options_json=$(cat "$OPTIONS_JSON_PATH" 2>/dev/null)
 _user_opts=$(printf '%s' "$_options_json" | jq -r '.commandline_options[]?' 2>/dev/null)
 
 # ---------------------------------------------------------------------------
@@ -74,21 +83,21 @@ if bashio::config.true 'seed_mqtt_cfg'; then
         # --mqttjson is not auto-set for custom paths and suggest disabling seed_mqtt_cfg.
         bashio::log.info "Custom --mqttint found in commandline_options — skipping auto mqtt-hassio.cfg seeding. --mqttjson is not auto-set when using a custom --mqttint; add it to commandline_options if your config requires it. Consider setting seed_mqtt_cfg: false."
     else
-        if [ ! -f /config/mqtt-hassio.cfg ]; then
+        if [ ! -f "$EBUSD_CONFIG_DIR/mqtt-hassio.cfg" ]; then
             # Case 1: initial seed — quietly add --mqttint and --mqttjson like any built-in flag.
             bashio::log.info "Seeding default mqtt-hassio.cfg into addon config folder."
-            cp /etc/ebusd/mqtt-hassio.cfg /config/mqtt-hassio.cfg
+            cp "$EBUSD_ETC_DIR/mqtt-hassio.cfg" "$EBUSD_CONFIG_DIR/mqtt-hassio.cfg"
         else
             # Case 2: file already exists — nudge the user to take explicit ownership.
             bashio::log.info "mqtt-hassio.cfg exists in config folder and seed_mqtt_cfg is true — set seed_mqtt_cfg: false and add --mqttint=/config/mqtt-hassio.cfg and --mqttjson to commandline_options if you no longer need auto-seeding."
         fi
-        ebusd_args+=("--mqttint=/config/mqtt-hassio.cfg")
+        ebusd_args+=("--mqttint=$EBUSD_CONFIG_DIR/mqtt-hassio.cfg")
         if ! printf '%s' "$_user_opts" | grep -q -- '--mqttjson'; then
             ebusd_args+=("--mqttjson")
         fi
     fi
 else
-    if [ -f /config/mqtt-hassio.cfg ] && ! printf '%s' "$_user_opts" | grep -q -- '--mqttint'; then
+    if [ -f "$EBUSD_CONFIG_DIR/mqtt-hassio.cfg" ] && ! printf '%s' "$_user_opts" | grep -q -- '--mqttint'; then
         bashio::log.warning "mqtt-hassio.cfg exists in config folder but seed_mqtt_cfg is false and no --mqttint in commandline_options — the file will not be used by ebusd."
     elif ! printf '%s' "$_user_opts" | grep -q -- '--mqttint'; then
         bashio::log.info "seed_mqtt_cfg is false — skipping mqtt-hassio.cfg seeding and --mqttint. Supply --mqttint= via commandline_options if needed."
@@ -210,7 +219,9 @@ fi
 if [ "$_opts_type" = "string" ]; then
     bashio::log.warning "commandline_options is a plain string — please convert it to a list (one flag per entry). Using it as-is for now."
     _str_opts=$(printf '%s' "$_options_json" | jq -r '.commandline_options')
+    # shellcheck disable=SC2086 # intentional: splits the legacy space-separated string into args
     bashio::log.info "ebusd $(printf '%s ' "${ebusd_args[@]}" ${_str_opts} | sed 's/--mqttuser=[^ ]*/--mqttuser=<redacted>/g; s/--mqttpass=[^ ]*/--mqttpass=<redacted>/g')"
+    # shellcheck disable=SC2086 # intentional: splits the legacy space-separated string into args
     exec ebusd "${ebusd_args[@]}" ${_str_opts}
 elif [ "$_opts_type" = "array" ]; then
     while IFS= read -r _opt; do

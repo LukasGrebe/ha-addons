@@ -1,0 +1,32 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v6.0.2
+
+      - name: 🔎 Run shellcheck
+        run: shellcheck ebusd/run.sh tests/mocks/bashio.sh tests/mocks/bin/*
+
+  bats:
+    name: Bash unit tests (bats)
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v6.0.2
+
+      - name: 📦 Install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
+
+      - name: 🧪 Run bats test suite
+        run: bats tests/
