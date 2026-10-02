@@ -35,11 +35,11 @@ if [ "$_opts_type" = "array" ]; then
         # Duplicate flag detection
         _flag_name="${_opt%%=*}"
         _flag_name="${_flag_name%% *}"
-        # Special handling for --log=<target>:<level>
+        # --log accepts either a colon or a space between target and level.
         # Treat --log=all:notice and --log=bus:notice as separate flags.
         if [ "$_flag_name" = "--log" ]; then
             _log_spec="${_opt#*=}"         # all:notice
-            _log_target="${_log_spec%%:*}" # all
+            _log_target="${_log_spec%%[: ]*}" # all
             _flag_name="--log:${_log_target}"
         fi
         
