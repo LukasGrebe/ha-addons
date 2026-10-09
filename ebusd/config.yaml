@@ -19,7 +19,7 @@ services:
   - mqtt:want
 uart: true
 map:
-  - addon_config:rw
+  - app_config:rw
   - share:rw
 ports:
   8888/tcp: null
