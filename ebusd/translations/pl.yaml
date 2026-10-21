@@ -1,0 +1,47 @@
+configuration:
+  device:
+    name: Adapter USB eBUS (--device)
+    description: "Wybierz adapter USB/szeregowy eBUS. Dla protokołu wysokiej prędkości (enh:) użyj network_device."
+  network_device:
+    name: Adapter sieciowy / protokół rozszerzony (--device)
+    description: "Pełny ciąg urządzenia z prefiksem protokołu, np. ens:192.168.1.1:9999, enh:/dev/ttyUSB0 lub mdns: dla automatycznego wykrywania."
+  seed_mqtt_cfg:
+    name: Inicjalizacja konfiguracji integracji MQTT (tylko raz)
+    description: >
+      Po włączeniu (domyślnie), dołączony plik mqtt-hassio.cfg jest kopiowany do
+      /addon_configs/<slug>/mqtt-hassio.cfg przy pierwszym uruchomieniu, jeśli plik jeszcze nie istnieje.
+      Do argumentów ebusd automatycznie dodawane są --mqttint=/config/mqtt-hassio.cfg i --mqttjson.
+      Ten plik definiuje, które wartości eBUS są publikowane do MQTT dla Home Assistant discovery.
+      Wyłącz i dodaj --mqttint=/config/twoja/sciezka jeśli zarządzasz własnymi encjami MQTT
+      i nie chcesz używać dołączonej konfiguracji integracji.
+      Podanie własnego --mqttint= przez commandline_options wyłącza to ustawienie.
+  commandline_options:
+    name: Dodatkowe opcje ebusd (jedna flaga na wpis)
+    description: >
+      Flagi CLI ebusd, jedna na wpis. --foreground i --updatecheck=off są zawsze dodawane.
+      Dane uwierzytelniające MQTT (--mqtthost/port/user/pass) są automatycznie pobierane z
+      usługi MQTT Supervisora; dodaj --mqtthost ręcznie, aby użyć zewnętrznego brokera.
+    options:
+      - "--mqttjson"
+      - "--scanconfig"
+      - "--pollinterval=30"
+      - "--httpport=8889"
+      - "--log=bus:debug"
+      - "--log=all:notice"
+      - "--readonly"
+      - "--configlang=pl"
+      - "--configpath=/config/"
+      - "--mqtttopic=myheating"
+      - "--mqttretain"
+  sqlite_db:
+    name: Log telegramów SQLite (plik bazy danych)
+    description: >
+      Ścieżka do bazy danych SQLite, w której zapisywany jest każdy telegram odebrany przez
+      ebusd z magistrali, podzielony na kolumny QQ ZZ PB SB NN DD CRC ACK ... ze znacznikiem
+      czasu w nanosekundach, np. /share/ebusd/telegrams.db lub /config/telegrams.db.
+      Pozostaw puste, aby wyłączyć.
+  sqlite_retention_days:
+    name: Okres przechowywania logu telegramów SQLite (dni)
+    description: >
+      Telegramy starsze niż podana liczba dni są usuwane z logu telegramów SQLite.
+      0 zachowuje wszystko. W zależności od ruchu na magistrali ok. 50-170 MB dziennie.

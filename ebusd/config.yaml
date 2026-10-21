@@ -1,0 +1,39 @@
+name: eBUSd (next)
+version: "26.1.10-next.6"
+slug: ebusd
+description: >
+  Run ebusd — a daemon for communicating with eBUS devices (heating systems connected to a 2-wire energy bus). A transparent wrapper of john30/ebusd; tracks upstream releases automatically. USB and network eBUS adapters supported.
+
+url: https://github.com/john30/ebusd
+arch:
+  - aarch64
+  - amd64
+image: "ghcr.io/lukasgrebe/ha-addon-ebusd-{arch}"
+init: false
+startup: services
+ingress: true
+ingress_port: 7681
+services:
+  - mqtt:want
+uart: true
+map:
+  - app_config:rw
+  - share:rw
+ports:
+  8888/tcp: null
+  8889/tcp: null
+ports_description:
+  8888/tcp: eBUSd TCP command port
+  8889/tcp: eBUSd HTTP port (set --httpport=8889 in commandline_options to enable)
+options:
+  seed_mqtt_cfg: true
+  commandline_options:
+    - "--mqttjson"
+  sqlite_retention_days: 10
+schema:
+  device: "device(subsystem=tty)?"
+  network_device: "str?"
+  seed_mqtt_cfg: bool
+  commandline_options: ["str"]
+  sqlite_db: "str?"
+  sqlite_retention_days: "int(0,)"

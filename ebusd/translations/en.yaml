@@ -1,0 +1,46 @@
+configuration:
+  device:
+    name: USB eBUS adapter (--device)
+    description: "Select a USB/serial eBUS adapter. For enhanced-speed protocol (enh:) use network_device instead."
+  network_device:
+    name: Network / enhanced-protocol adapter (--device)
+    description: "Full device string incl. protocol prefix, e.g. ens:192.168.1.1:9999, enh:/dev/ttyUSB0, or mdns: for auto-discovery."
+  seed_mqtt_cfg:
+    name: Seed HA MQTT integration config (only neeeded once)
+    description: >
+      When enabled (default), the bundled mqtt-hassio.cfg is copied to
+      /addon_configs/<slug>/mqtt-hassio.cfg on first start if the file does not already
+      exist, and --mqttint=/config/mqtt-hassio.cfg and --mqttjson is automatically added to the ebusd
+      arguments. This file defines which eBUS values are published to MQTT for Home
+      Assistant discovery. Disable and add --mqttint=/config/your/path if you manage your own MQTT entities
+      and do not want the bundled integration config.
+      Suppling your own --mqttint= via commandline_options disables this setting.
+  commandline_options:
+    name: Additional ebusd options (one flag per entry)
+    description: >
+      ebusd CLI flags, one per entry. --foreground and --updatecheck=off are always added.
+      MQTT credentials (--mqtthost/port/user/pass) are sourced automatically from the
+      Supervisor MQTT service; add --mqtthost manually here to use an external broker instead.
+    options:
+      - "--mqttjson"
+      - "--scanconfig"
+      - "--pollinterval=30"
+      - "--httpport=8889"
+      - "--log=bus:debug"
+      - "--log=all:notice"
+      - "--readonly"
+      - "--configlang=de"
+      - "--configpath=/config/"
+      - "--mqtttopic=myheating"
+      - "--mqttretain"
+  sqlite_db:
+    name: SQLite telegram log (database file)
+    description: >
+      Path of an SQLite database that stores every telegram ebusd receives from the bus,
+      split into QQ ZZ PB SB NN DD CRC ACK ... columns with nanosecond timestamps,
+      e.g. /share/ebusd/telegrams.db or /config/telegrams.db. Leave empty to disable.
+  sqlite_retention_days:
+    name: SQLite telegram log retention (days)
+    description: >
+      Telegrams older than this many days are deleted from the SQLite telegram log.
+      0 keeps everything. Expect roughly 50-170 MB per day, depending on bus traffic.
