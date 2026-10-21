@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - next
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1" # weekly: new linter rules, new base image
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: 🚀 Run Home Assistant Add-on Lint
+        uses: frenck/action-addon-linter@v2.21
+        with:
+          path: ./ebusd
+
+      - name: Shellcheck
+        run: shellcheck ebusd/run.sh tests/check_translations.sh
+
+      - name: Check translations
+        run: tests/check_translations.sh ebusd
+
+      - name: Unit tests
+        run: |
+          if [ -d tests/unit ]; then
+            python3 -m unittest discover --start-directory tests/unit --verbose
+          fi
+
+  build:
+    name: Build
+    uses: ./.github/workflows/build-app.yaml
