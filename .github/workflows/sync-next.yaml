@@ -1,0 +1,58 @@
+name: Sync next
+
+# next always contains main: every push to main (a release, an urgent fix, or
+# a change to workflows, tests or contributor docs) is merged into next. If
+# that is not possible (conflict, protected branch), a PR main -> next is
+# opened instead.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+concurrency:
+  group: sync-next
+
+jobs:
+  merge:
+    name: Merge main into next
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push next
+      pull-requests: write # or open a PR
+      actions: write # rebuild the next channel (pushes with GITHUB_TOKEN trigger no workflows)
+    steps:
+      - name: ⤵️ Check out next
+        uses: actions/checkout@v7.0.0
+        with:
+          ref: next
+          fetch-depth: 0
+
+      - name: Merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          before=$(git rev-parse HEAD)
+          if git merge --no-edit origin/main; then
+            if [ "$(git rev-parse HEAD)" = "$before" ]; then
+              echo "next already contains main"
+              exit 0
+            fi
+            if git push origin HEAD:next; then
+              if ! git diff --quiet "$before" HEAD -- ebusd repository.yaml; then
+                gh workflow run channel-next.yaml --ref next
+              fi
+              exit 0
+            fi
+          else
+            git merge --abort
+          fi
+          echo "::warning::Could not merge main into next directly, opening a PR"
+          if [ -z "$(gh pr list --base next --head main --state open --json number --jq '.[].number')" ]; then
+            gh pr create --base next --head main --title "Merge main into next" \
+              --body "Brings the latest changes of main into next. Opened by sync-next.yaml because merging directly failed (conflict or branch protection)."
+          fi

@@ -8,13 +8,14 @@ system belong to the [ebusd project](https://github.com/john30/ebusd/discussions
 
 | Branch | Purpose |
 |---|---|
-| `main` | The live version: Home Assistant installs the app from here. Only release PRs (`release/*`) and urgent fixes (`hotfix/*`) are merged into it. |
-| `next` | The upcoming version. All other PRs go here; PRs opened against `main` are moved to `next` automatically. |
+| `main` | The live version: Home Assistant installs the app (`ebusd/`, `repository.yaml`) from here. Changes to the app reach `main` only through release PRs (`release/*`) and urgent fixes (`hotfix/*`); changes to workflows, tests and contributor docs may be merged directly (see [Workflows run from main](#workflows-run-from-main)). Every push to `main` is merged into `next` automatically. |
+| `next` | The upcoming version. All app changes go here; a PR against `main` that changes the app is moved to `next` automatically. |
 | `channel-next`, `channel-pr-<N>` | Generated test channels (see below). Don't edit them. |
 
 ## Pull requests
 
-1. Branch from `next` and open the PR against `next`.
+1. Branch from `next` and open the PR against `next` (changes that only touch workflows,
+   tests or contributor docs may also go to `main`).
 2. Describe user-visible changes in `ebusd/CHANGELOG.md` under `# Unreleased`
    (create the section at the top if it is missing). Don't change the version in
    `ebusd/config.yaml`; it is set when releasing.
@@ -62,24 +63,27 @@ problems before a release.
    A squash commit has no shared history with `next`, so merging `main` back into
    `next` conflicts as soon as a file of this release changed on `next` meanwhile.
 3. `release.yaml` publishes the images of the new version (a published version is never
-   overwritten), tags it, creates the GitHub release from the changelog and merges `main`
-   back into `next` (or opens a PR for that if it cannot).
+   overwritten), tags it and creates the GitHub release from the changelog.
+   `sync-next.yaml` merges `main` back into `next` (or opens a PR if it cannot).
 
 - **Urgent fix:** branch `hotfix/<name>` from `main`, set the next patch version and a
   changelog section in the PR, open it against `main`. After the merge, `release.yaml`
-  does the rest.
+  releases it and `sync-next.yaml` brings the fix into `next`.
 - **ebusd updates:** `update-ebusd.yml` checks weekly for a new ebusd release and opens a
   PR against `next` once its Docker images are published.
 
-Dependabot, scheduled workflows and the **Run workflow** button use the workflow files on
-`main`, so changes to them take effect with the next release. The first release with this
-process is prepared by hand: open a PR `next → main` that sets the version and renames
-`# Unreleased`.
+### Workflows run from main
+
+Dependabot, scheduled workflows, the **Run workflow** button and the workflows that react
+to pull requests with a write token (previews, moving PRs to `next`: GitHub always runs
+`pull_request_target` from the default branch) use the files on `main`. Changes to them
+don't change what Home Assistant installs, so merge them into `main` directly to make them
+take effect; `sync-next.yaml` brings them into `next` right away.
 
 ### One-time repository settings
 
 - Settings → Actions → General: enable **Allow GitHub Actions to create and approve pull
-  requests** (needed by *Prepare release*, *Update ebusd* and the merge back into `next`).
+  requests** (needed by *Prepare release*, *Update ebusd* and *Sync next*).
 - Settings → Actions → General → Fork pull request workflows: require approval only for
   **first-time contributors who are new to GitHub**, so contributors' PRs get tested.
 - Settings → General: enable **Automatically delete head branches**.

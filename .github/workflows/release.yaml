@@ -2,8 +2,9 @@ name: Release
 
 # Releases the version in config.yaml once it reaches main and is not released
 # yet: build, test and publish the images (never overwriting a published
-# version), tag the commit, create the GitHub release from CHANGELOG.md and
-# merge main back into next. Pushes without a new version only run CI.
+# version), tag the commit and create the GitHub release from CHANGELOG.md.
+# Pushes without a new version only run CI; sync-next.yaml merges every push
+# to main into next.
 
 on:
   push:
@@ -77,32 +78,3 @@ jobs:
         run: |
           .github/scripts/changelog-section.sh ebusd "$VERSION" > "$RUNNER_TEMP/notes.md"
           gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
-
-  sync-next:
-    name: Merge main into next
-    needs: [check, github-release]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write # push next
-      pull-requests: write # or open a PR if that is not possible
-    steps:
-      - name: ⤵️ Check out next
-        uses: actions/checkout@v7.0.0
-        with:
-          ref: next
-          fetch-depth: 0
-
-      - name: Merge
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.check.outputs.version }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git merge --no-edit origin/main && git push origin HEAD:next; then
-            exit 0
-          fi
-          git merge --abort 2>/dev/null || true
-          echo "::warning::Could not merge main into next directly, opening a PR"
-          gh pr create --base next --head main --title "Merge main into next after release $VERSION" \
-            --body "Brings the release commit of $VERSION back into next. Created by release.yaml because merging directly failed (conflict or branch protection)."

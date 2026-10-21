@@ -1,12 +1,15 @@
 name: PR target
 
-# main is the live version: only release/* and hotfix/* branches of this
-# repository (and next) are merged into it. Every other PR opened against
-# main is moved to next, where changes are tested together before a release.
+# main is the live version of the app: changes to the app folder and
+# repository.yaml (what Home Assistant installs) reach main only through
+# release/* and hotfix/* branches of this repository (or next). A PR against
+# main that changes the app is moved to next, where changes are tested
+# together before a release. PRs against main that only change workflows,
+# tests or contributor docs stay, so they take effect right away.
 
 on:
   pull_request_target:
-    types: [opened]
+    types: [opened, synchronize, reopened]
     branches:
       - main
 
@@ -14,7 +17,7 @@ permissions: {}
 
 jobs:
   retarget:
-    name: Move PR to next
+    name: Move app changes to next
     if: >-
       github.event.pull_request.head.repo.full_name != github.repository || !(
         github.event.pull_request.head.ref == 'next' ||
@@ -24,10 +27,14 @@ jobs:
     permissions:
       pull-requests: write # change the base branch and comment
     steps:
-      - name: Change base branch to next
+      - name: Change base branch to next if the PR changes the app
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
         run: |
+          if ! gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only | grep -qE '^(ebusd/|repository\.yaml$)'; then
+            echo "Only workflows, tests or docs change: the PR can go to main"
+            exit 0
+          fi
           gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --base next
-          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Thanks! I moved this PR to \`next\`: changes are collected and tested there and reach \`main\` (the live version) with the next release. See [CONTRIBUTING.md](https://github.com/$GITHUB_REPOSITORY/blob/main/CONTRIBUTING.md). If this is an urgent fix for the live version, a maintainer can move it back."
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Thanks! I moved this PR to \`next\`: changes to the app are collected and tested there and reach \`main\` (the live version) with the next release. See [CONTRIBUTING.md](https://github.com/$GITHUB_REPOSITORY/blob/main/CONTRIBUTING.md). If this is an urgent fix for the live version, a maintainer can move it back."
