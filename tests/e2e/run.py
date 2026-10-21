@@ -35,6 +35,26 @@ BASE_OPTIONS = ["--log=all:notice", "--configpath=/config/e2e"]  # local, empty 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
+def app_mounts():
+    """Folders as Supervisor mounts them: /data writable, the map entries of
+    config.yaml read-only unless marked :rw."""
+    mounts = {"data": "rw"}
+    in_map = False
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../ebusd/config.yaml")) as config:
+        for line in config:
+            if not line.startswith(" "):
+                in_map = line.startswith("map:")
+                continue
+            entry = re.match(r"\s+- (\w+)(?::(rw|ro))?\s*$", line)
+            if in_map and entry:
+                folder = {"addon_config": "config", "app_config": "config"}.get(entry.group(1), entry.group(1))
+                mounts[folder] = entry.group(2) or "ro"
+    return mounts
+
+
+MOUNTS = app_mounts()
+
+
 def docker(*args, check=True, timeout=120):
     result = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout)
     if check and result.returncode:
@@ -104,8 +124,9 @@ class AppTestCase(unittest.TestCase):
         self.supervisor.mqtt = mqtt
         args = ["run", "-d", "--name", CONTAINER, "--network", "host",
                 "--add-host", "supervisor:127.0.0.1", "-e", "SUPERVISOR_TOKEN=e2e"]
-        for folder in ("data", "config", "share"):
-            args += ["-v", f"{self.tmp}/{folder}:/{folder}"]
+        for folder, mode in MOUNTS.items():
+            os.makedirs(os.path.join(self.tmp, folder), exist_ok=True)
+            args += ["-v", f"{self.tmp}/{folder}:/{folder}:{mode}"]
         if pty:
             # A PTY can't be passed with --device (each container has its own devpts
             # instance), so share the host's devpts and use the host path as device.
@@ -170,13 +191,13 @@ class Adapters(AppTestCase):
 class SqliteLog(AppTestCase):
     """The SQLite telegram log records the simulated bus traffic and ebusd's own telegram."""
 
-    def run_logged(self, bus, options):
+    def run_logged(self, bus, options, db_path):
         self.addCleanup(bus.stop)
         started = time.time_ns()
-        options.update({"sqlite_db": "/share/ebusd/telegrams.db", "sqlite_retention_days": 10,
+        options.update({"sqlite_db": db_path, "sqlite_retention_days": 10,
                         "commandline_options": BASE_OPTIONS + ["--enablehex"]})
         self.start_app(options, pty=isinstance(bus, PtyAdapter))
-        self.wait_log(r"SQLite telegram log: writing telegrams to /share/ebusd/telegrams.db")
+        self.wait_log(rf"SQLite telegram log: writing telegrams to {db_path}")
         self.wait_log(r"ebusd --foreground .*--dump --dumpfile=/run/ebusd-sqlite/dump.fifo --dumpflush")
         self.check_bus()
         query = """SELECT type, master, slave, status, ts FROM telegram_hex
@@ -185,7 +206,7 @@ class SqliteLog(AppTestCase):
         expected = {("BC", BROADCAST, None), ("MS", MS_MASTER, MS_SLAVE), ("MS", own, SLAVE_08_ANSWER)}
         deadline = time.monotonic() + 30
         while True:
-            db = sqlite3.connect(os.path.join(self.tmp, "share/ebusd/telegrams.db"))
+            db = sqlite3.connect(os.path.join(self.tmp, db_path.lstrip("/")))
             rows = db.execute(query, (BROADCAST, MS_MASTER, own)).fetchall()
             statuses = dict(db.execute("SELECT status, count(*) FROM telegram GROUP BY status").fetchall())
             db.close()
@@ -197,14 +218,14 @@ class SqliteLog(AppTestCase):
         self.assertTrue(all(started < row[4] < time.time_ns() for row in rows))
         self.assertEqual(set(statuses), {"ok"}, f"telegrams per status: {statuses}")
 
-    def test_usb_plain(self):
+    def test_usb_plain_in_share(self):
         bus = PtyAdapter(enhanced_protocol=False)
-        self.run_logged(bus, {"device": bus.path})
+        self.run_logged(bus, {"device": bus.path}, "/share/ebusd/telegrams.db")
 
-    def test_network_enhanced(self):
+    def test_network_enhanced_in_config(self):
         # the dump lacks the source address of ebusd's own telegrams here; the log restores it
         bus = TcpAdapter(enhanced_protocol=True)
-        self.run_logged(bus, {"network_device": f"enh:127.0.0.1:{bus.port}"})
+        self.run_logged(bus, {"network_device": f"enh:127.0.0.1:{bus.port}"}, "/config/telegrams.db")
 
 
 class Mqtt(AppTestCase):

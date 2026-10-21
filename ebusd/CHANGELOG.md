@@ -1,3 +1,8 @@
+# Unreleased
+
+## Bug Fixes
+* SQLite telegram log: the database could not be created under `/share` (e.g. `/share/ebusd/telegrams.db` as in the docs), because the app mounted `/share` read-only. `/share` is now writable for the app, and a folder the log cannot write to is reported clearly instead of "unable to open database file".
+
 # 26.1.9 (2026-10-21)
 
 ## Features
