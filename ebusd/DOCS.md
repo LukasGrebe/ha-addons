@@ -163,6 +163,11 @@ auto-configured from the HA Mosquitto broker — remove them from your config en
 The app config folder is at `/addon_configs/2ad9b828_ebusd/` on the HA host and mounted at
 `/config` inside the running container. It is included in HA backups.
 
+The prefix `2ad9b828` is derived from the repository URL as you added it
+(`https://github.com/LukasGrebe/ha-addons/`); a different spelling of the URL, or a
+[test version](#testing-upcoming-versions), gets a different prefix. If the folder
+does not exist, look into `/addon_configs/` for the `…_ebusd` folder.
+
 Access it via:
 
 - **Studio Code Server** (VS Code in browser addon) — full filesystem access, browse to `/addon_configs/2ad9b828_ebusd/`
@@ -271,6 +276,128 @@ Node.js install and is not possible inside the HA VS Code addon.
 
 ---
 
+## SQLite telegram log
+
+Set **SQLite telegram log (database file)** to store every telegram ebusd receives from
+the bus in an SQLite database: also telegrams without a message definition, ebusd's own
+telegrams, and broken ones (CRC errors, NAK, no answer).
+
+```yaml
+sqlite_db: /share/ebusd/telegrams.db
+sqlite_retention_days: 10
+```
+
+- `/share/…` can also be read by Home Assistant itself (e.g. the
+  [SQL integration](https://www.home-assistant.io/integrations/sql/)) and other apps.
+  `/config/…` is the app config folder (`/addon_configs/2ad9b828_ebusd/` on the host).
+- Telegrams older than **SQLite telegram log retention** days are deleted every hour
+  (default 10, `0` keeps everything). A telegram takes about 190 bytes, which is roughly
+  50–170 MB per day depending on bus traffic. Both folders are part of HA backups.
+- The app enables ebusd's binary dump of received bytes (`--dump`, `--dumpfile`,
+  `--dumpflush`, `--dumpsize`) and points it at a FIFO read by the logger. Don't add dump
+  options to `commandline_options` (the telegram log is then disabled), and don't run
+  `ebusctl dump`: it switches the dump off until you run it again.
+- Don't open the database over the Samba share while the app is running (SQLite locking
+  does not work over network shares). Copy the file or use the built-in terminal.
+
+### Table `telegram`
+
+One row per telegram, i.e. per sequence of bytes between two SYN (`aa`). The columns follow
+the eBUS telegram structure `QQ ZZ PB SB NN DD… CRC ACK NN DD… CRC ACK SYN`:
+
+| Column | Content |
+|---|---|
+| `id` | row id |
+| `ts` | arrival time of the first byte, integer nanoseconds since 1970-01-01 UTC |
+| `type` | `BC` broadcast (ZZ = `fe`), `MM` master-master, `MS` master-slave |
+| `qq` | source address (master) |
+| `zz` | destination address |
+| `pb`, `sb` | primary and secondary command |
+| `nn` | number of data bytes of the master part |
+| `dd` | data bytes of the master part (hex) |
+| `crc` | CRC of the master part |
+| `ack` | `00` (ACK) or `ff` (NAK) from the destination; empty for broadcasts |
+| `s_nn`, `s_dd`, `s_crc` | number of data bytes, data bytes (hex) and CRC of the slave answer (`MS` only) |
+| `s_ack` | `00` (ACK) or `ff` (NAK) from the source for the slave answer |
+| `status` | `ok`; `crc` CRC mismatch; `nak` rejected again after the repetition; `timeout` ended by SYN before complete (e.g. slave did not answer); `invalid` invalid address or ACK byte; `escape` invalid escape sequence; `trailing` extra bytes after a complete telegram |
+| `raw` | all bytes between the two SYN exactly as received (hex, escaped) |
+
+Single bytes are stored as integers, data bytes unescaped as lower-case hex text. Columns
+of parts that were not received are empty (`NULL`). If a part is repeated after a NAK, the
+columns hold the repetition and `raw` holds both.
+
+Indexes: `(ts)`, `(qq, zz, pb, sb, ts)`, `(zz, pb, sb, ts)` and `(pb, sb, ts)`.
+
+The view `telegram_hex` shows the same rows with readable UTC and local times, single
+bytes in hex, and the master and slave part in ebusd's `QQZZPBSBNNDD` / `NNDD` notation
+(as in `ebusctl grab` and ebusd's `received unknown MS cmd` log lines).
+
+**Timestamps** are taken by the logger with a nanosecond clock when ebusd hands over each
+byte, typically a few hundred microseconds after ebusd read it from the adapter.
+
+**Enhanced adapters** (`enh:`, `ens:`) report the source address of ebusd's own telegrams
+to ebusd as sent instead of received, so it is missing from ebusd's dump. The logger
+restores it from ebusd's own address (`--address`, default `31`) when that gives a valid CRC.
+
+### Querying
+
+In the built-in terminal (**Open Web UI**):
+
+```bash
+sqlite3 -box /share/ebusd/telegrams.db \
+  "SELECT time_local, master, slave, status FROM telegram_hex ORDER BY id DESC LIMIT 20"
+```
+
+Query the table with hex literals to use the indexes:
+
+```sql
+-- latest B5 09 telegrams from ebusd (31) to the heater (08)
+SELECT ts, dd, s_dd FROM telegram
+WHERE qq = 0x31 AND zz = 0x08 AND pb = 0xb5 AND sb = 0x09
+ORDER BY ts DESC LIMIT 20;
+
+-- telegrams per command during the last hour
+SELECT printf('%02x%02x', pb, sb) AS cmd, count(*) AS n FROM telegram
+WHERE ts > (strftime('%s', 'now') - 3600) * 1000000000
+GROUP BY pb, sb ORDER BY n DESC;
+
+-- bus errors per day
+SELECT date(ts / 1000000000, 'unixepoch') AS day, status, count(*) FROM telegram
+WHERE status != 'ok' GROUP BY day, status;
+```
+
+For a Home Assistant sensor, add the **SQL** integration with the database URL
+`sqlite:////share/ebusd/telegrams.db` and e.g. the query
+`SELECT count(*) AS errors FROM telegram WHERE status != 'ok' AND ts > (strftime('%s', 'now') - 3600) * 1000000000`
+(column `errors`).
+
+---
+
+## Testing upcoming versions
+
+Changes are collected on the `next` branch before they are released. You can install
+them as a separate test app next to your regular eBUSd:
+
+[![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FLukasGrebe%2Fha-addons%23channel-next)
+
+or add `https://github.com/LukasGrebe/ha-addons#channel-next` as a repository in the app
+store (⋮ → Repositories), then install **eBUSd (next)**. Every change to `next` shows up
+as an update of it.
+
+- Stop your regular eBUSd first: an adapter can only be used by one app at a time.
+- The test app has its own configuration and its own config folder
+  `/addon_configs/963a193d_ebusd`. Copy `mqtt-hassio.cfg` or CSV files there if you use them.
+- With the same MQTT settings, both apps publish the same topics, so your HA entities keep working.
+- When done: uninstall the test app, start eBUSd again and remove the repository.
+
+Every pull request also gets a test app **eBUSd (PR #N)**: the PR has a comment with the
+link. Supervisor builds it on your device, so the first install takes a few minutes.
+
+Please report what you find in the pull request, or in an
+[issue](https://github.com/LukasGrebe/ha-addons/issues) for `next`.
+
+---
+
 ## Startup log reference
 
 The addon logs its decisions at startup. Here is what each message means:
@@ -289,3 +416,8 @@ The addon logs its decisions at startup. Here is what each message means:
 | `commandline_options entry '…' looks like multiple flags` | Two or more flags were put in a single entry — split them into separate entries |
 | `Duplicate flag in commandline_options: '…'` | The same flag appears more than once |
 | `DEPRECATED CONFIG FIELDS DETECTED` | Old (≤25.1) schema fields found — migrate them to `commandline_options` |
+| `SQLite telegram log: writing telegrams to …` | The [SQLite telegram log](#sqlite-telegram-log) is running |
+| `sqlite_db is set, but commandline_options contains ebusd dump options` | Remove the `--dump…` flags — the telegram log needs ebusd's dump for itself |
+| `SQLite telegram log: unable to open database …` | The `sqlite_db` path is invalid or not writable; ebusd runs without the telegram log |
+| `SQLite telegram log: no data from ebusd for 60 seconds` | No bus signal, or the dump was switched off with `ebusctl dump` (run it again to switch it on) |
+| `SQLite telegram log exited with code … — restarting in 10s` | The logger crashed and is restarted; telegrams in between are not recorded |

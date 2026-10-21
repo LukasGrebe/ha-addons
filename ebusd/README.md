@@ -9,6 +9,7 @@ Tracks upstream [john30/ebusd](https://github.com/john30/ebusd) releases automat
 - Exposes ebusd's own command-line options as HA configuration fields.
 - Auto-configures the MQTT connection to the HA MQTT broker.
 - Seeds `mqtt-hassio.cfg` (MQTT–Home Assistant integration config) into the app config folder on first start.
+- Optionally stores every eBUS telegram ebusd receives in an SQLite database.
 
 ## Installation
 

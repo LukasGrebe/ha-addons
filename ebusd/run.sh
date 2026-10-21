@@ -1,4 +1,5 @@
 #!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
 
 bashio::log.info "eBUSd addon version $(bashio::addon.version)"
 
@@ -205,12 +206,97 @@ if [ ${#_found[@]} -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# SQLite telegram log (sqlite_db)
+# ebusd writes every byte it receives from the bus to its binary dump, which is
+# pointed at a FIFO here. /ebus_sqlite.py reads the FIFO, timestamps each byte
+# on arrival, splits the stream into telegrams (QQ ZZ PB SB NN DD CRC ACK ...)
+# and stores one row per telegram in the database.
+# ---------------------------------------------------------------------------
+if bashio::config.has_value 'sqlite_db'; then
+    _sqlite_db=$(bashio::config 'sqlite_db')
+    if printf '%s\n' "$_user_opts" | grep -qE -- '^(-D|--dump|--dumpfile|--dumpsize|--dumpflush)(=|$)'; then
+        bashio::log.warning "sqlite_db is set, but commandline_options contains ebusd dump options (--dump, --dumpfile, ...). The SQLite telegram log needs the dump for itself — remove them to enable it. Continuing without SQLite telegram log."
+    else
+        case "$_sqlite_db" in
+            /config/*|/share/*) ;;
+            *) bashio::log.warning "sqlite_db=$_sqlite_db is outside /config/ and /share/ — the database will be lost when the app container is recreated." ;;
+        esac
+
+        # With enhanced adapters the source address of ebusd's own telegrams is
+        # missing in the dump; the logger restores it from ebusd's address.
+        _own_address=31
+        while IFS= read -r _opt; do
+            case "$_opt" in
+                --address=*) _own_address=${_opt#--address=} ;;
+                -a*) _own_address=${_opt#-a}; _own_address=${_own_address# } ;;
+            esac
+        done <<< "$_user_opts"
+        if ! [[ "$_own_address" =~ ^[0-9a-fA-F]{2}$ ]]; then
+            _own_address=31
+        fi
+
+        _sqlite_dir=/run/ebusd-sqlite
+        rm -rf "$_sqlite_dir"
+        mkdir -p "$_sqlite_dir"
+        mkfifo "$_sqlite_dir/dump.fifo"
+        # ebusd renames its dump to <file>.old once it reaches --dumpsize and then
+        # writes to a new regular file. A directory with that name makes the
+        # rename fail, so ebusd keeps writing to the FIFO.
+        mkdir "$_sqlite_dir/dump.fifo.old"
+
+        _sqlite_args=(
+            "--fifo=$_sqlite_dir/dump.fifo"
+            "--db=$_sqlite_db"
+            "--retention-days=$(bashio::config 'sqlite_retention_days' 10)"
+            "--own-address=$_own_address"
+            "--ready-file=$_sqlite_dir/ready"
+        )
+        (
+            while true; do
+                _rc=0
+                python3 /ebus_sqlite.py "${_sqlite_args[@]}" || _rc=$?
+                if [ "$_rc" -eq 2 ]; then
+                    bashio::log.error "SQLite telegram log stopped — fix the error above and restart the app."
+                    exit 0
+                fi
+                bashio::log.warning "SQLite telegram log exited with code $_rc — restarting in 10s."
+                sleep 10
+            done
+        ) &
+        _sqlite_pid=$!
+
+        # ebusd blocks on opening the FIFO until a reader has it open, so only
+        # enable the dump once the logger is up.
+        for _ in $(seq 50); do
+            if [ -e "$_sqlite_dir/ready" ] || ! kill -0 "$_sqlite_pid" 2>/dev/null; then
+                break
+            fi
+            sleep 0.2
+        done
+        if [ -e "$_sqlite_dir/ready" ]; then
+            ebusd_args+=(
+                "--dump"
+                "--dumpfile=$_sqlite_dir/dump.fifo"
+                "--dumpflush"
+                "--dumpsize=1000000"
+            )
+            # if the logger dies, ebusd gets EPIPE on the FIFO instead of being killed
+            trap '' PIPE
+        else
+            bashio::log.warning "SQLite telegram log did not start — continuing without it."
+        fi
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Apply commandline_options and exec ebusd
 # ---------------------------------------------------------------------------
 if [ "$_opts_type" = "string" ]; then
     bashio::log.warning "commandline_options is a plain string — please convert it to a list (one flag per entry). Using it as-is for now."
     _str_opts=$(printf '%s' "$_options_json" | jq -r '.commandline_options')
+    # shellcheck disable=SC2086  # the legacy string is split into flags on purpose
     bashio::log.info "ebusd $(printf '%s ' "${ebusd_args[@]}" ${_str_opts} | sed 's/--mqttuser=[^ ]*/--mqttuser=<redacted>/g; s/--mqttpass=[^ ]*/--mqttpass=<redacted>/g')"
+    # shellcheck disable=SC2086
     exec ebusd "${ebusd_args[@]}" ${_str_opts}
 elif [ "$_opts_type" = "array" ]; then
     while IFS= read -r _opt; do

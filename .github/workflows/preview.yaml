@@ -1,0 +1,111 @@
+name: Preview
+
+# Makes every PR installable in Home Assistant as "eBUSd (PR #N)": the branch
+# channel-pr-N holds a copy of the PR's app folder without an image, so
+# Supervisor builds it from the Dockerfile on the device. A comment on the PR
+# links to it; the branch is deleted when the PR is closed.
+#
+# PRs from this repository get a preview on every push. PRs from forks get one
+# when a maintainer adds the label "preview" (after reading the diff); to
+# update it, remove and add the label again.
+#
+# Security: pull_request_target runs with a write token, so the PR's code is
+# never executed here. It is only extracted with git archive, checked for
+# symlinks and copied by the scripts of the base branch.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, closed]
+
+permissions: {}
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+
+env:
+  PR: ${{ github.event.pull_request.number }}
+  BRANCH: channel-pr-${{ github.event.pull_request.number }}
+
+jobs:
+  publish:
+    name: Publish preview
+    if: >-
+      github.event.action != 'closed' && github.event.pull_request.user.login != 'dependabot[bot]' && (
+        (github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.action != 'labeled') ||
+        (github.event.action == 'labeled' && github.event.label.name == 'preview'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the channel-pr-N branch
+      pull-requests: write # comment on the PR
+    steps:
+      - name: ⤵️ Check out base branch (trusted scripts)
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Extract the PR's app folder
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch -q --depth 1 origin "refs/pull/$PR/head"
+          test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
+          mkdir "$RUNNER_TEMP/pr"
+          git archive FETCH_HEAD ebusd | tar -x -C "$RUNNER_TEMP/pr"
+
+      - name: Push channel-pr-${{ github.event.pull_request.number }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          version="$(.github/scripts/next-version.sh ebusd)-pr${PR}.${GITHUB_RUN_NUMBER}"
+          name="eBUSd (PR #$PR)"
+          .github/scripts/make-channel.sh "$RUNNER_TEMP/pr/ebusd" "$RUNNER_TEMP/channel" "$name" "$version"
+          .github/scripts/push-channel.sh "$RUNNER_TEMP/channel" "$BRANCH" "$name $version from ${HEAD_SHA::7}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Comment on the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          {
+            echo "### 🧪 Test this PR in Home Assistant"
+            echo
+            .github/scripts/repository-hint.sh "$BRANCH" "eBUSd (PR #$PR)"
+            echo
+            echo "Version \`$VERSION\` from commit $HEAD_SHA. Supervisor builds it on your device; the first install takes a few minutes."
+            if [ "$FORK" = true ]; then
+              echo "New commits of this fork PR reach the preview when a maintainer removes and adds the \`preview\` label again."
+            else
+              echo "New commits show up as an update of the test app."
+            fi
+          } > "$RUNNER_TEMP/comment.md"
+          .github/scripts/sticky-comment.sh "$PR" "$RUNNER_TEMP/comment.md"
+
+  cleanup:
+    name: Remove preview
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # delete the channel-pr-N branch
+      pull-requests: write # update the comment
+    steps:
+      - name: ⤵️ Check out base branch (trusted scripts)
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Delete channel-pr-${{ github.event.pull_request.number }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" 2>/dev/null; then
+            cat > "$RUNNER_TEMP/comment.md" <<EOF
+          ### 🧪 Preview removed
+
+          The test app of this PR is no longer available. Uninstall it and remove the repository \`https://github.com/$GITHUB_REPOSITORY#$BRANCH\`.
+          EOF
+            .github/scripts/sticky-comment.sh "$PR" "$RUNNER_TEMP/comment.md"
+          fi

@@ -1,0 +1,67 @@
+name: Prepare release
+
+# Opens the release PR release/<version> -> main from the current next: sets
+# the version in config.yaml and turns "# Unreleased" in CHANGELOG.md into
+# "# <version> (<date>)". Merging that PR releases the version (release.yaml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release (empty = the version on next if not released yet, else its next patch version)
+        required: false
+        default: ""
+
+permissions: {}
+
+jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the release branch
+      pull-requests: write # open the release PR
+      actions: write # start CI for it (PRs opened with GITHUB_TOKEN do not trigger workflows)
+    steps:
+      - name: ⤵️ Check out next
+        uses: actions/checkout@v7.0.0
+        with:
+          ref: next
+
+      - name: Create release branch and PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version=${INPUT_VERSION:-$(.github/scripts/next-version.sh ebusd)}
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version '$version' (expected MAJOR.MINOR.PATCH)"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$version" >/dev/null; then
+            echo "::error::$version is already released"
+            exit 1
+          fi
+          branch="release/$version"
+          git switch -c "$branch"
+          sed -i "s/^version:.*/version: \"$version\"/" ebusd/config.yaml
+          if grep -q '^# Unreleased' ebusd/CHANGELOG.md; then
+            sed -i "0,/^# Unreleased.*/s//# $version ($(date -u +%F))/" ebusd/CHANGELOG.md
+          else
+            echo "::warning::CHANGELOG.md has no '# Unreleased' section"
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qam "Release $version"
+          git push -q origin "$branch"
+          {
+            echo "Releases **$version** to \`main\`, the version Home Assistant users install."
+            echo
+            echo "Merge with **Create a merge commit** (not squash), so that \`main\` and \`next\` keep a shared history."
+            echo "Merging publishes the images, tags the release and merges \`main\` back into \`next\`."
+            echo
+            echo "## Changelog"
+            .github/scripts/changelog-section.sh ebusd "$version"
+          } > "$RUNNER_TEMP/body.md"
+          gh pr create --base main --head "$branch" --title "Release $version" --body-file "$RUNNER_TEMP/body.md"
+          gh workflow run ci.yaml --ref "$branch"

@@ -1,0 +1,108 @@
+name: Release
+
+# Releases the version in config.yaml once it reaches main and is not released
+# yet: build, test and publish the images (never overwriting a published
+# version), tag the commit, create the GitHub release from CHANGELOG.md and
+# merge main back into next. Pushes without a new version only run CI.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ebusd/config.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+
+jobs:
+  check:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Is the version released?
+        id: check
+        run: |
+          version=$(yq -r .version ebusd/config.yaml)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$version" >/dev/null; then
+            echo "::notice::$version is already released, nothing to do"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    name: Publish
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    permissions:
+      contents: read
+      id-token: write # sign the images with cosign
+      packages: write # push the images to ghcr.io
+    uses: ./.github/workflows/build-app.yaml
+    with:
+      publish: true
+      latest: true
+      version: ${{ needs.check.outputs.version }}
+
+  github-release:
+    name: GitHub release
+    needs: [check, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the tag and release
+    steps:
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          .github/scripts/changelog-section.sh ebusd "$VERSION" > "$RUNNER_TEMP/notes.md"
+          gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+
+  sync-next:
+    name: Merge main into next
+    needs: [check, github-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push next
+      pull-requests: write # or open a PR if that is not possible
+    steps:
+      - name: ⤵️ Check out next
+        uses: actions/checkout@v7.0.0
+        with:
+          ref: next
+          fetch-depth: 0
+
+      - name: Merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git merge --no-edit origin/main && git push origin HEAD:next; then
+            exit 0
+          fi
+          git merge --abort 2>/dev/null || true
+          echo "::warning::Could not merge main into next directly, opening a PR"
+          gh pr create --base next --head main --title "Merge main into next after release $VERSION" \
+            --body "Brings the release commit of $VERSION back into next. Created by release.yaml because merging directly failed (conflict or branch protection)."

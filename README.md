@@ -11,6 +11,9 @@ Created by @LukasGrebe.  Improved and maintained by @tim-devel
 5. Install eBUSd.
 6. Follow Documentation, Setup and Install of the Add-on
 
+Want to try what's coming next? See [Testing upcoming versions](ebusd/DOCS.md#testing-upcoming-versions).
+Contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 
 ## [ebusd](https://github.com/LukasGrebe/ha-addons/tree/main/ebusd) 
 

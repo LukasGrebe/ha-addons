@@ -1,0 +1,98 @@
+name: Bug report
+description: The app doesn't start, or doesn't work as documented in Home Assistant
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This app runs the unmodified [ebusd](https://github.com/john30/ebusd). Missing or wrong values,
+        message definitions (CSV) and questions about your heating system belong to the
+        [ebusd discussions](https://github.com/john30/ebusd/discussions).
+
+        Many startup messages are explained in the
+        [startup log reference](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#startup-log-reference).
+
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: The first line of the app log, e.g. `eBUSd addon version 26.1.8`.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: adapter
+    attributes:
+      label: Adapter connection
+      options:
+        - USB / serial (device option)
+        - Network, enhanced protocol (enh:/ens:)
+        - Network, plain TCP (host:port)
+        - USB, enhanced protocol (enh:/dev/…)
+        - mDNS auto-discovery (no device set)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: adapter-model
+    attributes:
+      label: Adapter model and firmware
+      description: e.g. eBUS Adapter Shield v5 with firmware 20240818.
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Home Assistant installation
+      options:
+        - Home Assistant OS
+        - Home Assistant Supervised
+    validations:
+      required: true
+
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Architecture
+      options:
+        - aarch64 (e.g. Raspberry Pi 4/5, Home Assistant Green/Yellow)
+        - amd64 (PC, NUC, virtual machine)
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: App configuration
+      description: The app's Configuration tab → ⋮ → Edit in YAML.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: App log
+      description: >
+        From the start, including the line `ebusd --foreground …`. The app redacts the MQTT
+        password, but please check for other secrets before posting.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues.
+          required: true
+        - label: I use the latest version of the app.
+          required: true

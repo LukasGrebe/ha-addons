@@ -33,3 +33,15 @@ configuration:
       - "--configpath=/config/"
       - "--mqtttopic=myheating"
       - "--mqttretain"
+  sqlite_db:
+    name: Log telegramów SQLite (plik bazy danych)
+    description: >
+      Ścieżka do bazy danych SQLite, w której zapisywany jest każdy telegram odebrany przez
+      ebusd z magistrali, podzielony na kolumny QQ ZZ PB SB NN DD CRC ACK ... ze znacznikiem
+      czasu w nanosekundach, np. /share/ebusd/telegrams.db lub /config/telegrams.db.
+      Pozostaw puste, aby wyłączyć.
+  sqlite_retention_days:
+    name: Okres przechowywania logu telegramów SQLite (dni)
+    description: >
+      Telegramy starsze niż podana liczba dni są usuwane z logu telegramów SQLite.
+      0 zachowuje wszystko. W zależności od ruchu na magistrali ok. 50-170 MB dziennie.

@@ -1,3 +1,15 @@
+# 26.1.9 (2026-10-21)
+
+## Features
+* Add optional SQLite telegram log: set `sqlite_db` (e.g. `/share/ebusd/telegrams.db`) to store every telegram ebusd receives from the bus, including unknown, own and broken ones. Each telegram is split into the eBUS fields QQ ZZ PB SB NN DD CRC ACK / NN DD CRC ACK with a nanosecond timestamp, a status (`ok`, `crc`, `nak`, `timeout`, …) and the raw bytes, indexed for querying by address, command and time. Telegrams older than `sqlite_retention_days` (default 10) are deleted. See the [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#sqlite-telegram-log)
+* The image now contains `python3` (for the telegram log) and the `sqlite3` command line tool, usable from the built-in terminal
+
+## App Changes
+* Test upcoming versions: install **eBUSd (next)** from `https://github.com/LukasGrebe/ha-addons#channel-next`, and every pull request gets an installable test app (see [Testing upcoming versions](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#testing-upcoming-versions))
+* Every change is tested before release against simulated USB and network eBUS adapters (plain and enhanced protocol) and an MQTT broker
+* Images are built with Home Assistant's new build actions, aarch64 natively instead of emulated; the base image is now set in the Dockerfile (`build.yaml` removed) and ttyd (web terminal) is pinned to 1.7.8
+* A published version is never rebuilt anymore: until now, every change merged into main replaced the images of the current version
+
 # 26.1.8 (2026-04-11)
 
 ## Bug Fixes

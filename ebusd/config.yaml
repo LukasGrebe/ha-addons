@@ -1,5 +1,5 @@
 name: eBUSd
-version: "26.1.8"
+version: "26.1.9"
 slug: ebusd
 description: >
   Run ebusd — a daemon for communicating with eBUS devices (heating systems connected
@@ -31,8 +31,11 @@ options:
   seed_mqtt_cfg: true
   commandline_options:
     - "--mqttjson"
+  sqlite_retention_days: 10
 schema:
   device: "device(subsystem=tty)?"
   network_device: "str?"
   seed_mqtt_cfg: bool
   commandline_options: ["str"]
+  sqlite_db: "str?"
+  sqlite_retention_days: "int(0,)"
