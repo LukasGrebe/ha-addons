@@ -33,3 +33,15 @@ configuration:
       - "--configpath=/config/"
       - "--mqtttopic=myheating"
       - "--mqttretain"
+  sqlite_db:
+    name: Log telegrammi SQLite (file database)
+    description: >
+      Percorso di un database SQLite in cui viene salvato ogni telegramma ricevuto da ebusd
+      sul bus, suddiviso nelle colonne QQ ZZ PB SB NN DD CRC ACK ... con timestamp in
+      nanosecondi, ad esempio /share/ebusd/telegrams.db o /config/telegrams.db.
+      Lasciare vuoto per disattivare.
+  sqlite_retention_days:
+    name: Conservazione log telegrammi SQLite (giorni)
+    description: >
+      I telegrammi più vecchi di questo numero di giorni vengono eliminati dal log SQLite.
+      0 conserva tutto. A seconda del traffico sul bus circa 50-170 MB al giorno.
