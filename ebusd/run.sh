@@ -1,7 +1,7 @@
 #!/usr/bin/with-contenv bashio
 # shellcheck shell=bash
 
-bashio::log.info "eBUSd addon version $(bashio::addon.version)"
+bashio::log.info "eBUSd addon version $(bashio::app.version)"
 
 declare -a ebusd_args
 
