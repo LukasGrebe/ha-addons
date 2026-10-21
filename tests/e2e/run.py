@@ -275,13 +275,20 @@ class Startup(AppTestCase):
         self.wait_log(r"commandline_options is a plain string")
         self.wait_log(r"ebusd --foreground .*--configpath=/config/e2e --readonly")
 
+    def test_log_targets_are_no_duplicates(self):
+        self.start_app({"commandline_options": BASE_OPTIONS + ["--log=bus:info"]})
+        self.wait_log(r"ebusd --foreground .*--log=all:notice --configpath=/config/e2e --log=bus:info")
+        self.assertNotIn("Duplicate flag", self.logs())
+
     def test_option_warnings(self):
         os.makedirs(os.path.join(self.tmp, "config/nocsv"))
         self.start_app({"loglevel_all": "info", "mqtttopic": "old", "commandline_options": [
-            "--configpath=/config/nocsv", "--readonly --pollinterval=30", "--pollinterval=10", "--pollinterval=20"]})
+            "--configpath=/config/nocsv", "--readonly --pollinterval=30", "--pollinterval=10", "--pollinterval=20",
+            "--log=bus:info", "--log=bus:debug"]})
         self.wait_log(r"DEPRECATED CONFIG FIELDS DETECTED: mqtttopic loglevel_all")
         self.wait_log(r"'--readonly --pollinterval=30' looks like multiple flags")
         self.wait_log(r"Duplicate flag in commandline_options: '--pollinterval'")
+        self.wait_log(r"Duplicate flag in commandline_options: '--log:bus'")
         self.wait_log(r"--configpath=/config/nocsv contains no CSV files")
 
 

@@ -31,7 +31,7 @@ if [ "$_opts_type" = "array" ]; then
         if [[ "$_opt" == *" -"* ]]; then
             bashio::log.warning "commandline_options entry '$_opt' looks like multiple flags in one entry — put each flag on its own line."
         fi
-        
+
         # Duplicate flag detection
         _flag_name="${_opt%%=*}"
         _flag_name="${_flag_name%% *}"
@@ -42,13 +42,13 @@ if [ "$_opts_type" = "array" ]; then
             _log_target="${_log_spec%%[: ]*}" # all
             _flag_name="--log:${_log_target}"
         fi
-        
+
         if [ -n "${_seen_flags[$_flag_name]+x}" ]; then
             bashio::log.warning "Duplicate flag in commandline_options: '$_flag_name' appears more than once."
         fi
-        
+
         _seen_flags["$_flag_name"]=1
-        
+
     done <<< "$_user_opts"
     unset _seen_flags
 fi
