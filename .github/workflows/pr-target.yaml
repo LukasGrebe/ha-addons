@@ -1,0 +1,33 @@
+name: PR target
+
+# main is the live version: only release/* and hotfix/* branches of this
+# repository (and next) are merged into it. Every other PR opened against
+# main is moved to next, where changes are tested together before a release.
+
+on:
+  pull_request_target:
+    types: [opened]
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  retarget:
+    name: Move PR to next
+    if: >-
+      github.event.pull_request.head.repo.full_name != github.repository || !(
+        github.event.pull_request.head.ref == 'next' ||
+        startsWith(github.event.pull_request.head.ref, 'release/') ||
+        startsWith(github.event.pull_request.head.ref, 'hotfix/'))
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write # change the base branch and comment
+    steps:
+      - name: Change base branch to next
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --base next
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Thanks! I moved this PR to \`next\`: changes are collected and tested there and reach \`main\` (the live version) with the next release. See [CONTRIBUTING.md](https://github.com/$GITHUB_REPOSITORY/blob/main/CONTRIBUTING.md). If this is an urgent fix for the live version, a maintainer can move it back."

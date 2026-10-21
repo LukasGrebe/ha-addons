@@ -163,6 +163,11 @@ auto-configured from the HA Mosquitto broker — remove them from your config en
 The app config folder is at `/addon_configs/2ad9b828_ebusd/` on the HA host and mounted at
 `/config` inside the running container. It is included in HA backups.
 
+The prefix `2ad9b828` is derived from the repository URL as you added it
+(`https://github.com/LukasGrebe/ha-addons/`); a different spelling of the URL, or a
+[test version](#testing-upcoming-versions), gets a different prefix. If the folder
+does not exist, look into `/addon_configs/` for the `…_ebusd` folder.
+
 Access it via:
 
 - **Studio Code Server** (VS Code in browser addon) — full filesystem access, browse to `/addon_configs/2ad9b828_ebusd/`
@@ -268,6 +273,31 @@ For authoring custom definitions, see the
 [ebus-notebook](https://github.com/john30/ebus-notebook) VS Code extension.
 The toolchain uses TypeSpec (`.tsp` files) compiled to CSV — this requires a local
 Node.js install and is not possible inside the HA VS Code addon.
+
+---
+
+## Testing upcoming versions
+
+Changes are collected on the `next` branch before they are released. You can install
+them as a separate test app next to your regular eBUSd:
+
+[![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FLukasGrebe%2Fha-addons%23channel-next)
+
+or add `https://github.com/LukasGrebe/ha-addons#channel-next` as a repository in the app
+store (⋮ → Repositories), then install **eBUSd (next)**. Every change to `next` shows up
+as an update of it.
+
+- Stop your regular eBUSd first: an adapter can only be used by one app at a time.
+- The test app has its own configuration and its own config folder
+  `/addon_configs/963a193d_ebusd`. Copy `mqtt-hassio.cfg` or CSV files there if you use them.
+- With the same MQTT settings, both apps publish the same topics, so your HA entities keep working.
+- When done: uninstall the test app, start eBUSd again and remove the repository.
+
+Every pull request also gets a test app **eBUSd (PR #N)**: the PR has a comment with the
+link. Supervisor builds it on your device, so the first install takes a few minutes.
+
+Please report what you find in the pull request, or in an
+[issue](https://github.com/LukasGrebe/ha-addons/issues) for `next`.
 
 ---
 
