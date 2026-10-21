@@ -11,7 +11,8 @@ name: Preview
 #
 # Security: pull_request_target runs with a write token, so the PR's code is
 # never executed here. It is only extracted with git archive, checked for
-# symlinks and copied by the scripts of the base branch.
+# symlinks and copied by the scripts of main: GitHub always runs
+# pull_request_target workflows from the default branch, with its code checked out.
 
 on:
   pull_request_target:
@@ -39,7 +40,7 @@ jobs:
       contents: write # push the channel-pr-N branch
       pull-requests: write # comment on the PR
     steps:
-      - name: ⤵️ Check out base branch (trusted scripts)
+      - name: ⤵️ Check out main (trusted scripts)
         uses: actions/checkout@v7.0.0
         with:
           persist-credentials: false
@@ -92,7 +93,7 @@ jobs:
       contents: write # delete the channel-pr-N branch
       pull-requests: write # update the comment
     steps:
-      - name: ⤵️ Check out base branch (trusted scripts)
+      - name: ⤵️ Check out main (trusted scripts)
         uses: actions/checkout@v7.0.0
         with:
           persist-credentials: false

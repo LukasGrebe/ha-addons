@@ -71,8 +71,10 @@ problems before a release.
 - **ebusd updates:** `update-ebusd.yml` checks weekly for a new ebusd release and opens a
   PR against `next` once its Docker images are published.
 
-Dependabot, scheduled workflows and the **Run workflow** button use the workflow files on
-`main`, so changes to them take effect with the next release. The first release with this
+Dependabot, scheduled workflows, the **Run workflow** button and the workflows that react to
+pull requests with a write token (previews, moving PRs to `next`; GitHub always runs
+`pull_request_target` from the default branch) use the files on `main`, so changes to them
+take effect with the next release. The first release with this
 process is prepared by hand: open a PR `next → main` that sets the version and renames
 `# Unreleased`.
 
