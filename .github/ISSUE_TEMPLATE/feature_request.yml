@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest an improvement of the app (not of ebusd itself)
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Features of ebusd itself (new options, protocols, message definitions) are requested at
+        [ebusd](https://github.com/john30/ebusd/issues). This repository packages ebusd for Home
+        Assistant: configuration, startup, MQTT integration, documentation.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do, and what stops you today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: How could the app support it?
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues.
+          required: true
