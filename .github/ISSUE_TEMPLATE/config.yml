@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions about ebusd, message definitions or heating system values
+    url: https://github.com/john30/ebusd/discussions
+    about: ebusd itself and its configuration files are handled by the ebusd project.
+  - name: ebusd documentation
+    url: https://github.com/john30/ebusd/wiki
+    about: All ebusd command line options and how ebusd works.
