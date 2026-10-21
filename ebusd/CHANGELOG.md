@@ -1,4 +1,4 @@
-# 26.1.9 (2026-10-21)
+# Unreleased
 
 ## Features
 * Add optional SQLite telegram log: set `sqlite_db` (e.g. `/share/ebusd/telegrams.db`) to store every telegram ebusd receives from the bus, including unknown, own and broken ones. Each telegram is split into the eBUS fields QQ ZZ PB SB NN DD CRC ACK / NN DD CRC ACK with a nanosecond timestamp, a status (`ok`, `crc`, `nak`, `timeout`, …) and the raw bytes, indexed for querying by address, command and time. Telegrams older than `sqlite_retention_days` (default 10) are deleted. See the [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#sqlite-telegram-log)
