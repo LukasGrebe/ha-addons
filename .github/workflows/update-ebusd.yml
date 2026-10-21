@@ -1,5 +1,5 @@
 name: Update ebusd
-# Checks for new john30/ebusd releases and opens a PR that bumps:
+# Checks for new john30/ebusd releases and opens a PR against next that bumps:
 #   - ebusd/config.yaml  version field  (single source of truth; HA Supervisor reads this)
 #   - ebusd/Dockerfile   FROM tag       (kept in sync for readability)
 #
@@ -15,6 +15,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write  # start CI for the PR (PRs opened with GITHUB_TOKEN trigger no workflows)
 
 jobs:
   check-and-update:
@@ -22,6 +23,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.0
+        with:
+          ref: next
 
       - name: Get latest ebusd release
         id: latest
@@ -57,8 +60,30 @@ jobs:
             echo "Already up to date: $LATEST"
           fi
 
-      - name: Update config.yaml, Dockerfile, and CHANGELOG.md
+      - name: Check that the upstream image is published
+        id: image
         if: steps.check.outputs.needed == 'true'
+        env:
+          VERSION: ${{ steps.latest.outputs.version }}
+        run: |
+          # the GitHub release can come before the Docker Hub images
+          if ! manifest=$(docker buildx imagetools inspect --raw "john30/ebusd:v${VERSION}" 2>&1); then
+            if [[ "$manifest" != *"not found"* && "$manifest" != *"MANIFEST_UNKNOWN"* ]]; then
+              echo "::error::Could not check john30/ebusd:v${VERSION}: $manifest"
+              exit 1
+            fi
+            manifest='{}'
+          fi
+          platforms=$(jq -r '.manifests[]?.platform.architecture' <<< "$manifest")
+          if grep -qx amd64 <<< "$platforms" && grep -qx arm64 <<< "$platforms"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::john30/ebusd:v${VERSION} is not published for amd64 and arm64 yet, trying again next week"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update config.yaml, Dockerfile, and CHANGELOG.md
+        if: steps.image.outputs.ready == 'true'
         run: |
           VERSION="${{ steps.latest.outputs.version }}"
           # config.yaml: HA Supervisor version format is X.Y.0
@@ -66,25 +91,24 @@ jobs:
           # Dockerfile: Docker Hub image uses "v" prefix; GitHub tag does not
           sed -i "s|FROM john30/ebusd:v.*|FROM john30/ebusd:v${VERSION} AS upstream|" \
             ebusd/Dockerfile
-          # Prepend the new upstream release section to our CHANGELOG.md.
-          # We extract only the section for VERSION so that container-specific
-          # patch releases (e.g. 26.1.1, 26.1.2) added between upstream bumps
-          # are preserved below the new entry.
+          # Add the upstream release section to our CHANGELOG.md. We extract only
+          # the section for VERSION; it goes below the "# Unreleased" section,
+          # which gets a line about the update and becomes VERSION.0 on release.
           curl -fsSL "https://raw.githubusercontent.com/john30/ebusd/${VERSION}/ChangeLog.md" \
             -o /tmp/upstream_changelog.md
           # Extract the section starting at "# VERSION" up to (not including) the next "# " heading
           awk "/^# ${VERSION} /{found=1} found && /^# / && !/^# ${VERSION} /{exit} found{print}" \
             /tmp/upstream_changelog.md > /tmp/new_entry.md
-          # Prepend new entry to our existing changelog
-          cat /tmp/new_entry.md ebusd/CHANGELOG.md > /tmp/merged.md
-          mv /tmp/merged.md ebusd/CHANGELOG.md
-          echo "Bumped to ${VERSION} and prepended upstream entry to CHANGELOG.md"
+          .github/scripts/changelog-upstream.sh ebusd "${VERSION}" /tmp/new_entry.md
+          echo "Bumped to ${VERSION} and added upstream entry to CHANGELOG.md"
 
       - name: Create Pull Request
-        if: steps.check.outputs.needed == 'true'
+        id: cpr
+        if: steps.image.outputs.ready == 'true'
         uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          base: next
           commit-message: "Bump ebusd from ${{ steps.current.outputs.version }} to ${{ steps.latest.outputs.version }}"
           title: "Bump ebusd from ${{ steps.current.outputs.version }} to ${{ steps.latest.outputs.version }}"
           body: |
@@ -105,3 +129,10 @@ jobs:
             *Automated PR — created by the [update-ebusd workflow](.github/workflows/update-ebusd.yml)*
           branch: "update/ebusd-${{ steps.latest.outputs.version }}"
           delete-branch: true
+
+      - name: Run CI for the Pull Request
+        if: steps.cpr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: update/ebusd-${{ steps.latest.outputs.version }}
+        run: gh workflow run ci.yaml --ref "$BRANCH"

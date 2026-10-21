@@ -1,3 +1,11 @@
+# Unreleased
+
+## App Changes
+* Test upcoming versions: install **eBUSd (next)** from `https://github.com/LukasGrebe/ha-addons#channel-next`, and every pull request gets an installable test app (see [Testing upcoming versions](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#testing-upcoming-versions))
+* Every change is tested before release against simulated USB and network eBUS adapters (plain and enhanced protocol) and an MQTT broker
+* Images are built with Home Assistant's new build actions, aarch64 natively instead of emulated; the base image is now set in the Dockerfile (`build.yaml` removed) and ttyd (web terminal) is pinned to 1.7.8
+* A published version is never rebuilt anymore: until now, every change merged into main replaced the images of the current version
+
 # 26.1.8 (2026-04-11)
 
 ## Bug Fixes

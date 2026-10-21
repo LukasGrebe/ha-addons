@@ -1,0 +1,72 @@
+name: Channel next
+
+# Every push to next is built, tested and published as test channel
+# "eBUSd (next)": the branch channel-next holds an installable copy of the app
+# with version <next release>-next.<run> and the tested image.
+# Install: repository https://github.com/LukasGrebe/ha-addons#channel-next
+
+on:
+  push:
+    branches:
+      - next
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: channel-next
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Compute channel version
+        id: version
+        run: echo "version=$(.github/scripts/next-version.sh ebusd)-next.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish
+    needs: version
+    permissions:
+      contents: read
+      id-token: write # sign the images with cosign
+      packages: write # push the images to ghcr.io
+    uses: ./.github/workflows/build-app.yaml
+    with:
+      publish: true
+      version: ${{ needs.version.outputs.version }}
+
+  channel:
+    name: Update channel-next
+    needs: [version, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the channel-next branch
+    steps:
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Push channel-next
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          channel="$RUNNER_TEMP/channel"
+          .github/scripts/make-channel.sh ebusd "$channel" "eBUSd (next)" "$VERSION" "$(yq -r .image ebusd/config.yaml)"
+          .github/scripts/push-channel.sh "$channel" channel-next "eBUSd (next) $VERSION from ${GITHUB_SHA::7}"
+          {
+            echo "### eBUSd (next) $VERSION"
+            .github/scripts/repository-hint.sh channel-next "eBUSd (next)"
+          } >> "$GITHUB_STEP_SUMMARY"
