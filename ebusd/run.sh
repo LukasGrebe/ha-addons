@@ -1,4 +1,5 @@
 #!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
 
 bashio::log.info "eBUSd addon version $(bashio::addon.version)"
 
@@ -293,7 +294,9 @@ fi
 if [ "$_opts_type" = "string" ]; then
     bashio::log.warning "commandline_options is a plain string — please convert it to a list (one flag per entry). Using it as-is for now."
     _str_opts=$(printf '%s' "$_options_json" | jq -r '.commandline_options')
+    # shellcheck disable=SC2086  # the legacy string is split into flags on purpose
     bashio::log.info "ebusd $(printf '%s ' "${ebusd_args[@]}" ${_str_opts} | sed 's/--mqttuser=[^ ]*/--mqttuser=<redacted>/g; s/--mqttpass=[^ ]*/--mqttpass=<redacted>/g')"
+    # shellcheck disable=SC2086
     exec ebusd "${ebusd_args[@]}" ${_str_opts}
 elif [ "$_opts_type" = "array" ]; then
     while IFS= read -r _opt; do

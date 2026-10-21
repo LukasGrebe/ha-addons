@@ -1,0 +1,122 @@
+name: Build app
+
+# Builds the app image for every architecture in config.yaml on a native
+# runner, runs the end-to-end tests (tests/e2e) against it and, if requested,
+# publishes it. An existing version tag is never overwritten (skip-existing).
+
+on:
+  workflow_call:
+    inputs:
+      publish:
+        description: Publish the image once the tests passed
+        type: boolean
+        default: false
+      version:
+        description: Image version (default is the version in config.yaml)
+        type: string
+        default: ""
+      latest:
+        description: Also tag the published image as latest
+        type: boolean
+        default: false
+
+# no permissions block: jobs get the caller's token permissions (publishing
+# needs packages: write and id-token: write, see release.yaml)
+
+env:
+  APP: ebusd
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.info.outputs.matrix }}
+      version: ${{ steps.info.outputs.version }}
+      name: ${{ steps.info.outputs.name }}
+      description: ${{ steps.info.outputs.description }}
+      url: ${{ steps.info.outputs.url }}
+    steps:
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Read app information
+        id: info
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          config="$APP/config.yaml"
+          {
+            echo "version=${VERSION:-$(yq -r .version "$config")}"
+            echo "name=$(yq -r .name "$config")"
+            echo "description=$(yq -r .description "$config" | tr -s '\n' ' ' | sed 's/ *$//')"
+            echo "url=$(yq -r '.url // ""' "$config")"
+          } >> "$GITHUB_OUTPUT"
+          image=$(yq -r .image "$config")
+          matrix='{"include":[]}'
+          for arch in $(yq -r '.arch[]' "$config"); do
+            case "$arch" in
+              amd64) os=ubuntu-24.04 ;;
+              aarch64) os=ubuntu-24.04-arm ;;
+              *) echo "::error::No native runner for architecture $arch"; exit 1 ;;
+            esac
+            matrix=$(jq -c --arg arch "$arch" --arg os "$os" --arg image "${image//\{arch\}/$arch}" \
+              '.include += [{arch: $arch, os: $os, image: $image}]' <<< "$matrix")
+          done
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and test ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Build image
+        uses: home-assistant/builder/actions/build-image@2026.09.0
+        with:
+          arch: ${{ matrix.arch }}
+          context: ./${{ env.APP }}
+          image: ${{ matrix.image }}
+          image-tags: test
+          labels: |
+            io.hass.type=app
+            io.hass.name=${{ needs.prepare.outputs.name }}
+            io.hass.description=${{ needs.prepare.outputs.description }}
+            io.hass.url=${{ needs.prepare.outputs.url }}
+          load: "true"
+          cosign: "false"
+          version: ${{ needs.prepare.outputs.version }}
+
+      - name: Run end-to-end tests
+        env:
+          IMAGE: ${{ matrix.image }}:test
+        run: sudo python3 tests/e2e/run.py "$IMAGE"
+
+      - name: Publish image
+        if: inputs.publish
+        uses: home-assistant/builder/actions/build-image@2026.09.0
+        with:
+          arch: ${{ matrix.arch }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          context: ./${{ env.APP }}
+          image: ${{ matrix.image }}
+          image-tags: |
+            ${{ needs.prepare.outputs.version }}
+            ${{ inputs.latest && 'latest' || '' }}
+          labels: |
+            io.hass.type=app
+            io.hass.name=${{ needs.prepare.outputs.name }}
+            io.hass.description=${{ needs.prepare.outputs.description }}
+            io.hass.url=${{ needs.prepare.outputs.url }}
+          push: "true"
+          skip-existing: ${{ needs.prepare.outputs.version }}
+          version: ${{ needs.prepare.outputs.version }}
