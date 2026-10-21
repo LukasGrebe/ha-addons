@@ -24,7 +24,7 @@ jobs:
       actions: write # start CI for it (PRs opened with GITHUB_TOKEN do not trigger workflows)
     steps:
       - name: ⤵️ Check out next
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           ref: next
 
