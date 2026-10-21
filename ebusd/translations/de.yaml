@@ -34,3 +34,15 @@ configuration:
       - "--configpath=/config/"
       - "--mqtttopic=myheating"
       - "--mqttretain"
+  sqlite_db:
+    name: SQLite-Telegramm-Log (Datenbankdatei)
+    description: >
+      Pfad einer SQLite-Datenbank, in der jedes von ebusd auf dem Bus empfangene Telegramm
+      gespeichert wird, aufgeteilt in die Spalten QQ ZZ PB SB NN DD CRC ACK ... mit Zeitstempel
+      in Nanosekunden, z. B. /share/ebusd/telegrams.db oder /config/telegrams.db.
+      Leer lassen zum Deaktivieren.
+  sqlite_retention_days:
+    name: Aufbewahrung SQLite-Telegramm-Log (Tage)
+    description: >
+      Telegramme, die älter als diese Anzahl Tage sind, werden aus dem SQLite-Telegramm-Log
+      gelöscht. 0 behält alles. Je nach Busverkehr ca. 50-170 MB pro Tag.

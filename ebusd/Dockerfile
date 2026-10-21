@@ -18,12 +18,15 @@ FROM ${BUILD_FROM}
 
 ENV LANG C.UTF-8
 
-# Install only the runtime libraries the ebusd binary links against
+# Install only the runtime libraries the ebusd binary links against,
+# plus python3/sqlite3 for the optional SQLite telegram log (ebus_sqlite.py)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       libmosquitto1 \
       ca-certificates \
       netcat-openbsd \
+      python3 \
+      sqlite3 \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=upstream /usr/bin/ebusd   /usr/bin/ebusd
@@ -38,8 +41,8 @@ LABEL \
     org.opencontainers.image.source="https://github.com/LukasGrebe/ha-addons" \
     org.opencontainers.image.licenses="Apache License 2.0"
 
-COPY run.sh /
-RUN chmod a+x /run.sh
+COPY run.sh ebus_sqlite.py /
+RUN chmod a+x /run.sh /ebus_sqlite.py
 CMD ["/run.sh"]
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s \

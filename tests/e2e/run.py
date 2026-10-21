@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -164,6 +165,46 @@ class Adapters(AppTestCase):
     def test_network_plain(self):
         bus = TcpAdapter(enhanced_protocol=False)
         self.run_adapter(bus, {"network_device": f"127.0.0.1:{bus.port}"})
+
+
+class SqliteLog(AppTestCase):
+    """The SQLite telegram log records the simulated bus traffic and ebusd's own telegram."""
+
+    def run_logged(self, bus, options):
+        self.addCleanup(bus.stop)
+        started = time.time_ns()
+        options.update({"sqlite_db": "/share/ebusd/telegrams.db", "sqlite_retention_days": 10,
+                        "commandline_options": BASE_OPTIONS + ["--enablehex"]})
+        self.start_app(options, pty=isinstance(bus, PtyAdapter))
+        self.wait_log(r"SQLite telegram log: writing telegrams to /share/ebusd/telegrams.db")
+        self.wait_log(r"ebusd --foreground .*--dump --dumpfile=/run/ebusd-sqlite/dump.fifo --dumpflush")
+        self.check_bus()
+        query = """SELECT type, master, slave, status, ts FROM telegram_hex
+                   WHERE master IN (?, ?, ?)"""
+        own = "3108b509030d2800"
+        expected = {("BC", BROADCAST, None), ("MS", MS_MASTER, MS_SLAVE), ("MS", own, SLAVE_08_ANSWER)}
+        deadline = time.monotonic() + 30
+        while True:
+            db = sqlite3.connect(os.path.join(self.tmp, "share/ebusd/telegrams.db"))
+            rows = db.execute(query, (BROADCAST, MS_MASTER, own)).fetchall()
+            statuses = dict(db.execute("SELECT status, count(*) FROM telegram GROUP BY status").fetchall())
+            db.close()
+            if expected <= {row[:3] for row in rows} or time.monotonic() > deadline:
+                break
+            time.sleep(1)
+        self.assertLessEqual(expected, {row[:3] for row in rows}, f"rows: {rows}")
+        self.assertEqual({row[3] for row in rows}, {"ok"})
+        self.assertTrue(all(started < row[4] < time.time_ns() for row in rows))
+        self.assertEqual(set(statuses), {"ok"}, f"telegrams per status: {statuses}")
+
+    def test_usb_plain(self):
+        bus = PtyAdapter(enhanced_protocol=False)
+        self.run_logged(bus, {"device": bus.path})
+
+    def test_network_enhanced(self):
+        # the dump lacks the source address of ebusd's own telegrams here; the log restores it
+        bus = TcpAdapter(enhanced_protocol=True)
+        self.run_logged(bus, {"network_device": f"enh:127.0.0.1:{bus.port}"})
 
 
 class Mqtt(AppTestCase):
