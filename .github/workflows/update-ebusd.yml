@@ -99,7 +99,7 @@ jobs:
 
             `ebusd/CHANGELOG.md` has been refreshed from upstream.
 
-            After merging: builder.yaml builds and publishes the updated app image.
+            Once this version reaches main, release.yaml builds, tests and publishes the app image.
 
             ---
             *Automated PR — created by the [update-ebusd workflow](.github/workflows/update-ebusd.yml)*

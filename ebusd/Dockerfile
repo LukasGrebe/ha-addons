@@ -1,5 +1,7 @@
-# ARG before any FROM so it can be used in the FROM below (Docker requirement)
-ARG BUILD_FROM
+# ARG before any FROM so it can be used in the FROM below (Docker requirement).
+# Home Assistant's multi-arch Debian base; CI and Supervisor (local builds) both
+# build from this Dockerfile alone, there is no build.yaml anymore.
+ARG BUILD_FROM=ghcr.io/home-assistant/base-debian:trixie
 
 # Pull ebusd binary and config directly from john30's official multi-arch image.
 # Docker automatically selects the right arch variant from the manifest.
@@ -8,8 +10,9 @@ ARG BUILD_FROM
 FROM john30/ebusd:v26.1 AS upstream
 
 # ttyd: web terminal (xterm.js over WebSocket) served on the HA ingress port.
-# Multi-arch image — Docker picks the right variant automatically.
-FROM ghcr.io/tsl0922/ttyd:latest AS ttyd-upstream
+# Multi-arch image — Docker picks the right variant automatically. Pinned so that
+# builds are reproducible; Dependabot proposes updates.
+FROM ghcr.io/tsl0922/ttyd:1.7.8 AS ttyd-upstream
 
 FROM ${BUILD_FROM}
 
@@ -28,7 +31,12 @@ COPY --from=upstream /usr/bin/ebusctl /usr/bin/ebusctl
 COPY --from=upstream /etc/ebusd/      /etc/ebusd/
 COPY --from=ttyd-upstream /usr/bin/ttyd /usr/bin/ttyd
 
-LABEL Description="ebusd"
+LABEL \
+    Description="ebusd" \
+    org.opencontainers.image.title="Home Assistant App: eBUSd" \
+    org.opencontainers.image.description="Transparent wrapper of john30/ebusd — a daemon for communicating with eBUS devices (heating systems)" \
+    org.opencontainers.image.source="https://github.com/LukasGrebe/ha-addons" \
+    org.opencontainers.image.licenses="Apache License 2.0"
 
 COPY run.sh /
 RUN chmod a+x /run.sh

@@ -1,0 +1,28 @@
+name: Release
+
+# Publishes the app image for the version in config.yaml on main. Builds of a
+# version that is already published are tested but not pushed again, so a
+# released version never changes.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ebusd/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish
+    permissions:
+      contents: read
+      id-token: write # sign the images with cosign
+      packages: write # push the images to ghcr.io
+    uses: ./.github/workflows/build-app.yaml
+    with:
+      publish: true
+      latest: true
