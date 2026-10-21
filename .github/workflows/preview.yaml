@@ -40,7 +40,7 @@ jobs:
       pull-requests: write # comment on the PR
     steps:
       - name: ⤵️ Check out base branch (trusted scripts)
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
@@ -93,7 +93,7 @@ jobs:
       pull-requests: write # update the comment
     steps:
       - name: ⤵️ Check out base branch (trusted scripts)
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
