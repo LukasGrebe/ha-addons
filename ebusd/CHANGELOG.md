@@ -1,4 +1,4 @@
-# Unreleased
+# 26.1.10 (2026-10-22)
 
 ## Bug Fixes
 * Use the map type `app_config` instead of the legacy `addon_config`, which Supervisor warns about (thanks @uwemarcus, fixes [#256](https://github.com/LukasGrebe/ha-addons/issues/256))
