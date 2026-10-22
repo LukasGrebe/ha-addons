@@ -285,9 +285,10 @@ class FrameSplitter:
 
 
 def open_db(path):
-    directory = os.path.dirname(path)
-    if directory:
-        os.makedirs(directory, exist_ok=True)
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    if not os.access(directory, os.W_OK):
+        raise OSError(f"folder {directory} is not writable (mounted read-only?)")
     db = sqlite3.connect(path)
     db.execute("PRAGMA journal_mode=WAL")  # readers do not block the logger and vice versa
     db.execute("PRAGMA synchronous=NORMAL")

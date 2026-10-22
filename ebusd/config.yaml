@@ -1,5 +1,5 @@
 name: eBUSd
-version: "26.1.9"
+version: "26.1.10"
 slug: ebusd
 description: >
   Run ebusd — a daemon for communicating with eBUS devices (heating systems connected
@@ -19,8 +19,8 @@ services:
   - mqtt:want
 uart: true
 map:
-  - addon_config:rw
-  - share
+  - app_config:rw
+  - share:rw
 ports:
   8888/tcp: null
   8889/tcp: null

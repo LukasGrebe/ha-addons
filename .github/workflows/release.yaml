@@ -28,7 +28,7 @@ jobs:
       release: ${{ steps.check.outputs.release }}
     steps:
       - name: ⤵️ Check out code from GitHub
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
@@ -66,7 +66,7 @@ jobs:
       contents: write # create the tag and release
     steps:
       - name: ⤵️ Check out code from GitHub
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
@@ -87,7 +87,7 @@ jobs:
       pull-requests: write # or open a PR if that is not possible
     steps:
       - name: ⤵️ Check out next
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           ref: next
           fetch-depth: 0

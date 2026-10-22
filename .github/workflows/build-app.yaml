@@ -38,7 +38,7 @@ jobs:
       url: ${{ steps.info.outputs.url }}
     steps:
       - name: ⤵️ Check out code from GitHub
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
@@ -76,7 +76,7 @@ jobs:
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - name: ⤵️ Check out code from GitHub
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
