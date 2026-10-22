@@ -58,7 +58,9 @@ problems before a release.
    `next` if it is not released yet (e.g. after an ebusd update), else the next patch
    version. The workflow opens the PR `release/<version> → main` with the version set and
    `# Unreleased` turned into the release section of the changelog.
-2. Merge the release PR with **Create a merge commit** (not squash) once CI is green.
+2. With **auto-merge** (checked by default) the release PR merges itself with a merge
+   commit once CI is green; to hold the release, click **Disable auto-merge** in the PR.
+   Without it, merge the PR with **Create a merge commit** (not squash) once CI is green.
    A squash commit has no shared history with `next`, so merging `main` back into
    `next` conflicts as soon as a file of this release changed on `next` meanwhile.
 3. `release.yaml` publishes the images of the new version (a published version is never
@@ -79,7 +81,18 @@ process is prepared by hand: open a PR `next → main` that sets the version and
 ### One-time repository settings
 
 - Settings → Actions → General: enable **Allow GitHub Actions to create and approve pull
-  requests** (needed by *Prepare release*, *Update ebusd* and the merge back into `next`).
+  requests** (needed by *Update ebusd* and the merge back into `next`).
+- Settings → General: enable **Allow auto-merge** (used by *Prepare release*).
+- Release app: *Prepare release* pushes and opens the release PR as a GitHub App, because
+  a PR opened with `GITHUB_TOKEN` gets no CI without a maintainer's approval and its merge
+  would not start `release.yaml`. Create the app under Settings (of your account) →
+  Developer settings → GitHub Apps → **New GitHub App**: any name, homepage the repository
+  URL, webhook **Active** unchecked, repository permissions **Contents**, **Pull requests**
+  and **Workflows** set to *Read and write*, installable *Only on this account*. On the
+  app's page generate a private key, then **Install App** on this repository only. In the
+  repository, Settings → Secrets and variables → Actions: variable
+  `RELEASE_APP_CLIENT_ID` = the app's Client ID, secret `RELEASE_APP_PRIVATE_KEY` = the
+  whole content of the downloaded `.pem` file.
 - Settings → Actions → General → Fork pull request workflows: require approval only for
   **first-time contributors who are new to GitHub**, so contributors' PRs get tested.
 - Settings → General: enable **Automatically delete head branches**.

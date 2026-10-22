@@ -3,6 +3,10 @@ name: Prepare release
 # Opens the release PR release/<version> -> main from the current next: sets
 # the version in config.yaml and turns "# Unreleased" in CHANGELOG.md into
 # "# <version> (<date>)". Merging that PR releases the version (release.yaml).
+# With auto-merge (the default) the PR merges itself once CI is green.
+#
+# Pushes and opens the PR with a token of the release app (see CONTRIBUTING.md):
+# unlike GITHUB_TOKEN, its PR starts CI and its merge starts release.yaml.
 
 on:
   workflow_dispatch:
@@ -11,6 +15,10 @@ on:
         description: Version to release (empty = the version on next if not released yet, else its next patch version)
         required: false
         default: ""
+      auto-merge:
+        description: Merge the release PR as soon as CI is green
+        type: boolean
+        default: true
 
 permissions: {}
 
@@ -18,20 +26,40 @@ jobs:
   prepare:
     name: Prepare release
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # push the release branch
-      pull-requests: write # open the release PR
-      actions: write # start CI for it (PRs opened with GITHUB_TOKEN do not trigger workflows)
+    permissions: {} # everything is done with the release app's token
     steps:
+      - name: Check the release app
+        env:
+          CLIENT_ID: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          HAS_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY != '' }}
+        run: |
+          if [ -z "$CLIENT_ID" ] || [ "$HAS_KEY" != true ]; then
+            echo "::error::Set the variable RELEASE_APP_CLIENT_ID and the secret RELEASE_APP_PRIVATE_KEY of the release app, see CONTRIBUTING.md"
+            exit 1
+          fi
+
+      - name: Get a token of the release app
+        id: app-token
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write # push the release branch, merge the PR
+          permission-pull-requests: write # open the PR, turn on auto-merge
+          permission-workflows: write # push and merge changes to workflow files from next
+
       - name: ⤵️ Check out next
         uses: actions/checkout@v7.0.1
         with:
           ref: next
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Create release branch and PR
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           INPUT_VERSION: ${{ inputs.version }}
+          AUTO_MERGE: ${{ inputs.auto-merge }}
         run: |
           version=${INPUT_VERSION:-$(.github/scripts/next-version.sh ebusd)}
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -50,18 +78,27 @@ jobs:
           else
             echo "::warning::CHANGELOG.md has no '# Unreleased' section"
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bot="$APP_SLUG[bot]"
+          git config user.name "$bot"
+          git config user.email "$(gh api "/users/$bot" --jq .id)+$bot@users.noreply.github.com"
           git commit -qam "Release $version"
           git push -q origin "$branch"
           {
             echo "Releases **$version** to \`main\`, the version Home Assistant users install."
             echo
             echo "Merge with **Create a merge commit** (not squash), so that \`main\` and \`next\` keep a shared history."
+            echo "With auto-merge on, this PR does that by itself once CI is green; to hold the release, click **Disable auto-merge**."
             echo "Merging publishes the images, tags the release and merges \`main\` back into \`next\`."
             echo
             echo "## Changelog"
             .github/scripts/changelog-section.sh ebusd "$version"
           } > "$RUNNER_TEMP/body.md"
-          gh pr create --base main --head "$branch" --title "Release $version" --body-file "$RUNNER_TEMP/body.md"
-          gh workflow run ci.yaml --ref "$branch"
+          url=$(gh pr create --base main --head "$branch" --title "Release $version" --body-file "$RUNNER_TEMP/body.md")
+          echo "### Release $version: $url" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$AUTO_MERGE" = true ]; then
+            if gh pr merge "$url" --auto --merge; then
+              echo "Auto-merge is on: the PR merges itself once CI is green." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::Could not turn on auto-merge (Settings → General → Allow auto-merge). Merge $url by hand once CI is green."
+            fi
+          fi
