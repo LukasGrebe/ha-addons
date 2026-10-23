@@ -41,6 +41,14 @@ In the app configuration, set one of:
 
 Leave both blank to let ebusd attempt mDNS auto-discovery.
 
+> **USB adapter not found at boot?** Supervisor checks that the device selected in the
+> picker exists before it starts the app. Some USB adapters show up only after that check at
+> boot, and Supervisor then reports that the app failed to start, with
+> `Device '…' does not exist` in the Supervisor log. In that case clear the picker and enter
+> the same path (e.g. `/dev/serial/by-id/...`) as **Network / enhanced-protocol adapter**
+> instead: that field is not checked, and ebusd retries opening the adapter every 5 seconds
+> until it appears.
+
 ### 4. Configure ebusd options
 
 Use the **Additional ebusd options** list to pass flags to ebusd. Add one flag per entry.
