@@ -12,7 +12,7 @@ arch:
 image: "ghcr.io/lukasgrebe/ha-addon-ebusd-{arch}"
 
 init: false
-startup: services
+startup: application
 ingress: true
 ingress_port: 7681
 services:
