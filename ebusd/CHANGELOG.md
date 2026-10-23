@@ -1,3 +1,8 @@
+# Unreleased
+
+## Bug Fixes
+* The app now starts after Home Assistant Core at boot instead of before it (Supervisor's default `application` stage). USB adapters that show up late at boot are then usually present, instead of Supervisor refusing to start the app with `Device '…' does not exist`. If your adapter still shows up too late, enter its path as **Network / enhanced-protocol adapter** instead of selecting it in the picker, see the [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#3-configure-the-adapter) (thanks @DreameUser2000, fixes [#259](https://github.com/LukasGrebe/ha-addons/issues/259))
+
 # 26.1.10 (2026-10-22)
 
 ## Bug Fixes
