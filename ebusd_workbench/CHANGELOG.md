@@ -1,6 +1,11 @@
-# 0.3.0 (unreleased)
+# 0.3.1 (unreleased)
 
 The timeline becomes the place where definitions are compared, chosen and named.
+
+## Fixes
+* The timeline no longer shifts while telegrams are decoded: notices float above it, the
+  progress bar and toolbar keep their size, and the grouping notice appears only after decoding
+  finished and can be dismissed
 
 ## Features
 * Definitions page as steps: Sources, Live decoding (newest first), Choose, Edit, Summary &

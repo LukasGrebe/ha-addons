@@ -101,7 +101,7 @@ export class Timeline {
     el.info = h("span", { class: "hint" });
     el.decodeState = h("button", { class: "small state", title: "the definitions decoding this timeline (click for the definitions tab)", onclick: () => bus.emit("show-tab", "definitions") }, "definitions…");
     el.help = h("span", { class: "help", title: "Scroll: the rows\nCtrl/⌘ + scroll or pinch: zoom the time axis\nShift + scroll or sideways swipe: move in time\nDrag the chart: move in time; double click: zoom in\nOverview strip: drag the edges to resize the window, drag inside to move it, drag outside to select a new one\nKeys: ← → move, + − zoom, N live, Esc close" }, "?");
-    el.progress = h("div", { class: "tl-progress", style: "display:none" }, h("div"));
+    el.progress = h("div", { class: "tl-progress", style: "visibility:hidden" }, h("div"));
     el.notice = h("div", { class: "tl-notice", style: "display:none" });
     el.logButton = h("button", { title: "note what you did or saw, like the log command of the eBUSd terminal: it appears as a flag in the events lane", onclick: () => this.toggleLog() }, "＋ event");
     el.logPop = h("div", { class: "tl-sources tl-log", style: "display:none" });
@@ -134,7 +134,7 @@ export class Timeline {
     el.stage = h("div", { class: "tl-stage" }, el.body, el.popover, el.drawer);
     el.tooltip = h("div", { class: "tl-tooltip" });
     el.details = h("div", { class: "tl-details" });
-    this.root.appendChild(h("div", { class: "tl" }, el.toolbar, el.progress, el.notice, el.overview, el.axis, el.annot, el.stage, el.details, el.tooltip, el.sourcesPop, el.logPop));
+    this.root.appendChild(h("div", { class: "tl" }, el.toolbar, el.progress, el.overview, el.axis, el.annot, el.stage, el.details, el.tooltip, el.sourcesPop, el.logPop, el.notice));
     this.bindMouse();
     document.addEventListener("mousedown", (e) => { if (this.picker && !el.popover.contains(e.target) && !e.target.closest(".tl-label")) this.closePicker(); });
     document.addEventListener("mousedown", (e) => { if (el.sourcesPop.style.display !== "none" && !el.sourcesPop.contains(e.target) && !e.target.closest(".toolbar")) this.toggleSources(false); });
@@ -144,7 +144,8 @@ export class Timeline {
   // -- decodings from the browser store ------------------------------------------------------
 
   onDecodes(reason) {
-    if (reason !== "progress") this.pendingRules = app.decoder?.idRules(this.settings || app.settings) || new Map();
+    // the suggestion is computed from a finished decoding only: while it runs, the notice and the button keep their last state
+    if (reason !== "progress" && app.decoder && !app.decoder.decoding && !app.decoder.syncing) this.pendingRules = app.decoder.idRules(this.settings || app.settings);
     this.updateIdButton();
     this.updateDecodeState();
     if (reason === "progress") return;
@@ -180,7 +181,7 @@ export class Timeline {
     el.className = cls;
     el.title = st?.compile ? `${st.compile.summary || ""}\ncompiled ${st.compile.at ? fmt.dateTime(new Date(st.compile.at).getTime()) : ""}; ${st.decoded} of ${st.telegrams} distinct telegrams decoded; store: ${st.store}\nclick for the definitions tab` : "click for the definitions tab";
     const bar = this.el.progress;
-    bar.style.display = parts.length ? "" : "none";
+    bar.style.visibility = parts.length ? "visible" : "hidden";   // its space stays: nothing moves when work starts or ends
     bar.classList.toggle("indeterminate", parts.length > 0 && (fraction === null || fraction === undefined));
     bar.firstChild.style.width = fraction === null || fraction === undefined ? "" : `${Math.max(3, Math.round(fraction * 100))}%`;
     const n = setup.includedKeys(app.decoder?.entries).length;
@@ -189,13 +190,23 @@ export class Timeline {
     this.updateNotice(st);
   }
 
+  /** Whether a condition has held for ms: short gaps between steps (compile done, decoding not started) must not flash a notice. */
+  persistsFor(name, ms) {
+    this.since ||= {};
+    this.since[name] ||= Date.now();
+    if (Date.now() - this.since[name] >= ms) return true;
+    clearTimeout(this.sinceTimer);
+    this.sinceTimer = setTimeout(() => this.updateNotice(app.decoder?.status()), ms + 50);
+    return false;
+  }
+
   /** A notice above the timeline while there is nothing to decode with: offers the way to get definitions right there. */
   updateNotice(st) {
     const el = this.el.notice;
     const repo = app.status?.repo;
     let key = null, build = null;
+    if (st?.compile || this.compileState?.busy) delete this.since?.notcompiled;
     const pending = this.pendingIdLengths().length;
-    const idle = !this.activity().parts.length;
     if (!repo) key = null;
     else if (repo.busy && !repo.exists) {
       key = `busy:${repo.busy.what}`;
@@ -213,16 +224,18 @@ export class Timeline {
     } else if (!st?.compile && this.compileState?.error) {
       key = `error:${this.compileState.error}`;
       build = () => [h("span", { class: "err" }, `Compiling the definitions failed: ${this.compileState.error}`), h("button", { class: "small", onclick: () => bus.emit("show-tab", "definitions") }, "Open Definitions")];
-    } else if (!st?.compile && !this.compileState?.busy && repo.exists) {
+    } else if (!st?.compile && !this.compileState?.busy && repo.exists && this.persistsFor("notcompiled", 2500)) {
       key = "notcompiled";
       build = () => [h("span", {}, "The definitions are not compiled yet, so rows show raw hex."), h("button", { class: "small primary", onclick: () => app.views.definitions?.compile() }, "Compile")];
-    } else if (pending && idle) {
-      key = `ids:${pending}`;
-      build = () => [h("span", {}, `${pending} message${pending > 1 ? "s are" : " is"} grouped differently than the definitions identify them: different messages (registers) share a row and show up as many "candidates", or one message is spread over several rows.`),
-        h("button", { class: "small primary", onclick: () => this.applyIdLengths() }, "Group like the definitions")];
+    } else if (pending && !this.dismissedIds) {
+      key = "ids";   // not the count: it must not rebuild the notice
+      build = () => [h("span", {}, `${this.pendingIdLengths().length} messages are grouped differently than the definitions identify them: different messages (registers) share a row and show up as many "candidates", or one message is spread over several rows.`),
+        h("button", { class: "small primary", onclick: () => this.applyIdLengths() }, "Group like the definitions"),
+        h("button", { class: "small", title: "hide this notice (the button in the toolbar stays)", onclick: () => { this.dismissedIds = true; this.noticeKey = undefined; this.updateNotice(app.decoder?.status()); } }, "dismiss")];
     }
     el.style.display = key ? "" : "none";
     if (key !== this.noticeKey) { this.noticeKey = key; el.replaceChildren(); if (build) append(el, build()); }
+    else if (key === "ids") { const n = el.querySelector("span"); if (n) n.textContent = `${this.pendingIdLengths().length} messages are grouped differently than the definitions identify them: different messages (registers) share a row and show up as many "candidates", or one message is spread over several rows.`; }
   }
 
   syncSettings() {

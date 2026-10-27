@@ -358,3 +358,10 @@ main { flex: 1; min-height: 0; display: flex; }
 .tl-log .note { display: flex; gap: 6px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid #eef1f4; }
 .tl-log .note.hl { background: #fff3e0; }
 .tl { position: relative; }
+
+/* nothing may move the timeline while work goes on: the notice floats above it, the progress bar keeps its space, the toolbar keeps its width */
+.tl-notice { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 25; border: 1px solid #ffe082; border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.18); flex-wrap: wrap; }
+.toolbar button.state { width: 340px; text-align: left; }
+.toolbar > .hint { min-width: 230px; text-align: right; }
+.toolbar { min-height: 66px; }
+.toolbar button.state { height: 24px; line-height: 1; }
