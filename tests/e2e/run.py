@@ -227,6 +227,52 @@ class SqliteLog(AppTestCase):
         bus = TcpAdapter(enhanced_protocol=True)
         self.run_logged(bus, {"network_device": f"enh:127.0.0.1:{bus.port}"}, "/config/telegrams.db")
 
+    def create_unconvertible_v1(self):
+        """Database of an earlier version (schema 1) with a row that cannot be converted."""
+        path = os.path.join(self.tmp, "share/ebusd/telegrams.db")
+        os.makedirs(os.path.dirname(path))
+        db = sqlite3.connect(path)
+        db.executescript("""
+            PRAGMA journal_mode=WAL;
+            CREATE TABLE telegram (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, type TEXT, qq INTEGER,
+              zz INTEGER, pb INTEGER, sb INTEGER, nn INTEGER, dd TEXT, crc INTEGER, ack INTEGER, s_nn INTEGER,
+              s_dd TEXT, s_crc INTEGER, s_ack INTEGER, status TEXT NOT NULL, raw TEXT NOT NULL);
+            INSERT INTO telegram (ts, type, qq, zz, pb, sb, nn, dd, crc, status, raw)
+              VALUES (1, 'BC', 16, 254, 181, 5, 1, 'zz', 0, 'ok', '10fe');
+            PRAGMA user_version=1;
+        """)
+        return db
+
+    def test_unconvertible_database_kept_aside(self):
+        self.create_unconvertible_v1().close()
+        bus = TcpAdapter(enhanced_protocol=True)
+        self.run_logged(bus, {"network_device": f"enh:127.0.0.1:{bus.port}"}, "/share/ebusd/telegrams.db")
+        line = self.wait_log(r"kept the database of the previous version as /share/ebusd/telegrams\.v1-\S+\.db")
+        backup = re.search(r"/share/(ebusd/telegrams\.v1-\S+\.db)", line).group(1)
+        old = sqlite3.connect(os.path.join(self.tmp, "share", backup))
+        self.assertEqual(old.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(old.execute("SELECT count(*) FROM telegram").fetchone()[0], 1)
+        old.close()
+
+    def test_ebusd_keeps_running_when_the_log_stops(self):
+        # the database can neither be converted nor kept aside while another program has it open
+        reader = self.create_unconvertible_v1()
+        self.addCleanup(reader.close)
+        reader.execute("SELECT count(*) FROM telegram").fetchone()
+        bus = TcpAdapter(enhanced_protocol=True)
+        self.addCleanup(bus.stop)
+        self.start_app({"network_device": f"enh:127.0.0.1:{bus.port}", "sqlite_db": "/share/ebusd/telegrams.db",
+                        "commandline_options": BASE_OPTIONS + ["--enablehex"]})
+        self.wait_log(r"telegrams are not recorded until the app is restarted: /share/ebusd/telegrams\.db "
+                      r"is open in another program")
+        # the logger keeps reading the FIFO, so ebusd can open its dump and keeps decoding and sending
+        self.check_bus()
+        time.sleep(5)
+        self.assertEqual(self.ebusctl("hex", "08b509030d2800"), SLAVE_08_ANSWER)
+        self.assertIn("signal: acquired", self.ebusctl("info"))
+        self.assertEqual(reader.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(reader.execute("SELECT count(*) FROM telegram").fetchone()[0], 1)
+
 
 class Mqtt(AppTestCase):
     @classmethod

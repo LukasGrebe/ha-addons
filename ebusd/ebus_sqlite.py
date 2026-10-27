@@ -9,7 +9,7 @@ telegrams at SYN, and each telegram is decoded into the fields of the eBUS spec:
     QQ ZZ PB SB NN DD.. CRC  ACK  NN DD.. CRC  ACK
     |------ master part ---|     |- slave part -|
 
-One row per telegram is written to the table `telegram`.
+One row per telegram is written to the table `telegram`, keyed by its timestamp.
 """
 
 import argparse
@@ -36,66 +36,73 @@ COMMIT_INTERVAL = 1.0  # seconds
 PURGE_INTERVAL = 3600.0  # seconds
 PURGE_CHUNK = 10000  # rows per DELETE
 SILENCE_WARNING = 60.0  # seconds; an idle bus still has a SYN every ~40ms
+LOCKED_RETRY = 60  # seconds until converting a database locked by another program is tried again
 EXIT_CONFIG = 2  # run.sh does not restart the logger on this exit code
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS telegram (
-  id     INTEGER PRIMARY KEY,
-  ts     INTEGER NOT NULL,  -- arrival of the first byte, ns since 1970-01-01 UTC
-  type   TEXT,              -- BC broadcast, MM master-master, MS master-slave
-  qq     INTEGER,           -- source address
-  zz     INTEGER,           -- destination address
-  pb     INTEGER,           -- primary command
-  sb     INTEGER,           -- secondary command
-  nn     INTEGER,           -- number of data bytes of the master part
-  dd     TEXT,              -- data bytes of the master part (hex)
-  crc    INTEGER,           -- CRC of the master part
-  ack    INTEGER,           -- ACK (0x00) / NAK (0xff) of the destination
-  s_nn   INTEGER,           -- number of data bytes of the slave part
-  s_dd   TEXT,              -- data bytes of the slave part (hex)
-  s_crc  INTEGER,           -- CRC of the slave part
-  s_ack  INTEGER,           -- ACK (0x00) / NAK (0xff) of the source for the slave part
-  status TEXT NOT NULL,     -- ok, crc, nak, timeout, invalid, escape, trailing
-  raw    TEXT NOT NULL      -- all bytes between the two SYN as on the wire (hex)
+  ts     INTEGER PRIMARY KEY,  -- arrival of the first byte, ns since 1970-01-01 UTC (unique)
+  qq     INTEGER,              -- source address
+  zz     INTEGER,              -- destination address
+  pb     INTEGER,              -- primary command
+  sb     INTEGER,              -- secondary command
+  nn     INTEGER,              -- number of data bytes of the master part
+  dd     BLOB,                 -- data bytes of the master part
+  crc    INTEGER,              -- CRC of the master part
+  ack    INTEGER,              -- ACK (0x00) / NAK (0xff) of the destination
+  s_nn   INTEGER,              -- number of data bytes of the slave part
+  s_dd   BLOB,                 -- data bytes of the slave part
+  s_crc  INTEGER,              -- CRC of the slave part
+  s_ack  INTEGER,              -- ACK (0x00) / NAK (0xff) of the source for the slave part
+  status TEXT NOT NULL,        -- ok, crc, nak, timeout, invalid, escape, trailing
+  raw    BLOB                  -- all bytes between the two SYN as on the wire, only if they are not just
+                               -- the columns qq to s_ack one after the other (escape sequence, repetition, garbage)
 );
-CREATE INDEX IF NOT EXISTS telegram_ts ON telegram (ts);
-CREATE INDEX IF NOT EXISTS telegram_qqzzpbsb ON telegram (qq, zz, pb, sb, ts);
-CREATE INDEX IF NOT EXISTS telegram_zzpbsb ON telegram (zz, pb, sb, ts);
-CREATE INDEX IF NOT EXISTS telegram_pbsb ON telegram (pb, sb, ts);
+CREATE INDEX IF NOT EXISTS telegram_cmd ON telegram (pb, sb, zz, qq);
 
--- telegram with readable times, single bytes in hex and the ebusd notation
--- QQZZPBSBNNDD / NNDD (as used by "ebusctl hex" and "ebusctl grab").
+-- telegram with readable times, bytes in hex, the type, the ebusd notation
+-- QQZZPBSBNNDD / NNDD (as used by "ebusctl hex" and "ebusctl grab") and raw
+-- also for the telegrams that do not store it.
 CREATE VIEW IF NOT EXISTS telegram_hex AS SELECT
-  id,
   strftime('%Y-%m-%d %H:%M:%S', ts / 1000000000, 'unixepoch')
     || printf('.%09d', ts % 1000000000) AS time_utc,
   strftime('%Y-%m-%d %H:%M:%S', ts / 1000000000, 'unixepoch', 'localtime')
     || printf('.%09d', ts % 1000000000) AS time_local,
+  ts, type, qq, zz, pb, sb, nn, dd, crc, ack, s_nn, s_dd, s_crc, s_ack,
+  qq || zz || pb || sb || nn || dd AS master,
+  s_nn || s_dd AS slave,
+  status,
+  coalesce(raw, coalesce(qq, '') || coalesce(zz, '') || coalesce(pb, '') || coalesce(sb, '')
+    || coalesce(nn, '') || coalesce(dd, '') || coalesce(crc, '') || coalesce(ack, '')
+    || coalesce(s_nn, '') || coalesce(s_dd, '') || coalesce(s_crc, '') || coalesce(s_ack, '')) AS raw
+FROM (SELECT
   ts,
-  type,
+  CASE WHEN zz IS NULL THEN NULL WHEN zz = 0xfe THEN 'BC'
+    WHEN (zz & 0x0f) IN (0x0, 0x1, 0x3, 0x7, 0xf) AND (zz >> 4) IN (0x0, 0x1, 0x3, 0x7, 0xf) THEN 'MM'
+    ELSE 'MS' END AS type,
   CASE WHEN qq IS NULL THEN NULL ELSE printf('%02x', qq) END AS qq,
   CASE WHEN zz IS NULL THEN NULL ELSE printf('%02x', zz) END AS zz,
   CASE WHEN pb IS NULL THEN NULL ELSE printf('%02x', pb) END AS pb,
   CASE WHEN sb IS NULL THEN NULL ELSE printf('%02x', sb) END AS sb,
   CASE WHEN nn IS NULL THEN NULL ELSE printf('%02x', nn) END AS nn,
-  dd,
+  CASE WHEN dd IS NULL THEN NULL ELSE lower(hex(dd)) END AS dd,
   CASE WHEN crc IS NULL THEN NULL ELSE printf('%02x', crc) END AS crc,
   CASE WHEN ack IS NULL THEN NULL ELSE printf('%02x', ack) END AS ack,
   CASE WHEN s_nn IS NULL THEN NULL ELSE printf('%02x', s_nn) END AS s_nn,
-  s_dd,
+  CASE WHEN s_dd IS NULL THEN NULL ELSE lower(hex(s_dd)) END AS s_dd,
   CASE WHEN s_crc IS NULL THEN NULL ELSE printf('%02x', s_crc) END AS s_crc,
   CASE WHEN s_ack IS NULL THEN NULL ELSE printf('%02x', s_ack) END AS s_ack,
-  CASE WHEN dd IS NULL THEN NULL ELSE printf('%02x%02x%02x%02x%02x', qq, zz, pb, sb, nn) || dd END AS master,
-  CASE WHEN s_dd IS NULL THEN NULL ELSE printf('%02x', s_nn) || s_dd END AS slave,
   status,
-  raw
-FROM telegram;
+  CASE WHEN raw IS NULL THEN NULL ELSE lower(hex(raw)) END AS raw
+FROM telegram);
 """
 
-COLUMNS = ("ts", "type", "qq", "zz", "pb", "sb", "nn", "dd", "crc", "ack",
+COLUMNS = ("ts", "qq", "zz", "pb", "sb", "nn", "dd", "crc", "ack",
            "s_nn", "s_dd", "s_crc", "s_ack", "status", "raw")
-INSERT = "INSERT INTO telegram ({}) VALUES ({})".format(
+WIRE = COLUMNS[1:13]  # the fields qq to s_ack in the order they are sent
+# a telegram whose ts is taken is not inserted (rowcount 0), see insert()
+INSERT = "INSERT INTO telegram ({}) VALUES ({}) ON CONFLICT (ts) DO NOTHING".format(
     ", ".join(COLUMNS), ", ".join("?" * len(COLUMNS)))
 
 log = logging.getLogger("sqlite")
@@ -180,7 +187,7 @@ def decode(sym):
         data_end = pos + 5 + t["nn"]
         if data_end >= end:
             return t, "timeout", master_ok
-        t["dd"] = sym[pos + 5:data_end].hex()
+        t["dd"] = bytes(sym[pos + 5:data_end])
         t["crc"] = sym[data_end]
         master_ok = t["crc"] == crc8(sym[pos:data_end])
         pos = data_end + 1
@@ -211,7 +218,7 @@ def decode(sym):
         data_end = pos + 1 + t["s_nn"]
         if data_end >= end:
             return t, "timeout", master_ok
-        t["s_dd"] = sym[pos + 1:data_end].hex()
+        t["s_dd"] = bytes(sym[pos + 1:data_end])
         t["s_crc"] = sym[data_end]
         slave_ok = t["s_crc"] == crc8(sym[start:data_end])
         pos = data_end + 1
@@ -280,11 +287,40 @@ class FrameSplitter:
 
     def emit(self):
         fields, status, raw = decode_frame(bytes(self.frame), self.own_address)
-        row = dict(fields, ts=self.ts, status=status, raw=raw.hex())
-        self.rows.append(tuple(row.get(column) for column in COLUMNS))
+        self.rows.append(make_row(self.ts, fields, status, raw))
+
+
+def make_row(ts, fields, status, raw):
+    """Return the table row of a decoded telegram.
+
+    raw is only stored if the fields do not give it back, i.e. if it contains an
+    escape sequence, a part repeated after NAK or bytes that do not decode.
+    """
+    wire = bytearray()
+    for name in WIRE:
+        value = fields.get(name)
+        if value is None:
+            break  # the fields of a telegram are always received in this order
+        wire += value if isinstance(value, bytes) else bytes([value])
+    row = dict(fields, ts=ts, status=status, raw=None if wire == raw else raw)
+    return tuple(row.get(column) for column in COLUMNS)
+
+
+def insert(db, rows):
+    """Insert rows in the current transaction.
+
+    ts is the key, but telegrams read from the FIFO at once share their arrival
+    time (as may telegrams after the clock was set back): such a telegram gets
+    the next free nanosecond.
+    """
+    for row in rows:
+        ts = row[0]
+        while db.execute(INSERT, (ts,) + row[1:]).rowcount == 0:
+            ts += 1
 
 
 def open_db(path):
+    """Open the database and create the schema if it is new (see upgrade_db for older ones)."""
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
     if not os.access(directory, os.W_OK):
@@ -297,9 +333,106 @@ def open_db(path):
     if version > SCHEMA_VERSION:
         raise sqlite3.DatabaseError(
             f"{path} has schema version {version}, this app only knows up to {SCHEMA_VERSION}")
-    db.executescript(SCHEMA)
-    db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+    if version == 0:
+        db.executescript(SCHEMA)
+        db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
     return db
+
+
+def upgrade_db(db, path):
+    """Convert a database of schema version 1 in one transaction.
+
+    Version 1 stored the data bytes and raw as hex text, raw for every telegram,
+    the type, an id and four indexes. Returns the number of telegrams converted.
+    """
+    if db.execute("PRAGMA user_version").fetchone()[0] != 1:
+        return 0
+    size = os.path.getsize(path)
+    log.info("converting %s (%d MB) to the compact format of this version, this may take a few "
+             "minutes; telegrams received meanwhile are written afterwards", path, size >> 20)
+    started = time.monotonic()
+    count = 0
+    try:
+        db.executescript("BEGIN IMMEDIATE; DROP VIEW IF EXISTS telegram_hex; "
+                         "ALTER TABLE telegram RENAME TO telegram_v1;" + SCHEMA)
+        select = db.execute("SELECT {} FROM telegram_v1 ORDER BY id".format(", ".join(COLUMNS)))
+        while True:
+            rows = []
+            for values in select.fetchmany(10000):
+                t = dict(zip(COLUMNS, values))
+                for name in ("dd", "s_dd", "raw"):
+                    if t[name] is not None:
+                        t[name] = bytes.fromhex(t[name])
+                rows.append(make_row(t["ts"], t, t["status"], t["raw"]))
+            if not rows:
+                break
+            insert(db, rows)
+            count += len(rows)
+        db.execute("DROP TABLE telegram_v1")
+        db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    try:
+        db.execute("VACUUM")  # give the space of the old table back
+        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.OperationalError as err:
+        log.warning("unable to shrink the database file after converting it: %s", err)
+    log.info("converted %d telegrams in %.0f s, the database file has %d MB now (was %d MB)",
+             count, time.monotonic() - started, os.path.getsize(path) >> 20, size >> 20)
+    return count
+
+
+def is_locked(err):
+    """Whether err says that another program holds the write lock of the database."""
+    return isinstance(err, sqlite3.OperationalError) and "locked" in str(err)
+
+
+def move_aside(db, path):
+    """Close the database and rename its files, so that a new one can be started at path.
+
+    Only while no other program has it open: its -wal and -shm files would end up
+    with the new database otherwise. Returns the new name.
+    """
+    try:  # leaving WAL mode needs the database for itself
+        mode = db.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
+    except sqlite3.OperationalError:
+        mode = None
+    db.close()
+    if mode != "delete":
+        raise OSError(f"{path} is open in another program (e.g. Home Assistant's SQL integration)")
+    stem, ext = os.path.splitext(path)
+    backup = f"{stem}.v1-{time.strftime('%Y%m%d-%H%M%S')}{ext}"
+    if os.path.exists(backup):
+        raise OSError(f"{backup} exists")
+    os.rename(path, backup)
+    if os.path.exists(path + "-wal"):  # SQLite removes it when leaving WAL mode
+        os.rename(path + "-wal", backup + "-wal")
+    if os.path.exists(path + "-shm"):  # only an index of the -wal file, no data
+        os.remove(path + "-shm")
+    return backup
+
+
+def upgrade_or_replace_db(db, path):
+    """Convert a database of an older version, or keep it aside and start a new one.
+
+    Returns the database to write to. Raises sqlite3.OperationalError if another
+    program has the database locked (the conversion has not written anything then,
+    so trying again later is cheap), and OSError or sqlite3.Error if the old
+    database cannot be kept aside or a new one cannot be started.
+    """
+    try:
+        upgrade_db(db, path)
+        return db
+    except (OSError, sqlite3.Error, ValueError) as err:
+        if is_locked(err):
+            raise
+        log.error("unable to convert database %s, it is unchanged: %s", path, err)
+    backup = move_aside(db, path)
+    log.warning("kept the database of the previous version as %s (it is not deleted automatically), "
+                "writing telegrams to a new database", backup)
+    return open_db(path)
 
 
 def open_fifo(path):
@@ -322,6 +455,15 @@ def read_fifo(fd, chunks):
         chunks.put((time.time_ns(), data))
 
 
+def discard(chunks, stop):
+    """Keep reading the FIFO without recording anything until the app stops."""
+    while not stop.is_set():
+        try:
+            chunks.get(timeout=0.5)
+        except queue.Empty:
+            pass
+
+
 class Logger:
     def __init__(self, db, retention_days):
         self.db = db
@@ -337,7 +479,7 @@ class Logger:
             return
         try:
             with self.db:
-                self.db.executemany(INSERT, self.rows)
+                insert(self.db, self.rows)
         except sqlite3.OperationalError as err:  # locked or disk full: keep rows and retry
             if time.monotonic() - self.last_error_log >= 60:
                 log.warning("unable to write %d telegrams, will retry: %s", len(self.rows), err)
@@ -351,7 +493,7 @@ class Logger:
         try:
             with self.db:
                 deleted = self.db.execute(
-                    "DELETE FROM telegram WHERE id IN (SELECT id FROM telegram WHERE ts < ? LIMIT ?)",
+                    "DELETE FROM telegram WHERE ts IN (SELECT ts FROM telegram WHERE ts < ? LIMIT ?)",
                     (cutoff, PURGE_CHUNK)).rowcount
         except sqlite3.OperationalError as err:
             log.warning("unable to delete old telegrams, will retry: %s", err)
@@ -412,6 +554,23 @@ def main():
     threading.Thread(target=read_fifo, args=(fd, chunks), name="fifo", daemon=True).start()
     if args.ready_file:
         open(args.ready_file, "w").close()
+    # From here on the logger must not exit before the app stops: ebusd may not have
+    # opened the FIFO yet and would block on that forever without a reader.
+    # Converting after ebusd was started keeps a large database from delaying it.
+    while True:
+        try:
+            db = upgrade_or_replace_db(db, args.db)
+            break
+        except (OSError, sqlite3.Error) as err:
+            if not is_locked(err):
+                log.error("unable to keep the database aside and start a new one, telegrams are not "
+                          "recorded until the app is restarted: %s", err)
+                discard(chunks, stop)
+                return 0
+            log.warning("database %s is locked by another program, trying again in %d s: %s",
+                        args.db, LOCKED_RETRY, err)
+            if stop.wait(LOCKED_RETRY):
+                return 0
     log.info("writing telegrams to %s (retention: %s)", args.db,
              f"{args.retention_days} days" if args.retention_days else "keep all")
 
