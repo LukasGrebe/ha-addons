@@ -1,8 +1,12 @@
-# 0.3.1 (unreleased)
+# 0.3.2 (unreleased)
 
 The timeline becomes the place where definitions are compared, chosen and named.
 
 ## Fixes
+* Dropdowns and labels use plain words first, then the explanation, then the CSV shorthand: kinds
+  (active read · ebusd polls this value from the device · r), field types (unsigned byte ·
+  whole number 0 to 255 · UCH), the byte interpretations, conditions ("only when …"), and the
+  kind badges (active read/write, passive read/write) everywhere
 * The timeline no longer shifts while telegrams are decoded: notices float above it, the
   progress bar and toolbar keep their size, and the grouping notice appears only after decoding
   finished and can be dismissed

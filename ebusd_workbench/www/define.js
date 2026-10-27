@@ -14,21 +14,32 @@ const round = (v, digits) => Math.round(v * 10 ** digits) / 10 ** digits;
 
 /** The number types of ebusd that decode a fixed number of bytes: null is the value ebusd shows as "-" (replacement value). */
 export const TYPES = {
-  UCH: { len: 1, label: "unsigned byte", decode: (b) => b[0] },
-  SCH: { len: 1, label: "signed byte", decode: s8 },
-  D1B: { len: 1, label: "signed byte", decode: (b) => (b[0] === 0x80 ? null : s8(b)) },
-  D1C: { len: 1, label: "byte / 2 (0–100 %)", decode: (b) => (b[0] === 0xff ? null : b[0] / 2) },
-  UIN: { len: 2, label: "unsigned 16 bit", decode: u16 },
-  SIN: { len: 2, label: "signed 16 bit", decode: s16 },
-  D2B: { len: 2, label: "signed 16 bit / 256 (temperature)", decode: (b) => (u16(b) === 0x8000 ? null : round(s16(b) / 256, 4)) },
-  D2C: { len: 2, label: "signed 16 bit / 16 (temperature)", decode: (b) => (u16(b) === 0x8000 ? null : round(s16(b) / 16, 4)) },
-  FLT: { len: 2, label: "signed 16 bit / 1000", decode: (b) => (u16(b) === 0x8000 ? null : round(s16(b) / 1000, 4)) },
-  ULG: { len: 4, label: "unsigned 32 bit", decode: u32 },
-  SLG: { len: 4, label: "signed 32 bit", decode: (b) => u32(b) | 0 },
-  EXP: { len: 4, label: "float", decode: (b) => { const v = new DataView(Uint8Array.from(b.slice(0, 4)).buffer).getFloat32(0, true); return Number.isFinite(v) ? round(v, 5) : null; } },
+  UCH: { len: 1, name: "unsigned byte", label: "whole number 0 to 255", decode: (b) => b[0] },
+  SCH: { len: 1, name: "signed byte", label: "whole number -128 to 127", decode: s8 },
+  D1B: { len: 1, name: "signed byte, 0x80 empty", label: "whole number -127 to 127, 0x80 means no value", decode: (b) => (b[0] === 0x80 ? null : s8(b)) },
+  D1C: { len: 1, name: "byte divided by 2", label: "0 to 100 in half steps, e.g. a percentage; 0xFF means no value", decode: (b) => (b[0] === 0xff ? null : b[0] / 2) },
+  UIN: { len: 2, name: "unsigned 16 bit", label: "whole number 0 to 65535 in two bytes", decode: u16 },
+  SIN: { len: 2, name: "signed 16 bit", label: "whole number -32768 to 32767 in two bytes", decode: s16 },
+  D2B: { len: 2, name: "16 bit divided by 256", label: "two bytes in 1/256 steps, e.g. a temperature; 0x8000 means no value", decode: (b) => (u16(b) === 0x8000 ? null : round(s16(b) / 256, 4)) },
+  D2C: { len: 2, name: "16 bit divided by 16", label: "two bytes in 1/16 steps, e.g. a temperature; 0x8000 means no value", decode: (b) => (u16(b) === 0x8000 ? null : round(s16(b) / 16, 4)) },
+  FLT: { len: 2, name: "16 bit divided by 1000", label: "two bytes in thousandths; 0x8000 means no value", decode: (b) => (u16(b) === 0x8000 ? null : round(s16(b) / 1000, 4)) },
+  ULG: { len: 4, name: "unsigned 32 bit", label: "whole number 0 to 4294967295 in four bytes", decode: u32 },
+  SLG: { len: 4, name: "signed 32 bit", label: "whole number, negative possible, in four bytes", decode: (b) => u32(b) | 0 },
+  EXP: { len: 4, name: "decimal number", label: "four bytes as a floating point number", decode: (b) => { const v = new DataView(Uint8Array.from(b.slice(0, 4)).buffer).getFloat32(0, true); return Number.isFinite(v) ? round(v, 5) : null; } },
 };
 /** Types without a number: raw hex, ignored bytes, text of n bytes. */
 export const RAW_TYPES = ["HEX", "IGN", "STR"];
+export const RAW_INFO = {
+  HEX: { name: "raw bytes", label: "shown as hex digits" },
+  IGN: { name: "ignored bytes", label: "skipped, not decoded" },
+  STR: { name: "text", label: "characters, one byte each" },
+};
+
+/** The plain name, the explanation and the CSV shorthand of a type. */
+export const typeInfo = (code) => ({ code, ...(TYPES[code] || RAW_INFO[code] || { name: code, label: "" }) });
+
+/** Dropdown text: the plain name, the explanation, then the shorthand ebusd's CSV uses. */
+export const typeOption = (code) => { const t = typeInfo(code); return `${t.name} · ${t.label} · ${code}`; };
 
 export const hexToBytes = (hex) => Uint8Array.from((hex || "").match(/../g) || [], (h) => parseInt(h, 16));
 export const bytesToHex = (bytes) => [...bytes].map(hex2).join("");
@@ -84,7 +95,7 @@ export function interpretations(samples, part, offset) {
       if ((s.last_ms || 0) >= latestMs) { latestMs = s.last_ms || 0; latest = v; }
     }
     if (!total) continue;
-    out.push({ type, len: spec.len, label: spec.label, latest, min: valid ? min : null, max: valid ? max : null, distinct: distinct.size, validRatio: valid / total });
+    out.push({ type, len: spec.len, name: spec.name, label: spec.label, latest, min: valid ? min : null, max: valid ? max : null, distinct: distinct.size, validRatio: valid / total });
   }
   // most plausible first: valid values, a modest range
   const magnitude = (i) => (i.min === null ? Infinity : Math.max(Math.abs(i.min), Math.abs(i.max)));

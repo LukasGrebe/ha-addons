@@ -6,14 +6,12 @@
 import { api, app, append, fmt, h, toast } from "./app.js";
 import { CSV_HEADER } from "./setup.js";
 import { drawChart, seriesQuery } from "./chart.js";
-import { RAW_TYPES, TYPES, analyzeBytes, applyType, buildCsv, bytesToHex, customKey, defaultHeader, hexToBytes, initialSegments, interpretations, nameSegments, samplesOf } from "./define.js";
+import { KIND_CODES, KIND_HELP } from "./compare.js";
+import { RAW_TYPES, TYPES, analyzeBytes, typeInfo, typeOption, applyType, buildCsv, bytesToHex, customKey, defaultHeader, hexToBytes, initialSegments, interpretations, nameSegments, samplesOf } from "./define.js";
 
-const TYPE_HELP = {
-  r: "read: ebusd polls this value from the device",
-  w: "write: ebusd sends this value to the device",
-  u: "passive read: ebusd only listens to what other devices send or answer",
-  uw: "passive write: ebusd only listens to a command another device sends",
-};
+// the kinds of definition: plain name, what it means, then the shorthand of ebusd's CSV
+const KINDS = Object.entries(KIND_CODES).map(([name, code]) => ({ name, code, help: KIND_HELP[name] }));
+const kindText = (k) => `${k.name} · ${k.help} · ${k.code}`;
 
 const fnv = (text) => { let x = 2166136261; for (let i = 0; i < text.length; i++) { x ^= text.charCodeAt(i); x = Math.imul(x, 16777619); } return (x >>> 0).toString(16); };
 const show = (v) => (v === null || v === undefined ? "–" : Number.isInteger(v) ? String(v) : String(Number(v.toPrecision(6))));
@@ -43,9 +41,8 @@ export function defineEditor(ctx) {
   const csv = () => state.raw ?? buildCsv(state.header, state.parts);
 
   // -- header ------------------------------------------------------------------------------------------
-  const typeSelect = h("select", { title: "what ebusd does with the definition", onchange: () => { state.header.type = typeSelect.value; typeHelp.textContent = TYPE_HELP[typeSelect.value]; changed(); } },
-    Object.keys(TYPE_HELP).map((t) => h("option", { value: t, selected: t === state.header.type }, t)));
-  const typeHelp = h("span", { class: "muted" }, TYPE_HELP[state.header.type]);
+  const typeSelect = h("select", { class: "wide", title: "what ebusd does with the definition", onchange: () => { state.header.type = typeSelect.value; changed(); } },
+    KINDS.map((k) => h("option", { value: k.code, selected: k.code === state.header.type }, kindText(k))));
   const field = (key, size, title) => {
     const input = h("input", { type: "text", value: state.header[key], size, title, onchange: () => {
       state.header[key] = key === "comment" ? input.value.trim() : input.value.trim().replace(/[^A-Za-z0-9_.-]/g, "_");
@@ -56,12 +53,12 @@ export function defineEditor(ctx) {
   };
   const header = h("div", { class: "dheader" },
     h("div", { class: "row" }, h("b", {}, `Define ${row.label}`), h("span", { class: "muted" }, `${fmt.count(telegrams.length)} recorded variants · ${fmt.count(total)} telegrams${info.s.length ? ` · answer of ${info.s.length} byte${info.s.length === 1 ? "" : "s"}` : ""}${info.m.length ? ` · request data of ${info.m.length} byte${info.m.length === 1 ? "" : "s"}` : ""}`)),
-    h("div", { class: "row" }, h("label", {}, "kind"), typeSelect, typeHelp),
+    h("div", { class: "row" }, h("label", {}, "kind"), typeSelect),
     h("div", { class: "row" },
       h("label", {}, "circuit"), field("circuit", 10, "the device group: MQTT topics are ebusd/<circuit>/<name>"),
       h("label", {}, "name"), field("name", 22, "the message name, e.g. FlowTemp"),
       h("label", {}, "comment"), field("comment", 30)),
-    h("div", { class: "row muted mono" }, `destination ${state.header.zz || "--"} · command ${state.header.pbsb} · ID ${state.header.id || "(none)"}`, h("span", { title: "the sending device is not part of the definition: it matches whoever sends this message" }, " · any source")));
+    h("div", { class: "row muted" }, `to device ${state.header.zz || "--"} · command ${state.header.pbsb} · message ID ${state.header.id || "(none)"}`, h("span", { title: "the sending device is not part of the definition: it matches whoever sends this message" }, " · from any device")));
 
   // -- bytes -----------------------------------------------------------------------------------------------
   const segmentAt = (part, offset) => state.parts[part].find((s) => offset >= s.offset && offset < s.offset + s.len);
@@ -77,7 +74,7 @@ export function defineEditor(ctx) {
         const idx = state.parts[part].indexOf(seg);
         const variability = b.distinct === 1 ? "const" : b.distinct <= 3 ? "few" : "many";
         return h("button", { class: `byte ${variability} ${state.selected.part === part && state.selected.offset === b.offset ? "sel" : ""} ${seg.offset === b.offset ? "start" : ""}`, style: `background:${palette(idx)}`,
-          title: `byte ${b.offset}: ${b.distinct} distinct value${b.distinct === 1 ? "" : "s"}${b.distinct > 1 ? ` (${b.min.toString(16).padStart(2, "0")}…${b.max.toString(16).padStart(2, "0")})` : ""}\n${TYPES[seg.type] ? `${seg.type} field` : `${seg.type} bytes`}`,
+          title: `byte ${b.offset}: ${b.distinct} distinct value${b.distinct === 1 ? "" : "s"}${b.distinct > 1 ? ` (${b.min.toString(16).padStart(2, "0")}…${b.max.toString(16).padStart(2, "0")})` : ""}\n${typeInfo(seg.type).name}`,
           onclick: () => { state.selected = { part, offset: b.offset }; renderGrid(); renderInterp(); } },
           h("span", { class: "hex" }, b.latest === null ? "--" : b.latest.toString(16).padStart(2, "0")), h("span", { class: "idx" }, String(b.offset)));
       });
@@ -102,10 +99,10 @@ export function defineEditor(ctx) {
     };
     const len = h("input", { type: "number", min: 1, max: info[part].length - offset, value: 1, style: "width:48px" });
     append(boxes.interp, h("div", { class: "muted" }, `Byte ${offset}${part === "s" ? " of the answer" : " of the request data"} could be, starting here (latest value, range over the whole history):`),
-      h("div", { class: "chips" }, list.map((i) => h("button", { class: `interp ${seg.offset === offset && seg.type === i.type ? "on" : ""} ${i.validRatio < 0.5 ? "bad" : ""}`, title: `${i.label}${i.validRatio < 1 ? ` — ${Math.round((1 - i.validRatio) * 100)} % of the values are the replacement value "-"` : ""}`, onclick: () => apply(i.type) },
-        h("b", {}, i.type), ` ${show(i.latest)}`, h("span", { class: "muted" }, i.min !== null ? ` (${show(i.min)} … ${show(i.max)})` : " (no valid value)")))),
+      h("div", { class: "chips" }, list.map((i) => h("button", { class: `interp ${seg.offset === offset && seg.type === i.type ? "on" : ""} ${i.validRatio < 0.5 ? "bad" : ""}`, title: `${i.name}: ${i.label} (${i.type})${i.validRatio < 1 ? ` — ${Math.round((1 - i.validRatio) * 100)} % of the values are the replacement value "-"` : ""}`, onclick: () => apply(i.type) },
+        h("b", {}, i.name), ` ${show(i.latest)}`, h("span", { class: "muted" }, `${i.min !== null ? ` (${show(i.min)} … ${show(i.max)})` : " (no valid value)"} · ${i.type}`)))),
       h("div", { class: "row" }, "or the next", len, "bytes as",
-        RAW_TYPES.map((t) => h("button", { class: "small", title: { HEX: "show the bytes as hex", IGN: "ignore these bytes", STR: "text" }[t], onclick: () => apply(t, Number(len.value) || 1) }, t))));
+        RAW_TYPES.map((t) => h("button", { class: "small", title: `${typeInfo(t).label} (${t})`, onclick: () => apply(t, Number(len.value) || 1) }, typeInfo(t).name))));
   }
 
   // -- segments ------------------------------------------------------------------------------------------------
@@ -131,10 +128,10 @@ export function defineEditor(ctx) {
         const values = samples.map((s) => decodeSegment(real, s[part])).filter((v) => v !== undefined && v !== null);
         const numeric = values.length && values.every((v) => typeof v === "number");
         const latest = decodeSegment(real, info[part].latest?.[part]);
-        const typeSel = h("select", { onchange: () => { state.parts[part] = applyType(state.parts[part], info[part].length, real.offset, typeSel.value, real.len); state.raw = null; changed(true); } },
-          [...Object.keys(TYPES), ...RAW_TYPES].map((t) => h("option", { value: t, selected: t === real.type }, t)));
+        const typeSel = h("select", { class: "wide", onchange: () => { state.parts[part] = applyType(state.parts[part], info[part].length, real.offset, typeSel.value, real.len); state.raw = null; changed(true); } },
+          [...Object.keys(TYPES), ...RAW_TYPES].map((t) => h("option", { value: t, selected: t === real.type }, typeOption(t))));
         const name = h("input", { type: "text", value: real.name, placeholder: seg.name, size: 14, onchange: () => { real.name = name.value.trim(); state.raw = null; changed(); } });
-        const div = h("input", { type: "text", value: real.divisor, size: 4, title: "divisor or value text (e.g. 10 or 0=off;1=on)", onchange: () => { real.divisor = div.value.trim(); changed(true); } });
+        const div = h("input", { type: "text", value: real.divisor, size: 6, placeholder: "none", title: "divide the value (e.g. 10) or give names to values (e.g. 0=off;1=on)", onchange: () => { real.divisor = div.value.trim(); changed(true); } });
         const unit = h("input", { type: "text", value: real.unit, size: 4, onchange: () => { real.unit = unit.value.trim(); changed(); } });
         const range = numeric ? `${show(Math.min(...values))} … ${show(Math.max(...values))}` : "";
         rows.push(h("tr", { class: state.chartSegment === real ? "sel" : "", onclick: (e) => { if (e.target.closest("input,select")) return; state.chartSegment = real; state.chartPart = part; renderSegments(); renderChart(); } },
@@ -144,7 +141,7 @@ export function defineEditor(ctx) {
           h("td", { class: "mono muted" }, range)));
       }
     }
-    if (rows.length) append(boxes.segs, h("table", { class: "segs" }, h("thead", {}, h("tr", {}, h("th", {}, "bytes"), h("th", {}, "type"), h("th", {}, "field name"), h("th", {}, "divisor"), h("th", {}, "unit"), h("th", {}, "latest"), h("th", {}, "range"))), h("tbody", {}, rows)));
+    if (rows.length) append(boxes.segs, h("table", { class: "segs" }, h("thead", {}, h("tr", {}, h("th", {}, "bytes"), h("th", {}, "type"), h("th", {}, "field name"), h("th", {}, "divisor or value names"), h("th", {}, "unit"), h("th", {}, "latest"), h("th", {}, "range"))), h("tbody", {}, rows)));
   }
 
   // -- the line and ebusd's check ---------------------------------------------------------------------------
@@ -225,7 +222,7 @@ export function defineEditor(ctx) {
     const db = app.status.db;
     const canvas = h("canvas");
     boxes.chart.replaceChildren();
-    append(boxes.chart, h("div", { class: "row" }, h("b", {}, "History"), ` of ${nameSegments(state.parts[part], part)[state.parts[part].indexOf(seg)].name} as ${seg.type}`), canvas,
+    append(boxes.chart, h("div", { class: "row" }, h("b", {}, "History"), ` of ${nameSegments(state.parts[part], part)[state.parts[part].indexOf(seg)].name} as ${typeInfo(seg.type).name} (${seg.type})`), canvas,
       h("div", { class: "hint" }, `${fmt.count(points.length)} telegrams${data.stride > 1 ? ` (every ${data.stride}th of ${fmt.count(data.total)})` : ""}: a value that looks like a measurement (smooth, plausible range) is the right type`));
     drawChart(canvas, { points, numeric: true, field: seg.name }, { t0: db.first_ms, t1: db.last_ms + 1000, width: Math.max(320, (root.clientWidth || 640) - 20), height: 110 });
   }

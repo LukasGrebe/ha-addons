@@ -365,3 +365,5 @@ main { flex: 1; min-height: 0; display: flex; }
 .toolbar > .hint { min-width: 230px; text-align: right; }
 .toolbar { min-height: 66px; }
 .toolbar button.state { height: 24px; line-height: 1; }
+.definer select.wide { max-width: 100%; }
+.definer table.segs select.wide { max-width: 340px; text-overflow: ellipsis; }

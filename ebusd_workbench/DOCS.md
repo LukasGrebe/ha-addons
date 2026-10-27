@@ -205,8 +205,10 @@ for rows with or without other candidates. They are never chosen automatically; 
 timeline. Three ways to make one:
 
 - **Define a message that no definition decodes**: click such a row in the timeline (it shows
-  *＋ define*). The editor is prefilled from what the recording shows: kind (`r`/`w` when ebusd
-  itself polls, `u`/`uw` for what other devices exchange, `u` for broadcasts), circuit (from the
+  *＋ define*). The editor is prefilled from what the recording shows: the kind (active read or
+  write when ebusd itself polls or sends, passive read or write for what other devices
+  exchange, passive read for broadcasts; the CSV shorthand `r`, `w`, `u`, `uw` is shown last in
+  every dropdown, after the plain name and its explanation), circuit (from the
   identification of the device), address, command and ID, and the data bytes. Click a byte to
   see what it could be, every number type (UCH, D1C, D2C, FLT, EXP, …) with its latest value and
   its range over the whole history, and apply one; the rest stays raw (HEX). Name the fields,

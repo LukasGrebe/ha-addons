@@ -7,7 +7,7 @@ import { api, app, append, bus, fmt, h, toast, refreshStatus } from "./app.js";
 import { messageColors, telegramValue, valueColors } from "./colors.js";
 import { generateEbusdOptions, generateHaYaml } from "./hayaml.js";
 import { describeMatch, fmtTime, parseAddressMap, runProfile, summaryJson } from "./evidence.js";
-import { accessKind, locateSource } from "./compare.js";
+import { accessKind, describeConditions, kindSuffix, locateSource } from "./compare.js";
 import { setup } from "./setup.js";
 
 const dirname = (p) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
@@ -544,8 +544,9 @@ export class Definitions {
     area.value = text;
     const st = d?.customStatus;
     const status = h("div", { class: `hint ${st?.errors ? "err" : st ? "ok" : ""}` }, st ? `${st.messages} definition${st.messages === 1 ? "" : "s"} loaded${st.errors ? `, ${st.errors} error${st.errors === 1 ? "" : "s"}` : ""}${st.stderr?.length ? `: ${st.stderr.slice(0, 3).join(" | ")}` : ""}` : (text.trim() ? "saved" : ""));
-    return h("div", {}, area, h("div", { class: "row" },
-      h("button", { class: "small primary", onclick: () => this.saveCustom(area.value) }, "Save and decode the recording"), status));
+    return h("div", {}, area,
+      h("div", { class: "hint" }, "First column: r = active read (ebusd polls), w = active write (ebusd sends), u = passive read, uw = passive write (ebusd listens). The editor in the timeline explains every field type and fills the line for you."),
+      h("div", { class: "row" }, h("button", { class: "small primary", onclick: () => this.saveCustom(area.value) }, "Save and decode the recording"), status));
   }
 
   async saveCustom(text) {
@@ -803,10 +804,10 @@ export class Definitions {
             h("td", {}, t.manual ? h("span", { class: "muted" }, "pasted") : fmt.count(t.n)),
             h("td", { class: "mono muted" }, t.last_ms ? fmt.dateTime(t.last_ms).slice(5, 16) : ""),
             h("td", { class: "mono", title: t.line }, swatch(telegramValue(t.master, t.slave, t.status, app.settings), t.status), t.line.length > 40 ? t.line.slice(0, 38) + "…" : t.line),
-            h("td", {}, t.compileId !== decoder.compile.id ? h("span", { class: "muted" }, "…") : t.error ? h("span", { class: "err" }, t.error) : !usedDef ? h("span", { class: "warn" }, "unknown") : chip(usedDef.circuit, usedDef.name, usedDef.write ? " (w)" : "")),
+            h("td", {}, t.compileId !== decoder.compile.id ? h("span", { class: "muted" }, "…") : t.error ? h("span", { class: "err" }, t.error) : !usedDef ? h("span", { class: "warn" }, "unknown") : chip(usedDef.circuit, usedDef.name, kindSuffix(usedDef))),
             h("td", { class: "mono", style: "white-space:normal" }, used ? (used.result === "ok" ? used.text : h("span", { class: "err" }, used.result)) : ""),
             h("td", { class: "cand" }, others.slice(0, 6).map((d) => { const def = decoder.def(d.defKey); return def ? h("span", { style: "margin-right:4px", title: `${def.file}${def.condition ? " " + def.condition : ""} (${def.status}${def.source !== "base" ? `, ${def.source}` : ""}): ${d.result === "ok" ? d.text : d.result}` },
-              chip(def.circuit, def.name, def.write ? " (w)" : ""), d.result !== "ok" ? h("span", { class: "err" }, " ✗") : null) : null; }), others.length > 6 ? ` +${others.length - 6}` : null));
+              chip(def.circuit, def.name, kindSuffix(def)), d.result !== "ok" ? h("span", { class: "err" }, " ✗") : null) : null; }), others.length > 6 ? ` +${others.length - 6}` : null));
         })));
       body.replaceChildren(table, rows.length > 1500 ? h("div", { class: "hint", style: "padding:6px 10px" }, "showing the first 1500 telegrams") : null);
       const stderr = decoder.compile?.loaded?.stderr || [];
@@ -850,7 +851,7 @@ export class Definitions {
         if (statusFilter.value === "custom" && m.source !== "custom") return false;
         if (statusFilter.value === "clean" && !(m.errors === 0 && m.ok > 0)) return false;
         if (app.settings?.ui?.hideFailing && m.errors > 0 && !current.has(m.key) && !m.companion) return false;
-        return !q || `${m.circuit} ${m.name} ${setup.exportName(m)} ${m.file} ${m.condition}`.toLowerCase().includes(q);
+        return !q || `${m.circuit} ${m.name} ${setup.exportName(m)} ${m.file} ${m.condition} ${describeConditions(m)}`.toLowerCase().includes(q);
       });
       summary.textContent = `${current.size} of ${entries.length} definitions included${setup.customized ? "" : " (ebusd's own choice so far)"} (${entries.filter((m) => m.status === "active").length} used by ebusd, ${entries.filter((m) => !["active", "error", "companion"].includes(m.status)).length} hidden, ${entries.filter((m) => m.status === "error").length} not fitting, ${entries.filter((m) => m.status === "companion").length} counterparts not seen)`;
       const tbody = h("tbody");
@@ -869,12 +870,12 @@ export class Definitions {
           h("td", {}, chip(m.circuit, m.name)),
           h("td", {}, nameInput, setup.exportName(m) !== m.name ? h("span", { class: "muted", title: "renamed for my config" }, " ✎") : null),
           h("td", { class: "mono", title: m.file }, m.file.replace(/^.*\//, ""), m.source !== "base" ? h("span", { class: "badge", style: "margin-left:4px", title: "added or changed by this layer" }, m.source) : null),
-          h("td", { class: "mono" }, m.condition),
+          h("td", { title: m.condition }, describeConditions(m) ? `only when ${describeConditions(m)}` : ""),
           h("td", { title: `${m.distinct} distinct telegrams, ${m.occurrences} on the bus` }, m.companion ? h("span", { class: "muted" }, "not seen") : `${fmt.count(m.occurrences)} (${m.distinct})`),
           h("td", {}, m.companion ? "" : m.errors ? h("span", { class: m.ok ? "warn" : "err" }, `${m.ok} ok, ${m.errors} ✗`) : h("span", { class: "ok" }, "ok")),
           h("td", { class: "mono", style: "white-space:normal", title: m.examples.join("\n") }, m.examples[0] ? m.examples[0].slice(0, 90) : "")));
       }
-      body.replaceChildren(h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "setup"), h("th", {}, "status"), h("th", {}, "upstream message"), h("th", {}, "name in my config"), h("th", {}, "file"), h("th", {}, "condition"), h("th", {}, "seen"), h("th", {}, "decode"), h("th", {}, "example"))), tbody));
+      body.replaceChildren(h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "setup"), h("th", {}, "status"), h("th", {}, "upstream message"), h("th", {}, "name in my config"), h("th", {}, "file"), h("th", {}, "applies"), h("th", {}, "seen"), h("th", {}, "decode"), h("th", {}, "example"))), tbody));
     };
     renderTable();
   }

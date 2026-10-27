@@ -18,7 +18,7 @@ import { generateEbusdOptions, generateHaYaml } from "./hayaml.js";
 import { defineEditor, customKey } from "./define-ui.js";
 import { PRESETS as LOG_PRESETS, durationText, eventRange, fromMs, logCommand, timeText, toMs } from "./log.js";
 import { drawChart, nearestPoint, seriesFields, seriesQuery, seriesValues } from "./chart.js";
-import { KIND_HELP, accessKind, coverage, describeDifference, groupCandidates, rowTelegrams, summarizeFields, whyNot } from "./compare.js";
+import { KIND_HELP, accessKind, coverage, kindSuffix, describeDifference, groupCandidates, rowTelegrams, summarizeFields, whyNot } from "./compare.js";
 
 const ROW = 24;
 const STATUS_ORDER = { active: 0, custom: 1, hidden: 2, conditional: 3, variant: 4, error: 5, companion: 6 };
@@ -1381,7 +1381,7 @@ export class Timeline {
         const editing = this.drawerEditing === m.key;
         append(list, h("div", { class: `item ${m.write ? "write" : ""}` },
           h("div", { class: "line" },
-            h("span", { class: "chip-msg", style: `color:${colors.text};background:${colors.background};border-color:${colors.border}` }, exportName, m.write ? " (w)" : m.passive ? " (u)" : ""),
+            h("span", { class: "chip-msg", style: `color:${colors.text};background:${colors.background};border-color:${colors.border}` }, exportName, kindSuffix(m)),
             exportName !== m.name ? h("span", { class: "muted", title: "upstream name" }, m.name) : null,
             h("span", { class: `badge ${m.status}`, title: STATUS_HELP[m.status] || "" }, m.status),
             m.source !== "base" ? h("span", { class: "badge" }, m.source) : null,

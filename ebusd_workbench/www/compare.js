@@ -36,15 +36,18 @@ export function structureOf(csv) {
 
 /** read / write / passive read / passive write: what ebusd does with the definition. */
 export function accessKind(def) {
-  return def.passive ? (def.write ? "passive write" : "passive read") : def.write ? "write" : "read";
+  return def.passive ? (def.write ? "passive write" : "passive read") : def.write ? "active write" : "active read";
 }
 
 export const KIND_HELP = {
-  "read": "ebusd polls this value from the device",
-  "write": "ebusd sends this value to the device (it changes the device)",
+  "active read": "ebusd polls this value from the device",
+  "active write": "ebusd sends this value to the device (it changes the device)",
   "passive read": "ebusd only listens: it decodes what other devices send or answer on the bus",
   "passive write": "ebusd only listens: it decodes a command another device sends, e.g. the controller setting a mode",
 };
+
+/** The shorthand of the kind in ebusd's CSV (the first column). */
+export const KIND_CODES = { "active read": "r", "active write": "w", "passive read": "u", "passive write": "uw" };
 
 /** In what two definitions differ, in words (empty when they are the same apart from names). */
 export function describeDifference(a, b) {
@@ -188,10 +191,8 @@ export function whyNot(def, scan, errorKinds = null, used = null) {
         ? `Device ${def.zz} identifies as ${s.manufacturer} ${s.ident} (SW ${s.sw}, HW ${s.hw}), for which ebusd loads ${s.file ? s.file.replace(/^.*\//, "") : "no device file"}.`
         : `No identification of device ${def.zz} was recorded, so ebusd would load no device file for it.`}`;
     case "conditional": {
-      const needs = (def.conditions || []).map((c) => (c.message === "scan" || c.circuit === "scan"
-        ? `the device identification ${c.field || c.name} ${rangeText(c.value)}`
-        : `${c.circuit ? c.circuit + " " : ""}${c.message}${c.field ? " " + c.field : ""} ${rangeText(c.value)}`));
-      return `Its condition ${def.condition} was not met by the recorded telegrams${needs.length ? `: it needs ${needs.join(" and ")}` : ""}.`;
+      const needs = describeConditions(def);
+      return `Its condition ${def.condition} was not met by the recorded telegrams${needs ? `: it applies only when ${needs}` : ""}.`;
     }
     case "hidden":
       return `ebusd loads this file, but finds ${used ? `${used.circuit} ${used.name} (${accessKind(used)}) from ${used.file.replace(/^.*\//, "")}` : "another definition"} first for the same address and message ID.`;
@@ -237,3 +238,13 @@ export function locateSource(files, def) {
   }
   return null;
 }
+
+/** A definition's condition in words: "ehp HeatPumpType type = 3 and the device identification SW ≥ 413" (empty without one). */
+export function describeConditions(def) {
+  return (def.conditions || []).map((c) => (c.message === "scan" || c.circuit === "scan"
+    ? `the device identification ${c.field || c.name} ${rangeText(c.value)}`
+    : `${c.circuit ? c.circuit + " " : ""}${c.message}${c.field ? " " + c.field : ""} ${rangeText(c.value)}`).trim()).join(" and ");
+}
+
+/** The kind as a suffix for chips: nothing for an active read, the usual case. */
+export const kindSuffix = (def) => (accessKind(def) === "active read" ? "" : ` · ${accessKind(def)}`);

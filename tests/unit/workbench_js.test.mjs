@@ -21,7 +21,7 @@ const { app } = await import("../../ebusd_workbench/www/app.js");
 const { seriesFields, seriesValues, nearestPoint, seriesQuery } = await import("../../ebusd_workbench/www/chart.js");
 const log = await import("../../ebusd_workbench/www/log.js");
 const define = await import("../../ebusd_workbench/www/define.js");
-const { structuralSignature, rowTelegrams, coverage, groupCandidates, summarizeFields, whyNot, describeDifference, accessKind, locateSource } = await import("../../ebusd_workbench/www/compare.js");
+const { structuralSignature, rowTelegrams, coverage, groupCandidates, summarizeFields, whyNot, describeDifference, accessKind, locateSource, KIND_CODES, KIND_HELP, describeConditions, kindSuffix } = await import("../../ebusd_workbench/www/compare.js");
 
 const roomTemp = { key: "vaillant/15.700.csv|700|Z1RoomTemp|", circuit: "700", name: "Z1RoomTemp", write: false, passive: false, status: "active", source: "base", file: "vaillant/15.700.csv",
   fields: ["temp"], csv: "r,700,Z1RoomTemp,Room temperature,,15,b524,020000000700,temp,s,D2C,,°C,room temperature" };
@@ -170,11 +170,11 @@ test("why a candidate is not what ebusd uses", () => {
 test("two groups that decode the same values are told apart by access kind and structure", () => {
   const passive = { circuit: "hmu", name: "SetMode", passive: true, write: true, csv: "uw,hmu,SetMode,Operation mode,,08,b510,00,hcmode,m,UCH,0=auto;1=off,,mode,flow,m,D1C,,°C," };
   const active = { circuit: "hmu", name: "SetMode", passive: false, write: true, csv: "w,hmu,SetMode,Operation mode,,08,b510,00,hcmode,m,UCH,0=auto;1=off,,mode,flow,m,D1C,,°C," };
-  assert.deepEqual([accessKind(passive), accessKind(active)], ["passive write", "write"]);
+  assert.deepEqual([accessKind(passive), accessKind(active)], ["passive write", "active write"]);
   assert.notEqual(structuralSignature(passive.csv), structuralSignature(active.csv));
   const diff = describeDifference(passive, active);
   assert.equal(diff.length, 1);
-  assert.match(diff[0], /^passive write \(ebusd only listens.*\) instead of write \(ebusd sends this value/);
+  assert.match(diff[0], /^passive write \(ebusd only listens.*\) instead of active write \(ebusd sends this value/);
   const retyped = { ...active, csv: active.csv.replace("D1C", "D2C") };
   assert.deepEqual(describeDifference(active, retyped), ["field flow: D1C °C instead of D2C °C"]);
   assert.deepEqual(describeDifference(active, { ...active }), []);
@@ -252,6 +252,7 @@ test("bytes are analysed and interpreted over the history", () => {
   assert.equal(a.latest.last_ms, 3);
   const d2c = define.interpretations(samples, "s", 1).find((i) => i.type === "D2C");
   assert.equal(d2c.latest, 0x01c8 / 16);
+  assert.equal(d2c.name, "16 bit divided by 16", "the plain name travels with the interpretation");
   assert.deepEqual([d2c.min, d2c.max], [0x01a0 / 16, 0x01c8 / 16]);
   assert.equal(define.interpretations(samples, "s", 1).find((i) => i.type === "ULG"), undefined, "a type that needs more bytes than there are does not fit");
   assert.equal(define.interpretations([sample("ff", 1)], "s", 0).find((i) => i.type === "D1C").validRatio, 0, "0xff is the replacement value of D1C");
@@ -311,4 +312,24 @@ test("the form turns into the terminal's log command", () => {
   assert.equal(log.logCommand({ ...base, message: "x", ms: at(8, 52, 23, 500) }), "log 8:52:23.5 x");
   assert.deepEqual(log.eventRange({ ms: at(8, 52, 23), beforeMs: 2000, afterMs: 2000, whole: false }), { ms: at(8, 52, 23), min: at(8, 52, 21), max: at(8, 52, 25) });
   assert.deepEqual(log.eventRange({ ms: at(8, 52, 23), beforeMs: 0, afterMs: 0, whole: true }), { ms: at(8, 52), min: at(8, 52), max: at(8, 53) }, "8:52 is 8:52:00 to 8:53:00");
+});
+
+test("dropdown texts: plain name, explanation, then the CSV shorthand", () => {
+  assert.equal(define.typeOption("UCH"), "unsigned byte · whole number 0 to 255 · UCH");
+  assert.match(define.typeOption("D2C"), /^16 bit divided by 16 · two bytes in 1\/16 steps, e\.g\. a temperature.* · D2C$/);
+  assert.equal(define.typeOption("IGN"), "ignored bytes · skipped, not decoded · IGN");
+  assert.deepEqual(Object.keys(define.TYPES).filter((t) => !define.TYPES[t].name || !define.TYPES[t].label), [], "every type has a name and an explanation");
+  const names = Object.values(define.TYPES).map((t) => t.name);
+  assert.equal(new Set(names).size, names.length, "the plain names tell the types apart");
+  const kinds = Object.entries(KIND_CODES).map(([k, code]) => `${k} · ${KIND_HELP[k]} · ${code}`);
+  assert.equal(kinds[0], "active read · ebusd polls this value from the device · r");
+  assert.equal(kinds[3], "passive write · ebusd only listens: it decodes a command another device sends, e.g. the controller setting a mode · uw");
+});
+
+test("conditions and kinds are put in words", () => {
+  const def = { conditions: [{ name: "Ehp_heatpumptype", circuit: "ehp", message: "HeatPumpType", field: "type", value: [3] }, { name: "id_sw", circuit: "scan", message: "scan", field: "SW", value: [413, 4294967295] }] };
+  assert.equal(describeConditions(def), "ehp HeatPumpType type = 3 and the device identification SW ≥ 413");
+  assert.equal(describeConditions({}), "");
+  assert.equal(kindSuffix({ passive: false, write: false }), "");
+  assert.equal(kindSuffix({ passive: true, write: true }), " · passive write");
 });
