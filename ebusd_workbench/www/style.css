@@ -172,3 +172,48 @@ main { flex: 1; min-height: 0; display: flex; }
 .pane textarea.yaml { width: 100%; min-height: 180px; font-family: var(--mono); font-size: 12px; }
 .values { display: flex; flex-wrap: wrap; gap: 3px; }
 .values span { background: var(--bg); border-radius: 3px; padding: 0 4px; font-family: var(--mono); font-size: 11px; }
+
+/* timeline: decoding state, candidate picker, setup drawer */
+.toolbar button.state { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.toolbar button.state.busy { color: var(--accent); border-color: var(--accent); }
+.toolbar button.state.warn { color: var(--warn); border-color: var(--warn); }
+.toolbar button.state.err { color: var(--err); border-color: var(--err); }
+.toolbar button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.tl-stage { flex: 1; min-height: 0; display: flex; position: relative; }
+.tl-stage .tl-body { flex: 1; min-width: 0; }
+.tl-label .name { cursor: pointer; }
+.tl-label .name.renamed { font-style: italic; }
+.tl-label .cands { flex: none; font-size: 10px; padding: 0 5px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); cursor: pointer; border: 1px solid transparent; }
+.tl-label .cands.warn { background: #fff3e0; color: var(--warn); }
+.tl-label .cands:hover { border-color: currentColor; }
+.tl-label.picking { background: var(--accent-soft); }
+.tl-pop { position: absolute; z-index: 20; width: 640px; max-width: calc(100% - 20px); max-height: 70%; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 8px 28px rgba(0,0,0,.18); font-size: 12px; }
+.tl-pop .head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.tl-pop .head .mono { font-weight: 600; }
+.tl-pop .foot { padding: 6px 10px; border-top: 1px solid var(--line); }
+.tl-pop .cand { padding: 6px 10px; border-bottom: 1px solid #eef1f4; cursor: default; }
+.tl-pop .cand:hover { background: #f7f9fb; }
+.tl-pop .cand.chosen { background: var(--accent-soft); }
+.tl-pop .cand .line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tl-pop .cand .pick { border: none; background: none; font-size: 15px; padding: 0 2px; color: var(--muted); cursor: pointer; }
+.tl-pop .cand .pick.on, .tl-pop .cand .pick:hover { color: var(--accent); }
+.tl-pop .cand .export { color: var(--accent); font-style: italic; }
+.tl-pop .cand .decoded { margin: 3px 0 0 24px; white-space: normal; word-break: break-word; }
+.tl-pop .cand .stats { margin-left: 24px; font-size: 11px; }
+.rename { margin: 6px 0 0 24px; display: flex; flex-direction: column; gap: 4px; }
+.rename .fields { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.rename .field { display: inline-flex; align-items: center; gap: 4px; }
+.rename input { font-family: var(--mono); font-size: 12px; }
+.tl-drawer { flex: none; width: 420px; max-width: 50%; border-left: 1px solid var(--line); background: var(--panel); overflow: auto; display: flex; flex-direction: column; font-size: 12px; }
+.tl-drawer .head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.tl-drawer > .hint { padding: 6px 10px; }
+.tl-drawer .list { flex: 1; }
+.tl-drawer .circuit { display: flex; align-items: center; gap: 6px; padding: 8px 10px 4px; background: #f7f9fb; border-top: 1px solid var(--line); border-bottom: 1px solid #eef1f4; }
+.tl-drawer .circuit input { font-family: var(--mono); }
+.tl-drawer .item { padding: 4px 10px; border-bottom: 1px solid #eef1f4; }
+.tl-drawer .item.write { background: #fffaf8; }
+.tl-drawer .item .line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tl-drawer .item .example { font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-drawer .exports { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--line); position: sticky; bottom: 0; background: var(--panel); }
+.pane td input.rename { font-family: var(--mono); font-size: 12px; padding: 1px 4px; width: 150px; }
+.pane tr.included td { background: #fbfdff; }

@@ -15,6 +15,7 @@ DEFAULTS = {
     "layers": [],                 # pull requests / branches compiled on top of the checkout: [{ref}]
     "upstream_url": "https://github.com/john30/ebusd-configuration.git",  # where the pull requests live
     "evidence_profile": "",       # ebus-evidence profile YAML last imported
+    "own_address": "31",          # ebusd's own address on this bus (--address), for raw logs and evidence checks
     "ui": {},
 }
 
@@ -102,6 +103,11 @@ class Settings:
                 base[key] = value
             elif key == "evidence_profile":
                 base[key] = str(value)[:200_000]
+            elif key == "own_address":
+                address = str(value).strip().lower()
+                if len(address) != 2 or any(c not in "0123456789abcdef" for c in address):
+                    raise ValueError("own_address must be a hex byte, e.g. 31")
+                base[key] = address
             elif key == "layers":
                 if not isinstance(value, list):
                     raise ValueError("layers must be a list")

@@ -8,7 +8,7 @@ without Node.js or a C++ toolchain.
 |---|---|---|
 | `ebus-tsp.js` | [TypeSpec compiler](https://typespec.io) and the [eBUS TypeSpec library](https://github.com/john30/ebus-typespec) (the emitter that turns `.tsp` into ebusd CSV) with an in-memory file system, plus js-yaml for evidence profiles | `tsp-bundle/` |
 | `ebusd-check.js` | loader that runs the WebAssembly below with an in-memory file system ([browser_wasi_shim](https://github.com/bjorn3/browser_wasi_shim)) | `tsp-bundle/` |
-| `ebusd-check.wasm` | ebusd's own message library (`src/lib/ebus` of [john30/ebusd](https://github.com/john30/ebusd): CSV parsing, data types, message lookup and decoding) compiled to WebAssembly with a small `main` that loads CSV files and decodes telegrams, like `ebusd --checkconfig --inject`; `--candidates` lists every definition matching a telegram with its CSV line and siblings, and the scan file selection per device | `wasm/` |
+| `ebusd-check.wasm` | ebusd's own message library (`src/lib/ebus` of [john30/ebusd](https://github.com/john30/ebusd): CSV parsing, data types, message lookup and decoding) compiled to WebAssembly with a small `main` that loads CSV files and decodes telegrams, like `ebusd --checkconfig --inject`; `--candidates` lists every definition matching a telegram with its CSV line, siblings and the messages its condition refers to, and the scan file selection per device | `wasm/` |
 
 ## TypeSpec bundle
 

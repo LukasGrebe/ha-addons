@@ -1,17 +1,17 @@
 // Definitions: the git repository with TypeSpec sources, an editor, compile (TypeSpec -> CSV in
-// the browser), decode (recorded telegrams against every matching definition, with ebusd's message
-// library in the browser), a setup of the definitions that fit this installation, exports (CSV
-// files for the eBUSd app, Home Assistant entities, ebusd raw log for ebus-evidence) and
-// ebus-evidence profile checks.
+// the browser), the decodings of the recording (every candidate definition per telegram, kept in
+// the browser store by decoder.js), the setup of the definitions that fit this installation,
+// exports (CSV files for the eBUSd app, Home Assistant entities, ebusd raw log for ebus-evidence)
+// and ebus-evidence profile checks.
 import { api, app, append, bus, fmt, h, toast, refreshStatus } from "./app.js";
 import { messageColors, telegramValue, valueColors } from "./colors.js";
 import { generateEbusdOptions, generateHaYaml } from "./hayaml.js";
-import { describeMatch, fmtTime, runProfile, summaryJson } from "./evidence.js";
+import { describeMatch, fmtTime, parseAddressMap, runProfile, summaryJson } from "./evidence.js";
+import { setup } from "./setup.js";
 
 const dirname = (p) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const basename = (p) => p.slice(p.lastIndexOf("/") + 1);
 const VIEWS = [["editor", "Editor"], ["results", "Decoded"], ["setup", "Setup"], ["export", "Export"], ["evidence", "Evidence"]];
-const CSV_HEADER = "type,circuit,name,comment,qq,zz,pbsb,id,*name,part,type,divisor/values,unit,comment";
 const STATUS_HELP = {
   active: "ebusd uses this definition for this installation (file chosen by the scan, condition met)",
   variant: "definition from a file of another device variant (ebusd would not load it); it decodes the recorded telegrams",
@@ -49,25 +49,32 @@ export class Definitions {
     this.file = null;
     this.content = "";
     this.dirty = false;
-    this.outputs = null;
-    this.compiled = null;
-    this.telegrams = [];
-    this.telegramWindow = null;
-    this.results = null;
-    this.model = null;
-    this.selectedOutputs = null;
-    this.setup = app.settings?.setup || {};
     this.layers = [];
     this.view = "editor";
+    this.dirtyViews = new Set();
     this.evidenceRun = null;
+    this.compiling = false;
+    this.autoCompiled = false;
+    this.setupFilter = "";
     this.build();
-    bus.on("test-window", ({ from, to }) => { bus.emit("show-tab", "definitions"); this.loadWindowTelegrams(from, to); });
-    bus.on("test-telegrams", (list) => { bus.emit("show-tab", "definitions"); this.setTelegrams(list); this.runTest(); });
     bus.on("status", (status) => { if (status.repo?.exists !== this.repo?.exists) this.refresh(); });
+    bus.on("decodes-changed", (reason) => { this.updateDecodeStatus(); if (reason !== "progress") { this.setCounts(); this.refreshViews(); } });
+    bus.on("setup-changed", () => { this.setCounts(); this.refreshViews(["setup", "export"]); });
+    bus.on("show-view", (id) => this.showView(id));
+    bus.on("show-definition", (key) => { const def = app.decoder?.def(key); this.setupFilter = def ? `${def.circuit} ${def.name}` : ""; this.dirtyViews.add("setup"); this.showView("setup"); });
     this.refresh();
   }
 
-  onShow() { if (!this.repo) this.refresh(); }
+  onShow() { if (!this.repo) this.refresh(); if (this.dirtyViews.has(this.view)) this.renderView(this.view); }
+
+  /** The decodings of the recording, from the browser store. */
+  get entries() { return app.decoder?.entries || []; }
+
+  setCounts() {
+    const d = app.decoder;
+    this.setCount("results", d && d.telegrams.size ? fmt.count(d.telegrams.size) : "");
+    this.setCount("setup", this.entries.length ? `${setup.includedKeys(this.entries).length}/${this.entries.length}` : "");
+  }
 
   // -- layout ----------------------------------------------------------------------
 
@@ -91,6 +98,7 @@ export class Definitions {
     this.renderSetup();
     this.renderExport();
     this.renderEvidence();
+    this.setCounts();
   }
 
   showView(id) {
@@ -98,6 +106,20 @@ export class Definitions {
     for (const button of this.el.subtabs.querySelectorAll("button")) button.classList.toggle("active", button.dataset.view === id);
     for (const [key, pane] of Object.entries(this.el.panes)) pane.classList.toggle("active", key === id);
     if (id === "export") this.renderExport();
+    if (this.dirtyViews.has(id)) this.renderView(id);
+  }
+
+  /** Re-render the views that show decodings; only the visible one right away, the others when shown. */
+  refreshViews(views = ["results", "setup", "export"]) {
+    for (const id of views) this.dirtyViews.add(id);
+    if (this.root.classList.contains("active")) this.renderView(this.view);
+  }
+
+  renderView(id) {
+    this.dirtyViews.delete(id);
+    if (id === "results") this.renderResults();
+    else if (id === "setup") this.renderSetup();
+    else if (id === "export") this.renderExport();
   }
 
   setCount(id, text) {
@@ -141,7 +163,16 @@ export class Definitions {
     this.renderRepo();
     this.renderTree();
     this.renderBuild();
-    this.loadLayers();
+    await this.loadLayers();
+    this.autoCompile();
+  }
+
+  /** Compile at startup when there is a repository but no compile in the browser store yet. */
+  async autoCompile() {
+    if (this.autoCompiled || !this.repo?.exists) return;
+    this.autoCompiled = true;
+    await app.decoder?.ready;
+    if (!app.decoder?.compile && !this.compiling) this.compile();
   }
 
   // -- layers: community pull requests compiled on top of the checkout ---------------------------
@@ -390,7 +421,8 @@ export class Definitions {
     });
   }
 
-  // -- build panel: compile and decode --------------------------------------------------
+
+  // -- build panel: compile and the decoding state ------------------------------------------------
 
   renderBuild() {
     const box = this.el.build;
@@ -401,7 +433,8 @@ export class Definitions {
     const entryValue = tspFiles.includes(settings.compile?.entry) ? settings.compile.entry : tspFiles.find((p) => p.endsWith("main.tsp")) || tspFiles[0] || "";
     this.entry = h("select", {}, tspFiles.map((p) => h("option", { value: p, selected: p === entryValue }, p)));
     this.translations = h("select", {}, h("option", { value: "" }, "no translation"), yamlFiles.map((p) => h("option", { value: p, selected: p === settings.compile?.translations }, p)));
-    this.compileStatus = h("div", { class: this.compiled ? (this.compiled.ok ? "hint ok" : "hint err") : "hint" }, this.compiled ? this.compiled.summary : "TypeSpec → CSV runs in your browser; the device is not involved.");
+    const compile = app.decoder?.compile;
+    this.compileStatus = h("div", { class: compile ? "hint ok" : "hint" }, compile ? `${compile.summary} (${fmt.dateTime(new Date(compile.at).getTime())})` : "TypeSpec → CSV runs in your browser; the device is not involved.");
     this.diagnostics = h("div", { class: "diag" });
     this.outputList = h("div", { class: "outputs" });
     this.layerBox = h("div", { class: "outputs" });
@@ -417,18 +450,31 @@ export class Definitions {
       this.compileStatus, this.diagnostics, this.outputList);
     this.renderLayers();
 
-    this.telegramInput = h("textarea", { rows: 4, style: "width:100%;font-family:var(--mono);font-size:11px", placeholder: "one telegram per line: QQZZPBSBNNDD/NNDD, e.g. 1008b5110101/0938…\nor take the distinct telegrams of the timeline window" });
-    this.telegramInput.value = this.telegrams.map((t) => `${t.master}${t.slave ? "/" + t.slave : ""}`).join("\n");
-    this.candidatesCheck = h("input", { type: "checkbox", checked: true, title: "list every definition that matches a telegram, also ones ebusd would not use" });
-    this.testStatus = h("div", { class: "hint" });
-    append(box, h("h3", {}, "2 · Decode recorded telegrams"),
+    this.telegramInput = h("textarea", { rows: 3, style: "width:100%;font-family:var(--mono);font-size:11px", placeholder: "telegrams to decode by hand, one per line: QQZZPBSBNNDD/NNDD, e.g. 1008b5110101/0938…" });
+    this.decodeStatus = h("div", { class: "hint" });
+    append(box, h("h3", {}, "2 · Decoded recording"),
+      h("div", { class: "hint" }, "Every distinct telegram of the recording is decoded with every matching definition as it arrives, in this browser (Web Worker), and kept in the browser store with the definition's source. The timeline shows the decodings; the tabs in the middle list them."),
+      this.decodeStatus,
       h("div", { class: "row" },
-        h("button", { onclick: () => { const tl = app.views.timeline; this.loadWindowTelegrams(tl.t0, tl.t1); } }, "from timeline window"),
-        h("button", { class: "primary", onclick: () => this.runTest() }, "Decode"),
-        h("label", {}, this.candidatesCheck, " all candidates")),
-      this.telegramInput, this.testStatus,
-      h("div", { class: "hint" }, "Results, the setup of this installation and the exports are in the tabs of the middle column."));
+        h("button", { class: "small", title: "decode the whole recording again with the current compile", onclick: () => { if (app.decoder?.compile) app.decoder.setCompile(app.decoder.compile); } }, "decode again"),
+        h("button", { class: "small", title: "forget the browser-side copy of the recording and its decodings (the database is not touched)", onclick: async () => { if (confirm("Forget the browser store (telegrams, decodings, compile)? It is rebuilt from the database.")) { await app.decoder.reset(); this.renderBuild(); } } }, "reset store")),
+      this.telegramInput,
+      h("div", { class: "row" }, h("button", { class: "small", onclick: () => { const lines = this.telegramInput.value.split("\n").filter((l) => l.trim()); if (!lines.length) return; app.decoder.addManual(lines).then(() => { this.telegramInput.value = ""; this.showView("results"); }); } }, "Decode these too")));
     this.renderOutputs();
+    this.updateDecodeStatus();
+  }
+
+  updateDecodeStatus() {
+    const el = this.decodeStatus;
+    if (!el) return;
+    const st = app.decoder?.status();
+    if (!st) { el.textContent = ""; return; }
+    if (st.progress) { el.textContent = st.progress; el.className = "hint"; return; }
+    if (st.error) { el.textContent = st.error; el.className = "hint err"; return; }
+    if (!st.compile) { el.textContent = `${fmt.count(st.telegrams)} distinct telegrams in the browser store; compile to decode them.`; el.className = "hint"; return; }
+    const loaded = st.compile.loaded;
+    el.textContent = `${loaded ? `${fmt.count(loaded.messages)} definitions loaded${loaded.errors ? ` (${loaded.errors} file errors)` : ""}; ` : ""}${fmt.count(st.known)} of ${fmt.count(st.telegrams)} distinct telegrams known to ebusd, ${fmt.count(st.decoded)} decoded; ${st.active} definitions in use, ${st.definitions - st.active} more candidates${st.lastSync ? `; synced ${fmt.time(st.lastSync)}` : ""} (store: ${st.store})`;
+    el.className = loaded?.errors ? "hint err" : "hint ok";
   }
 
   async loadLibs() {
@@ -436,23 +482,28 @@ export class Definitions {
       this.compileStatus.textContent = "loading the TypeSpec compiler…";
       this.tsp = await import("./vendor/ebus-tsp.js");
     }
-    if (!this.check) {
-      const { createEbusdCheck } = await import("./vendor/ebusd-check.js");
-      this.check = await createEbusdCheck("vendor/ebusd-check.wasm");
-    }
+  }
+
+  setCompileState(state) {
+    this.compileState = state;
+    bus.emit("compile-state", state);
   }
 
   async compile(entryPath = null) {
     const entry = entryPath || this.entry.value;
     if (!entry) return toast("no .tsp file to compile", "err");
+    if (this.compiling) return;
     const translations = this.translations.value;
     const root = entry.includes("/") ? entry.slice(0, entry.indexOf("/")) : "";
     const entryRel = root ? entry.slice(root.length + 1) : entry;
     const translationsRel = translations && translations.startsWith(root ? root + "/" : "") ? (root ? translations.slice(root.length + 1) : translations) : "";
     const t0 = performance.now();
+    this.compiling = true;
     try {
+      this.setCompileState({ busy: true, text: "loading the compiler…" });
       await this.loadLibs();
       this.compileStatus.textContent = "loading sources…";
+      this.setCompileState({ busy: true, text: "compiling: loading sources…" });
       const layers = this.enabledLayers();
       const sources = await api.get(`api/repo/sources?dir=${encodeURIComponent(root)}${layers.length ? "&layers=" + encodeURIComponent(layers.join(",")) : ""}`);
       const files = sources.files;
@@ -464,6 +515,7 @@ export class Definitions {
       };
       applyEditor(files);
       this.compileStatus.textContent = `compiling ${entry} (${Object.keys(files).length} files${layers.length ? `, layers ${layers.join(", ")}` : ""})…`;
+      this.setCompileState({ busy: true, text: `compiling ${Object.keys(files).length} files${layers.length ? ` with ${layers.join(", ")}` : ""}…` });
       const options = { entry: entryRel, translations: translationsRel || undefined };
       const result = await this.tsp.compileEbusTsp(files, options);
       let baseOutputs = null, baseFiles = null;
@@ -471,6 +523,7 @@ export class Definitions {
       if (result.ok && layers.length) {
         // the checkout alone, to tell which definitions the layers add
         this.compileStatus.textContent = "compiling the checkout without layers for comparison…";
+        this.setCompileState({ busy: true, text: "compiling the checkout without layers for comparison…" });
         const base = await api.get(`api/repo/sources?dir=${encodeURIComponent(root)}`);
         applyEditor(base.files);
         baseFiles = base.files;
@@ -480,216 +533,45 @@ export class Definitions {
       }
       const ms = Math.round(performance.now() - t0);
       const errors = result.diagnostics.filter((d) => d.severity === "error").length;
-      this.outputs = result.ok ? result.outputs : null;
-      this.selectedOutputs = null;
-      this.compiled = { entry, root, ok: result.ok, diagnostics: result.diagnostics, ms, layers, origins: sources.origins || {}, originLayers: sources.origin_layers || {}, conflicts: sources.conflicts || [], baseOutputs, baseFiles, layerFiles,
-        summary: result.ok ? `✓ ${Object.keys(result.outputs).length} files in ${ms} ms${layers.length ? ` with ${layers.join(", ")}` : ""}${result.diagnostics.length ? `, ${result.diagnostics.length} warnings` : ""}${sources.conflicts?.length ? `; ${sources.conflicts.length} files changed by several layers (last wins)` : ""}` : `✗ ${errors} errors, ${result.diagnostics.length - errors} warnings (${ms} ms)` };
-      this.compileStatus.textContent = this.compiled.summary;
+      const summary = result.ok ? `✓ ${Object.keys(result.outputs).length} files in ${ms} ms${layers.length ? ` with ${layers.join(", ")}` : ""}${result.diagnostics.length ? `, ${result.diagnostics.length} warnings` : ""}${sources.conflicts?.length ? `; ${sources.conflicts.length} files changed by several layers (last wins)` : ""}` : `✗ ${errors} errors, ${result.diagnostics.length - errors} warnings (${ms} ms)`;
+      this.compileStatus.textContent = summary;
       this.compileStatus.className = result.ok ? "hint ok" : "hint err";
       this.diagnostics.replaceChildren(...result.diagnostics.slice(0, 100).map((d) => h("div", { class: d.severity, title: d.code || "",
         onclick: () => d.file && this.goTo(root ? `${root}/${d.file}` : d.file, d.line || 1) },
         `${d.file ? `${d.file}:${d.line || "?"} ` : ""}${d.message}`)));
-      this.renderOutputs();
       app.settings = await api.put("api/settings", { compile: { entry, translations } }).catch(() => app.settings);
-      if (result.ok && this.telegrams.length) this.runTest();
+      if (result.ok) {
+        const record = { id: `${Date.now().toString(36)}`, at: new Date().toISOString(), entry, root, layers, outputs: result.outputs, selected: null, baseOutputs, baseFiles, layerFiles,
+          origins: sources.origins || {}, originLayers: sources.origin_layers || {}, conflicts: sources.conflicts || [], summary, warnings: result.diagnostics.length, loaded: null };
+        this.setCompileState({ busy: false, text: summary });
+        this.renderOutputs(record);
+        await app.decoder.setCompile(record);
+      } else {
+        this.setCompileState({ busy: false, error: summary });
+        this.showView("editor");
+      }
     } catch (err) {
       console.error(err);
       this.compileStatus.textContent = `compile failed: ${err.message}`;
       this.compileStatus.className = "hint err";
+      this.setCompileState({ busy: false, error: `compile failed: ${err.message}` });
+    } finally {
+      this.compiling = false;
     }
   }
 
-  renderOutputs() {
+  renderOutputs(record = app.decoder?.compile) {
     const list = this.outputList;
     list.replaceChildren();
-    if (!this.outputs) return;
-    const names = Object.keys(this.outputs).sort();
-    const selected = this.selectedOutputs || new Set(names);
-    this.selectedOutputs = selected;
-    append(list, h("div", { class: "hint" }, `compiled files (tick the ones to load for decoding; ${names.length} total):`));
+    if (!record?.outputs) return;
+    const names = Object.keys(record.outputs).sort();
+    const selected = new Set(record.selected || names);
+    const apply = h("button", { class: "small", style: "display:none", onclick: () => app.decoder.selectFiles(selected.size === names.length ? null : [...selected]) }, "decode with these files");
+    append(list, h("div", { class: "hint" }, `compiled files (${names.length}; untick files to leave them out of the decoding):`), apply);
     for (const name of names) {
-      const check = h("input", { type: "checkbox", checked: selected.has(name), onchange: () => { check.checked ? selected.add(name) : selected.delete(name); } });
-      append(list, h("label", {}, check, h("span", { class: "mono" }, name), h("span", { class: "size" }, `${this.outputs[name].split("\n").length - 1} lines`)));
+      const check = h("input", { type: "checkbox", checked: selected.has(name), onchange: () => { check.checked ? selected.add(name) : selected.delete(name); apply.style.display = ""; } });
+      append(list, h("label", {}, check, h("span", { class: "mono" }, name), h("span", { class: "size" }, `${record.outputs[name].split("\n").length - 1} lines`)));
     }
-  }
-
-  async loadWindowTelegrams(from, to) {
-    try {
-      const { telegrams } = await api.get(`api/telegrams/distinct?from=${Math.floor(from)}&to=${Math.ceil(to)}&limit=20000`);
-      this.telegramWindow = { from, to };
-      this.setTelegrams(telegrams);
-      this.testStatus.textContent = `${telegrams.length} distinct telegrams from ${fmt.dateTime(from)} to ${fmt.time(to)}`;
-      if (this.outputs) this.runTest();
-    } catch (err) { toast(err.message, "err"); }
-  }
-
-  setTelegrams(list) {
-    // in order of first appearance: ebusd evaluates conditions ([Ehp_heatpumptype=3] etc.) against
-    // the telegrams decoded before, so the ones setting a condition must come first
-    this.telegrams = list.filter((t) => t.master).sort((a, b) => (a.first_ms || 0) - (b.first_ms || 0));
-    this.telegramInput.value = this.telegrams.map((t) => `${t.master}${t.slave ? "/" + t.slave : ""}`).join("\n");
-  }
-
-  parseTelegramInput() {
-    const known = new Map(this.telegrams.map((t) => [`${t.master}${t.slave ? "/" + t.slave : ""}`, t]));
-    return this.telegramInput.value.split("\n").map((l) => l.trim().toLowerCase().replace(/\s+/g, "")).filter((l) => l && !l.startsWith("#"))
-      .map((line) => {
-        const t = known.get(line);
-        const [master, slave] = line.split("/");
-        return { line, master, slave: slave || null, n: t?.n || 1, status: t?.status || "ok", first_ms: t?.first_ms, last_ms: t?.last_ms };
-      });
-  }
-
-  async runTest() {
-    const inputs = this.parseTelegramInput();
-    if (!inputs.length) return toast("no telegrams to decode: take them from the timeline window or paste some", "err");
-    if (!this.outputs) {
-      if (!this.compiled) await this.compile();
-      if (!this.outputs) return;
-    }
-    try {
-      await this.loadLibs();
-      const all = Object.keys(this.outputs);
-      const chosen = [...this.selectedOutputs].filter((n) => all.includes(n));
-      const args = chosen.length === all.length ? [] : chosen.filter((n) => n.endsWith(".csv")).map((n) => `--file=${n}`);
-      if (this.candidatesCheck.checked) args.push("--candidates");
-      this.testStatus.textContent = `decoding ${inputs.length} telegrams with ${chosen.length} files…`;
-      const t0 = performance.now();
-      const result = await this.check({ files: this.outputs, args, stdin: inputs.map((i) => i.line).join("\n") + "\n" });
-      const ms = Math.round(performance.now() - t0);
-      const loaded = result.results.find((r) => r.loaded) || {};
-      const scan = (result.results.find((r) => r.scan) || {}).scan || {};
-      const decoded = result.results.filter((r) => "input" in r);
-      this.results = { inputs, decoded, loaded, scan, stderr: result.stderr, ms, exitCode: result.exitCode };
-      this.buildModel();
-      const found = decoded.filter((r) => r.found).length, errors = decoded.filter((r) => r.found && r.result !== "ok").length;
-      const hidden = this.model.filter((m) => m.status !== "active" && m.status !== "companion").length;
-      const bySource = {};
-      for (const r of decoded) if (r.used) bySource[this.originOf(r.used.file, r.used.name)] = (bySource[this.originOf(r.used.file, r.used.name)] || 0) + 1;
-      const sources = Object.entries(bySource).map(([s, n]) => `${s} ${n}`).join(", ");
-      this.testStatus.textContent = `${loaded.messages ?? 0} definitions loaded${loaded.errors ? ` (${loaded.errors} file errors)` : ""}; ${decoded.filter((r) => r.used).length} of ${decoded.length} telegrams known to ebusd (${sources})${found !== decoded.filter((r) => r.used).length ? `, ${found} with all files` : ""}, ${errors} decode errors; ${this.model.filter((m) => m.status === "active").length} definitions in use, ${hidden} more candidates; ${ms} ms`;
-      this.testStatus.className = loaded.errors || result.exitCode ? "hint err" : "hint ok";
-      this.renderResults();
-      this.renderSetup();
-      this.renderExport();
-      if (this.view === "editor") this.showView("results");
-    } catch (err) {
-      console.error(err);
-      this.testStatus.textContent = `decode failed: ${err.message}`;
-      this.testStatus.className = "hint err";
-    }
-  }
-
-  // -- model: the definitions that match the recorded telegrams ----------------------------------
-
-  /** Where a decoded definition comes from: "base" (the checkout) or the layer that added it. */
-  originOf(file, name) {
-    const c = this.compiled;
-    if (!c || !c.layers?.length) return "base";
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const base = c.baseOutputs?.[file];
-    if (base !== undefined && new RegExp(`(^|\n)(\\[[^\\]]*\\])?[rwu]+,[^,\n]*,[^,\n]*,${escaped},`).test(base)) return "base";
-    // the TypeSpec source the compiled file comes from; the first layer whose version of it names the
-    // definition while the checkout's does not added it
-    const source = file.endsWith(".inc") ? file.slice(0, -4) + "_inc.tsp" : file.replace(/\.csv$/, ".tsp");
-    const word = new RegExp(`\\b${escaped}\\b`);
-    const inBase = word.test(c.baseFiles?.[source] || "");
-    for (const ref of c.originLayers[source] || []) {
-      if (!inBase && word.test(c.layerFiles[ref]?.[source] || "")) return ref;
-    }
-    // definitions can also come from an included file (_inc.tsp) a layer changed
-    for (const ref of c.layers) {
-      for (const [path, layers] of Object.entries(c.originLayers)) {
-        if (layers.includes(ref) && word.test(c.layerFiles[ref]?.[path] || "") && !word.test(c.baseFiles?.[path] || "")) return ref;
-      }
-    }
-    if (c.originLayers[source]?.length) return c.originLayers[source].length === 1 ? c.originLayers[source][0] : c.originLayers[source].join("+");
-    const dir = file.includes("/") ? file.slice(0, file.indexOf("/") + 1) : "";
-    const inDir = [...new Set(Object.entries(c.origins).filter(([p]) => p.startsWith(dir)).map(([, l]) => l))];
-    return inDir.length === 1 ? inDir[0] : "layers";
-  }
-
-  buildModel() {
-    const { inputs, decoded, scan } = this.results;
-    const byInput = new Map(decoded.map((r) => [r.input, r]));
-    const entries = new Map();
-    const names = new Map();
-    const idLengths = {};
-    const scanFileOf = (zz) => scan[zz]?.file || "";
-    const inScanFile = (file, zz) => !file.includes("/") || file === scanFileOf(zz);
-    for (const input of inputs) {
-      const r = byInput.get(input.line);
-      if (!r) continue;
-      const candidates = r.candidates ? r.candidates.slice() : (r.found ? [{ ...r, selected: true }] : []);
-      // what ebusd itself would use: the file chosen by the scan (or a root file), condition met, longest ID
-      const usable = candidates.filter((c) => c.available && inScanFile(c.file, c.zz));
-      const used = usable.length ? usable.reduce((best, c) => (c.idlen > best.idlen ? c : best), usable[0]) : null;
-      r.used = used;
-      if (used) {
-        names.set(input.master, `${used.circuit} ${used.name}`);
-        const key = used.zz + used.pbsb;
-        idLengths[key] = Math.max(idLengths[key] || 0, used.idlen);
-      }
-      const keyOf = (c) => `${c.file}|${c.circuit}|${c.name}|${c.write ? "w" : ""}${c.passive ? "u" : ""}`;
-      const entryOf = (c) => {
-        const key = keyOf(c);
-        let entry = entries.get(key);
-        if (!entry) {
-          entry = { key, circuit: c.circuit, name: c.name, file: c.file, condition: c.condition || "", write: !!c.write, passive: !!c.passive,
-            zz: c.zz, qq: c.qq, pbsb: c.pbsb, idlen: c.idlen, csv: c.csv, available: c.available, distinct: 0, occurrences: 0, ok: 0, errors: 0,
-            used: 0, examples: [], fields: new Set(), first_ms: null, last_ms: null, source: this.originOf(c.file, c.name), companion: true, companionOf: new Set() };
-          entries.set(key, entry);
-        }
-        return entry;
-      };
-      for (const c of candidates) {
-        const entry = entryOf(c);
-        entry.companion = false;
-        for (const sibling of c.siblings || []) entryOf(sibling).companionOf.add(entry.key);
-        entry.distinct++;
-        entry.occurrences += input.n;
-        if (c.result === "ok") entry.ok++; else entry.errors++;
-        if (c === used) entry.used++;
-        if (c.fields) for (const f of Object.keys(c.fields)) entry.fields.add(f);
-        if (c.result === "ok" && entry.examples.length < 3 && c.text && !entry.examples.includes(c.text)) entry.examples.push(c.text);
-        if (input.first_ms) entry.first_ms = entry.first_ms === null ? input.first_ms : Math.min(entry.first_ms, input.first_ms);
-        if (input.last_ms) entry.last_ms = entry.last_ms === null ? input.last_ms : Math.max(entry.last_ms, input.last_ms);
-      }
-    }
-    for (const entry of entries.values()) {
-      entry.companionOf = [...entry.companionOf];
-      if (entry.companion) {
-        // not seen on the bus itself: the counterpart (usually for writing) of a seen definition
-        entry.status = "companion";
-        entry.fields = [...entry.fields];
-        continue;
-      }
-      entry.status = entry.used > 0 ? "active" : entry.ok === 0 ? "error" : !entry.available ? "conditional" : !inScanFile(entry.file, entry.zz) ? "variant" : "hidden";
-      entry.fields = [...entry.fields];
-    }
-    // a companion inherits the fields of the definitions it belongs to (same name, other direction)
-    for (const entry of entries.values()) {
-      if (entry.companion && !entry.fields.length) entry.fields = [...new Set(entry.companionOf.flatMap((k) => entries.get(k)?.fields || []))];
-    }
-    this.model = [...entries.values()].sort((a, b) => a.zz.localeCompare(b.zz) || a.circuit.localeCompare(b.circuit) || a.name.localeCompare(b.name) || a.file.localeCompare(b.file));
-    if (!Array.isArray(this.setup.included)) this.setup.included = this.model.filter((m) => m.status === "active").map((m) => m.key);
-    bus.emit("names", names);
-    bus.emit("idlengths", idLengths);
-    this.setCount("results", decoded.length);
-    this.setCount("setup", `${this.setup.included.length}/${this.model.length}`);
-  }
-
-  includedEntries() {
-    const included = new Set(this.setup.included || []);
-    return (this.model || []).filter((m) => included.has(m.key));
-  }
-
-  saveSetup() {
-    clearTimeout(this.setupTimer);
-    this.setupTimer = setTimeout(async () => {
-      try { app.settings = await api.put("api/settings", { setup: { included: this.setup.included, circuits: this.setup.circuits || {}, updated: new Date().toISOString() } }); } catch (err) { toast(err.message, "err"); }
-    }, 500);
-    this.setCount("setup", `${this.setup.included.length}/${this.model?.length || 0}`);
   }
 
   // -- decoded telegrams ---------------------------------------------------------------------
@@ -697,41 +579,55 @@ export class Definitions {
   renderResults() {
     const pane = this.el.panes.results;
     pane.replaceChildren();
-    if (!this.results) {
-      append(pane, h("div", { class: "empty" }, "Compile the definitions and decode the telegrams of a timeline window (right column) to see which definitions match your bus."));
+    const decoder = app.decoder;
+    if (!decoder || !decoder.telegrams.size) {
+      append(pane, h("div", { class: "empty" }, "The distinct telegrams of the recording appear here as soon as the browser store has read them from the database."));
+      return;
+    }
+    if (!decoder.compile) {
+      append(pane, h("div", { class: "empty" }, `${fmt.count(decoder.telegrams.size)} distinct telegrams in the browser store. Compile the definitions (right column) to decode them.`));
       return;
     }
     const filter = h("select", { onchange: () => renderTable() },
       h("option", { value: "all" }, "all telegrams"), h("option", { value: "unknown" }, "unknown to ebusd"), h("option", { value: "candidates" }, "with other candidates"),
-      h("option", { value: "errors" }, "decode errors"));
+      h("option", { value: "errors" }, "decode errors"), h("option", { value: "window" }, "in the timeline window"));
     const search = h("input", { type: "search", placeholder: "filter: hex, circuit, name", oninput: () => renderTable() });
     const body = h("div", { class: "body" });
-    append(pane, h("div", { class: "bar" }, filter, search, h("span", { class: "hint" }, `${this.results.decoded.length} distinct telegrams; colours as in the timeline`),
-      this.results.stderr.length ? h("span", { class: "err" }, `${this.results.stderr.length} messages from ebusd`) : null), body);
+    const info = h("span", { class: "hint" });
+    append(pane, h("div", { class: "bar" }, filter, search, info), body);
     const renderTable = () => {
       const q = search.value.trim().toLowerCase();
-      const byInput = new Map(this.results.decoded.map((r) => [r.input, r]));
-      const rows = this.results.inputs.map((i) => ({ ...i, r: byInput.get(i.line) })).filter(({ line, r }) => {
-        if (filter.value === "unknown" && r?.used) return false;
-        if (filter.value === "candidates" && !(r?.candidates?.length > (r?.used ? 1 : 0))) return false;
-        if (filter.value === "errors" && !(r?.used && r.used.result !== "ok")) return false;
-        if (q && !line.includes(q) && !(r?.candidates || []).some((c) => `${c.circuit} ${c.name}`.toLowerCase().includes(q))) return false;
+      const tl = app.views.timeline;
+      const all = decoder.telegramList();
+      const rows = all.filter((t) => {
+        const map = decoder.decodesOf(t.line);
+        const used = decoder.usedDecode(t.line);
+        if (filter.value === "unknown" && used) return false;
+        if (filter.value === "candidates" && !((map?.size || 0) > (used ? 1 : 0))) return false;
+        if (filter.value === "errors" && !(used && used.result !== "ok")) return false;
+        if (filter.value === "window" && tl && !(t.last_ms >= tl.t0 && t.first_ms <= tl.t1)) return false;
+        if (q && !t.line.includes(q) && !(map && [...map.keys()].some((k) => { const d = decoder.def(k); return d && `${d.circuit} ${d.name} ${setup.exportName(d)}`.toLowerCase().includes(q); }))) return false;
         return true;
       });
-      const table = h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "n"), h("th", {}, "telegram"), h("th", {}, "ebusd uses"), h("th", {}, "decoded"), h("th", {}, "other candidates"))),
-        h("tbody", {}, rows.slice(0, 1500).map(({ line, master, slave, n, status, r }) => {
-          const used = r?.used;
-          const others = (r?.candidates || []).filter((c) => c !== used);
+      info.textContent = `${fmt.count(rows.length)} of ${fmt.count(all.length)} distinct telegrams; colours as in the timeline`;
+      const table = h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "n"), h("th", {}, "first seen"), h("th", {}, "telegram"), h("th", {}, "ebusd uses"), h("th", {}, "decoded"), h("th", {}, "other candidates"))),
+        h("tbody", {}, rows.slice(0, 1500).map((t) => {
+          const map = decoder.decodesOf(t.line);
+          const used = decoder.usedDecode(t.line);
+          const usedDef = used ? decoder.def(used.defKey) : null;
+          const others = map ? [...map.values()].filter((d) => d !== used) : [];
           return h("tr", {},
-            h("td", {}, fmt.count(n)),
-            h("td", { class: "mono", title: line }, swatch(telegramValue(master, slave, status, app.settings), status), line.length > 40 ? line.slice(0, 38) + "…" : line),
-            h("td", {}, !r ? h("span", { class: "muted" }, "—") : r.error ? h("span", { class: "err" }, r.error) : !used ? h("span", { class: "warn" }, "unknown") : chip(used.circuit, used.name, used.write ? " (w)" : "")),
+            h("td", {}, t.manual ? h("span", { class: "muted" }, "pasted") : fmt.count(t.n)),
+            h("td", { class: "mono muted" }, t.first_ms ? fmt.dateTime(t.first_ms).slice(5, 16) : ""),
+            h("td", { class: "mono", title: t.line }, swatch(telegramValue(t.master, t.slave, t.status, app.settings), t.status), t.line.length > 40 ? t.line.slice(0, 38) + "…" : t.line),
+            h("td", {}, t.compileId !== decoder.compile.id ? h("span", { class: "muted" }, "…") : t.error ? h("span", { class: "err" }, t.error) : !usedDef ? h("span", { class: "warn" }, "unknown") : chip(usedDef.circuit, usedDef.name, usedDef.write ? " (w)" : "")),
             h("td", { class: "mono", style: "white-space:normal" }, used ? (used.result === "ok" ? used.text : h("span", { class: "err" }, used.result)) : ""),
-            h("td", { class: "cand" }, others.slice(0, 6).map((c) => h("span", { style: "margin-right:4px", title: `${c.file}${c.condition ? " " + c.condition : ""}: ${c.result === "ok" ? c.text : c.result}` },
-              chip(c.circuit, c.name, c.write ? " (w)" : ""), c.result !== "ok" ? h("span", { class: "err" }, " ✗") : null)), others.length > 6 ? ` +${others.length - 6}` : null));
+            h("td", { class: "cand" }, others.slice(0, 6).map((d) => { const def = decoder.def(d.defKey); return def ? h("span", { style: "margin-right:4px", title: `${def.file}${def.condition ? " " + def.condition : ""} (${def.status}${def.source !== "base" ? `, ${def.source}` : ""}): ${d.result === "ok" ? d.text : d.result}` },
+              chip(def.circuit, def.name, def.write ? " (w)" : ""), d.result !== "ok" ? h("span", { class: "err" }, " ✗") : null) : null; }), others.length > 6 ? ` +${others.length - 6}` : null));
         })));
       body.replaceChildren(table, rows.length > 1500 ? h("div", { class: "hint", style: "padding:6px 10px" }, "showing the first 1500 telegrams") : null);
-      if (this.results.stderr.length) append(body, h("div", { class: "log", style: "margin:8px 10px" }, this.results.stderr.slice(0, 50).join("\n")));
+      const stderr = decoder.compile?.loaded?.stderr || [];
+      if (stderr.length) append(body, h("div", { class: "log", style: "margin:8px 10px" }, stderr.join("\n")));
     };
     renderTable();
   }
@@ -741,98 +637,58 @@ export class Definitions {
   renderSetup() {
     const pane = this.el.panes.setup;
     pane.replaceChildren();
-    if (!this.model) {
-      append(pane, h("div", { class: "empty" }, "Decode the telegrams of a timeline window first. This tab then lists every definition that matched them and lets you pick the ones for your installation."));
+    const entries = this.entries;
+    if (!entries.length) {
+      append(pane, h("div", { class: "empty" }, "Once the recording is decoded, this tab lists every definition that matched a telegram and lets you pick and rename the ones for your installation. The timeline offers the same per row (badge next to the row name)."));
       return;
     }
-    const included = new Set(this.setup.included || []);
+    const scan = app.decoder.scan || {};
     const statusFilter = h("select", { onchange: () => renderTable() }, h("option", { value: "all" }, "all definitions"), h("option", { value: "active" }, "used by ebusd"),
-      h("option", { value: "other" }, "hidden: other file / condition"), h("option", { value: "companion" }, "counterparts not seen (write)"), h("option", { value: "included" }, "included in the setup"));
-    const search = h("input", { type: "search", placeholder: "filter: circuit, name, file", oninput: () => renderTable() });
+      h("option", { value: "other" }, "hidden: other file / condition"), h("option", { value: "companion" }, "counterparts not seen (write)"), h("option", { value: "included" }, "included in the setup"), h("option", { value: "renamed" }, "renamed"));
+    const search = h("input", { type: "search", placeholder: "filter: circuit, name, file", value: this.setupFilter || "", oninput: () => { this.setupFilter = search.value; renderTable(); } });
     const summary = h("span", { class: "hint" });
-    const setIncluded = (keys) => { this.setup.included = [...keys]; this.saveSetup(); renderTable(); };
     const body = h("div", { class: "body" });
     append(pane, h("div", { class: "bar" }, statusFilter, search,
-      h("button", { class: "small", onclick: () => setIncluded(this.model.filter((m) => m.status === "active").map((m) => m.key)) }, "include what ebusd uses"),
-      h("button", { class: "small", title: "also the hidden definitions that decode every recorded telegram without error", onclick: () => setIncluded([...this.setup.included, ...this.model.filter((m) => m.errors === 0 && m.ok > 0 && !["error", "companion"].includes(m.status)).map((m) => m.key)]) }, "+ plausible hidden ones"),
-      h("button", { class: "small", title: "the write (and other direction) definitions belonging to included ones; they were not seen on the bus. Writing to a device with a definition of another variant can be harmful.", onclick: () => { const inc = new Set(this.setup.included); setIncluded([...inc, ...this.model.filter((m) => m.status === "companion" && m.companionOf.some((k) => inc.has(k))).map((m) => m.key)]); } }, "+ counterparts of included"),
-      h("button", { class: "small", onclick: () => setIncluded([]) }, "clear"), summary), body);
+      h("button", { class: "small", onclick: () => setup.setIncluded(entries.filter((m) => m.status === "active").map((m) => m.key)) }, "include what ebusd uses"),
+      h("button", { class: "small", title: "also the hidden definitions that decode every recorded telegram without error", onclick: () => setup.setIncluded([...setup.includedKeys(entries), ...entries.filter((m) => m.errors === 0 && m.ok > 0 && !["error", "companion"].includes(m.status)).map((m) => m.key)]) }, "+ plausible hidden ones"),
+      h("button", { class: "small", title: "the write (and other direction) definitions belonging to included ones; they were not seen on the bus. Writing to a device with a definition of another variant can be harmful.", onclick: () => { const inc = new Set(setup.includedKeys(entries)); setup.setIncluded([...inc, ...entries.filter((m) => m.status === "companion" && m.companionOf.some((k) => inc.has(k))).map((m) => m.key)]); } }, "+ counterparts of included"),
+      h("button", { class: "small", onclick: () => setup.setIncluded([]) }, "clear"), summary), body);
     const renderTable = () => {
-      const q = search.value.trim().toLowerCase();
-      const current = new Set(this.setup.included || []);
-      const rows = this.model.filter((m) => {
+      const q = (this.setupFilter || "").trim().toLowerCase();
+      const current = new Set(setup.includedKeys(entries));
+      const rows = entries.filter((m) => {
         if (statusFilter.value === "active" && m.status !== "active") return false;
         if (statusFilter.value === "other" && (m.status === "active" || m.status === "error" || m.status === "companion")) return false;
         if (statusFilter.value === "companion" && m.status !== "companion") return false;
         if (statusFilter.value === "included" && !current.has(m.key)) return false;
-        return !q || `${m.circuit} ${m.name} ${m.file} ${m.condition}`.toLowerCase().includes(q);
+        if (statusFilter.value === "renamed" && !setup.renamed(m)) return false;
+        return !q || `${m.circuit} ${m.name} ${setup.exportName(m)} ${m.file} ${m.condition}`.toLowerCase().includes(q);
       });
-      summary.textContent = `${current.size} of ${this.model.length} definitions included (${this.model.filter((m) => m.status === "active").length} used by ebusd, ${this.model.filter((m) => !["active", "error", "companion"].includes(m.status)).length} hidden, ${this.model.filter((m) => m.status === "error").length} not fitting, ${this.model.filter((m) => m.status === "companion").length} counterparts not seen)`;
+      summary.textContent = `${current.size} of ${entries.length} definitions included${setup.customized ? "" : " (ebusd's own choice so far)"} (${entries.filter((m) => m.status === "active").length} used by ebusd, ${entries.filter((m) => !["active", "error", "companion"].includes(m.status)).length} hidden, ${entries.filter((m) => m.status === "error").length} not fitting, ${entries.filter((m) => m.status === "companion").length} counterparts not seen)`;
       const tbody = h("tbody");
       let device = null;
       for (const m of rows) {
         if (m.zz !== device) {
           device = m.zz;
-          const s = this.results.scan[device];
-          append(tbody, h("tr", { class: "device" }, h("td", { colspan: 8 }, `device ${device}`, s ? h("span", { class: "muted" }, ` — ${s.manufacturer} ${s.ident} SW${s.sw} HW${s.hw}: ebusd loads ${s.file || "no file (none of the files matches the identification)"}`) : h("span", { class: "muted" }, " — no identification seen (scan telegram 0704 missing in the window)"))));
+          const s = scan[device];
+          append(tbody, h("tr", { class: "device" }, h("td", { colspan: 9 }, `device ${device}`, s ? h("span", { class: "muted" }, ` — ${s.manufacturer} ${s.ident} SW${s.sw} HW${s.hw}: ebusd loads ${s.file || "no file (none of the files matches the identification)"}`) : h("span", { class: "muted" }, " — no identification seen (scan telegram 0704 missing in the recording)"))));
         }
-        const check = h("input", { type: "checkbox", checked: current.has(m.key), onchange: () => { check.checked ? current.add(m.key) : current.delete(m.key); this.setup.included = [...current]; this.saveSetup(); summary.textContent = summary.textContent.replace(/^\d+/, String(current.size)); } });
-        append(tbody, h("tr", {},
+        const check = h("input", { type: "checkbox", checked: current.has(m.key), onchange: () => setup.include(m.key, check.checked, entries) });
+        const nameInput = h("input", { type: "text", class: "rename", value: setup.exportName(m), size: 16, title: `name in my config (MQTT topic ebusd/${setup.circuitOf(m)}/<name>); upstream: ${m.name}`, onchange: () => setup.rename(m, nameInput.value) });
+        append(tbody, h("tr", { class: current.has(m.key) ? "included" : "" },
           h("td", {}, check),
           h("td", {}, h("span", { class: `badge ${m.status}`, title: STATUS_HELP[m.status] }, m.status), m.write ? h("span", { class: "badge write", title: "write definition: sends values to the device" }, "write") : null),
           h("td", {}, chip(m.circuit, m.name, m.passive ? " (u)" : "")),
+          h("td", {}, nameInput, setup.exportName(m) !== m.name ? h("span", { class: "muted", title: "renamed for my config" }, " ✎") : null),
           h("td", { class: "mono", title: m.file }, m.file.replace(/^.*\//, ""), m.source !== "base" ? h("span", { class: "badge", style: "margin-left:4px", title: "added or changed by this layer" }, m.source) : null),
           h("td", { class: "mono" }, m.condition),
           h("td", { title: `${m.distinct} distinct telegrams, ${m.occurrences} on the bus` }, m.companion ? h("span", { class: "muted" }, "not seen") : `${fmt.count(m.occurrences)} (${m.distinct})`),
           h("td", {}, m.companion ? "" : m.errors ? h("span", { class: m.ok ? "warn" : "err" }, `${m.ok} ok, ${m.errors} ✗`) : h("span", { class: "ok" }, "ok")),
           h("td", { class: "mono", style: "white-space:normal", title: m.examples.join("\n") }, m.examples[0] ? m.examples[0].slice(0, 90) : "")));
       }
-      body.replaceChildren(h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "setup"), h("th", {}, "status"), h("th", {}, "message"), h("th", {}, "file"), h("th", {}, "condition"), h("th", {}, "seen"), h("th", {}, "decode"), h("th", {}, "example"))), tbody));
+      body.replaceChildren(h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "setup"), h("th", {}, "status"), h("th", {}, "upstream message"), h("th", {}, "name in my config"), h("th", {}, "file"), h("th", {}, "condition"), h("th", {}, "seen"), h("th", {}, "decode"), h("th", {}, "example"))), tbody));
     };
     renderTable();
-  }
-
-  /** The circuit a definition gets in the setup (renamed, e.g. vwz -> vwzio, if configured). */
-  circuitOf(m) {
-    const renames = this.setup.circuits || {};
-    return renames[m.circuit] || m.circuit;
-  }
-
-  /** A definition's CSV line with the setup's circuit name. */
-  csvOf(m) {
-    const circuit = this.circuitOf(m);
-    if (circuit === m.circuit) return m.csv;
-    const comma = m.csv.indexOf(",");
-    const next = m.csv.indexOf(",", comma + 1);
-    return m.csv.slice(0, comma + 1) + circuit + m.csv.slice(next);
-  }
-
-  /** CSV files for the eBUSd app with the included definitions, one per circuit, conditions removed. */
-  setupFiles() {
-    const files = {};
-    const sources = new Set();
-    for (const m of this.includedEntries()) {
-      const name = `${(this.circuitOf(m) || "misc").toLowerCase().replace(/[^a-z0-9_.-]/g, "_")}.csv`;
-      if (!files[name]) files[name] = [];
-      files[name].push(m);
-      sources.add(m.file);
-    }
-    const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
-    const out = {};
-    for (const [name, list] of Object.entries(files)) {
-      list.sort((a, b) => a.source.localeCompare(b.source) || a.name.localeCompare(b.name) || (a.write ? 1 : 0) - (b.write ? 1 : 0));
-      const lines = [CSV_HEADER, `# generated by eBUSd Workbench ${stamp} for this installation from ${[...new Set(list.map((m) => m.file))].join(", ")}`];
-      let source = null;
-      for (const m of list) {
-        if (m.source !== source) {
-          source = m.source;
-          lines.push(source === "base" ? "# from the checkout" : `# from layer ${source}${this.layers.find((l) => l.ref === source)?.head ? ` (${this.layers.find((l) => l.ref === source).head.subject})` : ""}`);
-        }
-        lines.push(this.csvOf(m));
-      }
-      out[name] = lines.join("\n") + "\n";
-    }
-    return { files: out, sources: [...sources] };
   }
 
   // -- export -----------------------------------------------------------------------------------
@@ -842,66 +698,65 @@ export class Definitions {
     pane.replaceChildren();
     const settings = app.settings || {};
     const deployDir = app.status?.deploy_dir || "/share/ebusd/config";
-    const included = this.includedEntries();
-    const setup = included.length ? this.setupFiles() : { files: {}, sources: [] };
+    const entries = this.entries;
+    const included = setup.includedEntries(entries);
+    const files = included.length ? setup.files(entries, this.layers) : { files: {}, sources: [] };
+    const outputs = app.decoder?.compile?.outputs || null;
     // circuit names: the MQTT topics are ebusd/<circuit>/<name>, so they can be adapted here
     const circuitRows = [...new Set(included.map((m) => m.circuit))].sort().map((circuit) => {
-      const input = h("input", { type: "text", value: (this.setup.circuits || {})[circuit] || circuit, size: 10, onchange: () => {
-        this.setup.circuits = { ...(this.setup.circuits || {}) };
-        if (input.value.trim() && input.value.trim() !== circuit) this.setup.circuits[circuit] = input.value.trim().replace(/[^A-Za-z0-9_.-]/g, "_"); else delete this.setup.circuits[circuit];
-        this.saveSetup(); this.renderExport();
-      } });
+      const input = h("input", { type: "text", value: setup.circuitOf({ circuit }), size: 10, onchange: () => setup.renameCircuit(circuit, input.value) });
       return h("span", { class: "group" }, chip(circuit, ""), " → ", input);
     });
+    const renamed = included.filter((m) => setup.renamed(m));
     // setup CSV
     const preview = h("pre", { style: "display:none" });
-    const list = h("div", { class: "outputs" }, Object.entries(setup.files).map(([name, text]) => h("label", { style: "cursor:pointer", onclick: () => { preview.textContent = text; preview.style.display = ""; } },
-      h("span", { class: "mono" }, name), h("span", { class: "size" }, `${text.split("\n").length - 2} definitions`))));
-    const subdir = h("input", { type: "text", value: settings.deploy_subdir || "", placeholder: "subfolder (optional)", size: 14 });
+    const list = h("div", { class: "outputs" }, Object.entries(files.files).map(([name, text]) => h("label", { style: "cursor:pointer", onclick: () => { preview.textContent = text; preview.style.display = ""; } },
+      h("span", { class: "mono" }, name), h("span", { class: "size" }, `${text.split("\n").filter((l) => l && !l.startsWith("#") && !l.startsWith("type,")).length} definitions`))));
+    const subdir = h("input", { type: "text", value: settings.deploy_subdir || "", placeholder: "subfolder (optional)", size: 14, onchange: () => api.put("api/settings", { deploy_subdir: subdir.value.trim() }).then((s) => { app.settings = s; }).catch((err) => toast(err.message, "err")) });
     const clean = h("input", { type: "checkbox", checked: true });
     const setupStatus = h("div", { class: "hint" });
     append(pane, h("div", { class: "block" }, h("h3", {}, "Definitions of this installation"),
-      included.length ? h("div", { class: "hint" }, `${included.length} definitions from ${setup.sources.length} compiled files, grouped by circuit; conditions removed so that ebusd loads them for this installation without the scan. ebusd then needs --configpath=${deployDir}${subdir.value ? "/" + subdir.value : ""} and no --scanconfig (or an empty vaillant/ folder).`)
-        : h("div", { class: "hint" }, "No definitions included yet: decode telegrams and tick definitions in the Setup tab."),
+      included.length ? h("div", { class: "hint" }, `${included.length} definitions from ${files.sources.length} compiled files, grouped by circuit; conditions removed so that ebusd loads them for this installation without the scan${renamed.length ? `; ${renamed.length} renamed for my config (upstream names in the comments)` : ""}. ebusd then needs --configpath=${deployDir}${subdir.value ? "/" + subdir.value : ""} and no --scanconfig (or an empty vaillant/ folder).`)
+        : h("div", { class: "hint" }, "No definitions included yet: pick candidates in the timeline or tick definitions in the Setup tab."),
       circuitRows.length ? h("div", { class: "row" }, h("label", { title: "circuit names as used in the MQTT topics ebusd/<circuit>/<name>; e.g. vwz → vwzio" }, "circuits"), ...circuitRows) : null,
       list, preview,
       included.length ? h("div", { class: "row", style: "margin-top:6px" }, h("span", { class: "mono" }, deployDir), "/", subdir, h("label", {}, clean, " remove other .csv/.inc files there"),
         h("button", { class: "primary", onclick: async () => {
-          if (!confirm(`Write ${Object.keys(setup.files).length} files to ${deployDir}${subdir.value ? "/" + subdir.value : ""}${clean.checked ? " and remove other definition files there" : ""}?`)) return;
+          if (!confirm(`Write ${Object.keys(files.files).length} files to ${deployDir}${subdir.value ? "/" + subdir.value : ""}${clean.checked ? " and remove other definition files there" : ""}?`)) return;
           try {
-            const result = await api.post("api/deploy", { files: setup.files, subdir: subdir.value.trim(), clean: clean.checked });
+            const result = await api.post("api/deploy", { files: files.files, subdir: subdir.value.trim(), clean: clean.checked });
             setupStatus.textContent = `✓ ${result.written.join(", ")} written to ${result.dir}${result.removed.length ? `; removed ${result.removed.length} other files` : ""}. Restart the eBUSd app.`;
             setupStatus.className = "hint ok";
           } catch (err) { setupStatus.textContent = `deploy failed: ${err.message}`; setupStatus.className = "hint err"; }
         } }, "Deploy setup"),
-        h("button", { onclick: () => { for (const [name, text] of Object.entries(setup.files)) download(name, text, "text/csv"); } }, "Download")) : null,
+        h("button", { onclick: () => { for (const [name, text] of Object.entries(files.files)) download(name, text, "text/csv"); } }, "Download")) : null,
       setupStatus));
     // full compiled set
     const fullStatus = h("div", { class: "hint" });
     const fullSubdir = h("input", { type: "text", value: "", placeholder: "subfolder (optional)", size: 14 });
     append(pane, h("div", { class: "block" }, h("h3", {}, "All compiled files"),
-      h("div", { class: "hint" }, this.outputs ? `${Object.keys(this.outputs).length} compiled files (the complete tree with the manufacturer folders, as ebusd's scan expects it).` : "compile first"),
-      this.outputs ? h("div", { class: "row" }, h("span", { class: "mono" }, deployDir), "/", fullSubdir, h("button", { onclick: async () => {
-        if (!confirm(`Write ${Object.keys(this.outputs).length} files to ${deployDir}${fullSubdir.value ? "/" + fullSubdir.value : ""}?`)) return;
+      h("div", { class: "hint" }, outputs ? `${Object.keys(outputs).length} compiled files (the complete tree with the manufacturer folders, as ebusd's scan expects it).` : "compile first"),
+      outputs ? h("div", { class: "row" }, h("span", { class: "mono" }, deployDir), "/", fullSubdir, h("button", { onclick: async () => {
+        if (!confirm(`Write ${Object.keys(outputs).length} files to ${deployDir}${fullSubdir.value ? "/" + fullSubdir.value : ""}?`)) return;
         try {
-          const result = await api.post("api/deploy", { files: this.outputs, subdir: fullSubdir.value.trim(), clean: false });
+          const result = await api.post("api/deploy", { files: outputs, subdir: fullSubdir.value.trim(), clean: false });
           fullStatus.textContent = `✓ ${result.written.length} files written to ${result.dir}. Restart the eBUSd app with --configpath=${result.dir}.`;
           fullStatus.className = "hint ok";
         } catch (err) { fullStatus.textContent = `deploy failed: ${err.message}`; fullStatus.className = "hint err"; }
       } }, "Deploy all compiled files")) : null, fullStatus));
     // Home Assistant entities
-    const circuits = [...new Set(included.map((m) => this.circuitOf(m)))];
+    const messages = setup.haMessages(entries);
+    const circuits = [...new Set(messages.map((m) => m.circuit))];
     const controller = h("select", { onchange: () => renderYaml() }, h("option", { value: "" }, "auto"), circuits.map((c) => h("option", { value: c }, c)));
     const yamlPre = h("pre");
     const optionsPre = h("pre");
     const renderYaml = () => {
-      const messages = included.map((m) => ({ circuit: this.circuitOf(m), name: m.name, write: m.write, passive: m.passive, fields: m.fields }));
       yamlPre.textContent = included.length ? generateHaYaml(messages, { controller: controller.value || undefined }) : "# include definitions in the setup first";
       optionsPre.textContent = included.length ? generateEbusdOptions(messages, `${deployDir}${subdir.value ? "/" + subdir.value : ""}`) : "";
     };
     renderYaml();
     append(pane, h("div", { class: "block" }, h("h3", {}, "Home Assistant climate and water heater (configuration.yaml)"),
-      h("div", { class: "hint" }, "ebusd's MQTT integration publishes every field as its own entity; the climate and water_heater entities combine the zone and hot water messages of the setup. Check the topics against your --mqtttopic and the entity values against your controller."),
+      h("div", { class: "hint" }, "ebusd's MQTT integration publishes every field as its own entity; the climate and water_heater entities combine the zone and hot water messages of the setup, under the names of my config. Check the topics against your --mqtttopic and the entity values against your controller."),
       h("div", { class: "row" }, h("label", {}, "controller circuit"), controller, h("button", { class: "small", onclick: () => copyText(yamlPre.textContent) }, "copy YAML")), yamlPre,
       h("div", { class: "row", style: "margin-top:8px" }, h("label", {}, "eBUSd app options for the setup"), h("button", { class: "small", onclick: () => copyText(optionsPre.textContent) }, "copy")), optionsPre));
     // raw log for ebus-evidence
@@ -910,7 +765,7 @@ export class Definitions {
     const from = h("input", { type: "datetime-local", value: toLocal(tl ? tl.t0 : Date.now() - 3600e3) });
     const to = h("input", { type: "datetime-local", value: toLocal(tl ? tl.t1 : Date.now()) });
     const broken = h("input", { type: "checkbox" });
-    const own = h("input", { type: "text", value: "31", size: 3, title: "ebusd's own address (--address)" });
+    const own = h("input", { type: "text", value: settings.own_address || "31", size: 3, title: "ebusd's own address on this bus (--address)", onchange: () => this.saveOwnAddress(own.value) });
     append(pane, h("div", { class: "block" }, h("h3", {}, "ebusd raw log for ebus-evidence"),
       h("div", { class: "hint" }, "The recorded telegrams as ebusd message-mode raw log (--lograwdata), the input of ", h("a", { href: "https://github.com/MarcelT87/ebus-evidence", target: "_blank" }, "ebus-evidence"),
         ": run `ebus-evidence doctor --raw FILE --profile hw5103-open-evidence`, `import --raw FILE` and `export` on another computer to produce a verified evidence bundle for cross-installation research. Only complete, correct telegrams are exported unless ticked."),
@@ -925,13 +780,23 @@ export class Definitions {
         } }, "Download raw log"))));
   }
 
+  async saveOwnAddress(value) {
+    const address = String(value).trim().toLowerCase();
+    if (!/^[0-9a-f]{2}$/.test(address)) return toast("own address must be a hex byte, e.g. 31", "err");
+    try { app.settings = await api.put("api/settings", { own_address: address }); } catch (err) { toast(err.message, "err"); }
+  }
+
   // -- ebus-evidence profile checks -----------------------------------------------------------------
 
   renderEvidence() {
     const pane = this.el.panes.evidence;
     pane.replaceChildren();
+    const settings = app.settings || {};
     const profileText = h("textarea", { class: "yaml", placeholder: "paste an ebus-evidence profile (YAML) here, or load the example" });
-    profileText.value = app.settings?.evidence_profile || "";
+    profileText.value = settings.evidence_profile || "";
+    const own = settings.own_address || "31";
+    const addresses = h("input", { type: "text", size: 18, value: settings.ui?.evidenceAddresses ?? `f1=${own}`,
+      title: "addresses as the profile names them → addresses on this bus, e.g. f1=31 when the profile's author ran ebusd as f1 and yours is 31" });
     const status = h("div", { class: "hint" });
     const body = h("div", { class: "body" });
     const run = async () => {
@@ -940,12 +805,15 @@ export class Definitions {
         const profile = this.tsp.yaml.load(profileText.value);
         if (!profile || !Array.isArray(profile.checks)) throw new Error("the profile has no checks list");
         const tl = app.views.timeline;
-        const from = this.telegramWindow?.from ?? tl.t0, to = this.telegramWindow?.to ?? tl.t1;
+        const from = tl.t0, to = tl.t1;
+        const addressMap = parseAddressMap(addresses.value);
         status.textContent = "loading the telegrams of the window…";
         const { telegrams } = await api.get(`api/telegrams/distinct?from=${Math.floor(from)}&to=${Math.ceil(to)}&limit=50000`);
-        this.evidenceRun = { run: runProfile(profile, telegrams), from, to };
-        app.settings = await api.put("api/settings", { evidence_profile: profileText.value }).catch(() => app.settings);
-        status.textContent = `profile ${this.evidenceRun.run.profile} v${this.evidenceRun.run.version ?? "?"}: ${profile.checks.length} checks over ${telegrams.length} distinct telegrams from ${fmt.dateTime(from)} to ${fmt.time(to)}`;
+        this.evidenceRun = { run: runProfile(profile, telegrams, (app.settings?.own_address || own), addressMap), from, to };
+        const ui = { ...(app.settings?.ui || {}), evidenceAddresses: addresses.value };
+        app.settings = await api.put("api/settings", { evidence_profile: profileText.value, ui }).catch(() => app.settings);
+        status.textContent = `profile ${this.evidenceRun.run.profile} v${this.evidenceRun.run.version ?? "?"}: ${profile.checks.length} checks over ${telegrams.length} distinct telegrams from ${fmt.dateTime(from)} to ${fmt.time(to)}${Object.keys(addressMap).length ? `, addresses ${Object.entries(addressMap).map(([a, b]) => `${a}→${b}`).join(" ")}` : ""}`;
+        status.className = "hint";
         renderRun();
       } catch (err) { status.textContent = `evidence check failed: ${err.message}`; status.className = "hint err"; }
     };
@@ -956,7 +824,7 @@ export class Definitions {
       const table = h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "check"), h("th", {}, "match"), h("th", {}, "seen"), h("th", {}, "first / last"), h("th", {}, "values"), h("th", {}, "responses"))),
         h("tbody", {}, run.checks.map((c) => h("tr", {},
           h("td", {}, h("b", {}, c.id), h("div", { class: "muted" }, c.description)),
-          h("td", { class: "mono", style: "white-space:normal" }, describeMatch(c.match)),
+          h("td", { class: "mono", style: "white-space:normal" }, describeMatch(c.match, run.addressMap)),
           h("td", {}, c.distinct ? `${fmt.count(c.occurrences)} (${c.distinct} distinct)` : h("span", { class: "muted" }, "none")),
           h("td", { class: "mono" }, c.distinct ? `${fmtTime(c.first_ms)}\n${fmtTime(c.last_ms)}` : ""),
           h("td", {}, h("div", { class: "values" }, [...c.values.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([v, n]) => h("span", { title: `${n}×` }, `${v} ×${n}`))), c.decodeErrors ? h("div", { class: "err" }, `${c.decodeErrors} decode errors`) : null),
@@ -967,10 +835,12 @@ export class Definitions {
     };
     append(pane, h("div", { class: "bar" },
       h("button", { class: "small", onclick: async () => { try { profileText.value = await (await fetch("evidence/hw5103-open-evidence.yaml")).text(); } catch (err) { toast(err.message, "err"); } } }, "load example profile (hw5103)"),
+      h("label", { title: addresses.title }, "addresses ", addresses),
       h("button", { class: "primary small", onclick: run }, "Run checks on the timeline window"), status),
       h("div", { class: "block" },
         h("div", { class: "hint" }, "Profiles of ", h("a", { href: "https://github.com/MarcelT87/ebus-evidence", target: "_blank" }, "ebus-evidence"),
-          " describe telegrams the research is looking at (source, target, command, request, value decoding). Running them here shows what your bus carries for each check; share the exported raw log through ebus-evidence for a verified contribution."),
+          " describe telegrams the research is looking at (source, target, command, request, value decoding). Running them here shows what your bus carries for each check; share the exported raw log through ebus-evidence for a verified contribution. ",
+          "Addresses are per installation: a profile written where ebusd ran as f1 names f1 as the source of ebusd's requests, so map it to your own address (the eBUSd app's --address, 31 unless changed). Device addresses only need mapping when a device of the same kind sits at another address in your installation."),
         profileText), body);
     renderRun();
   }

@@ -14,9 +14,24 @@ export function frameOf(telegram, ownAddress = "31") {
   };
 }
 
-export function frameMatches(frame, rule) {
+/**
+ * Parse an address mapping "f1=31, 08=08": the addresses a profile names (from the author's
+ * installation) and what they are on this bus. ebusd's own address is the usual difference.
+ */
+export function parseAddressMap(text) {
+  const map = {};
+  for (const part of String(text || "").split(/[,;\s]+/)) {
+    const m = part.match(/^([0-9a-f]{2})=([0-9a-f]{2})$/i);
+    if (m) map[m[1].toLowerCase()] = m[2].toLowerCase();
+  }
+  return map;
+}
+
+export function frameMatches(frame, rule, addressMap = {}) {
   const norm = (v) => String(v).trim().toLowerCase();
-  for (const field of ["source", "target", "pbsb"]) if (field in rule && norm(frame[field]) !== norm(rule[field])) return false;
+  const mapped = (v) => addressMap[norm(v)] || norm(v);
+  for (const field of ["source", "target"]) if (field in rule && norm(frame[field]) !== mapped(rule[field])) return false;
+  if ("pbsb" in rule && norm(frame.pbsb) !== norm(rule.pbsb)) return false;
   if ("initiated_by_ebusd" in rule && frame.initiated_by_ebusd !== Boolean(rule.initiated_by_ebusd)) return false;
   const request = frame.request.toLowerCase();
   if ("request" in rule && request !== norm(rule.request)) return false;
@@ -59,14 +74,14 @@ export function decodeValue(frame, spec) {
  * @param {object} profile parsed profile YAML ({name, version, checks: [{id, description, match, value}]})
  * @param {Array} telegrams distinct telegrams with master, slave, n, first_ms, last_ms
  */
-export function runProfile(profile, telegrams, ownAddress = "31") {
+export function runProfile(profile, telegrams, ownAddress = "31", addressMap = {}) {
   const checks = Array.isArray(profile?.checks) ? profile.checks : [];
   const frames = telegrams.map((t) => ({ t, frame: frameOf(t, ownAddress) }));
   const results = checks.map((check) => {
     const result = { id: check.id, description: check.description || check.id, match: check.match || {}, distinct: 0, occurrences: 0,
       first_ms: null, last_ms: null, values: new Map(), responses: new Map(), decodeErrors: 0, telegrams: [] };
     for (const { t, frame } of frames) {
-      if (!frameMatches(frame, check.match || {})) continue;
+      if (!frameMatches(frame, check.match || {}, addressMap)) continue;
       result.distinct++;
       result.occurrences += t.n || 1;
       result.first_ms = result.first_ms === null ? t.first_ms : Math.min(result.first_ms, t.first_ms);
@@ -82,7 +97,7 @@ export function runProfile(profile, telegrams, ownAddress = "31") {
     }
     return result;
   });
-  return { profile: profile?.name || "?", version: profile?.version, checks: results };
+  return { profile: profile?.name || "?", version: profile?.version, checks: results, addressMap };
 }
 
 export function summaryJson(run, windowFrom, windowTo) {
@@ -92,6 +107,7 @@ export function summaryJson(run, windowFrom, windowTo) {
       + "Not a verified ebus-evidence bundle: produce that with ebus-evidence from the exported raw log.",
     profile: run.profile, profile_version: run.version,
     window: { from: new Date(windowFrom).toISOString(), to: new Date(windowTo).toISOString() },
+    address_map: run.addressMap || {},
     checks: run.checks.map((c) => ({
       id: c.id, description: c.description, matches: c.occurrences, distinct_telegrams: c.distinct,
       first_seen: c.first_ms === null ? null : new Date(c.first_ms).toISOString(),
@@ -103,8 +119,11 @@ export function summaryJson(run, windowFrom, windowTo) {
   };
 }
 
-export function describeMatch(match) {
-  return Object.entries(match || {}).map(([k, v]) => `${k}=${v}`).join(" ");
+export function describeMatch(match, addressMap = {}) {
+  return Object.entries(match || {}).map(([k, v]) => {
+    const mapped = (k === "source" || k === "target") && addressMap[String(v).toLowerCase()];
+    return mapped && mapped !== String(v).toLowerCase() ? `${k}=${v}→${mapped}` : `${k}=${v}`;
+  }).join(" ");
 }
 
 export const fmtTime = (ms) => (ms === null || ms === undefined ? "–" : fmt.dateTime(ms));

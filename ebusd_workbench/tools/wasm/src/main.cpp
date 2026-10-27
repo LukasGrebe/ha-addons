@@ -313,6 +313,12 @@ static void describe(Message* message, ostringstream& out) {
     ostringstream cond;
     message->m_condition->dump(false, &cond);
     out << ",\"condition\":\"" << jsonEscape(cond.str()) << "\",\"available\":" << (message->isAvailable() ? "true" : "false");
+    // the messages the condition refers to (circuit, message, field, values), so that a caller
+    // decoding incrementally knows which telegrams have to be decoded first
+    ostringstream refs;
+    message->m_condition->dumpJson(&refs);
+    string refsStr = refs.str();
+    out << ",\"conditions\":" << (refsStr.empty() || refsStr[0] == '[' ? refsStr : "[" + refsStr + "]");
   } else {
     out << ",\"condition\":\"\",\"available\":true";
   }

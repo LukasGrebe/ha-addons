@@ -6,27 +6,31 @@
 const yamlQuote = (s) => `"${String(s).replace(/"/g, '\\"')}"`;
 
 /**
- * @param {Array} messages included messages: {circuit, name, write, passive, fields: [field names]}
- * @param {object} options {deviceId, topic}
+ * @param {Array} messages included messages: {circuit, name, write, passive, fields: [field names],
+ *   role?: the upstream name when the message was renamed, fieldOf?: {upstream field: exported field}}
+ *   Roles decide what a message is for (Z1RoomTemp …); names and fields are what ebusd publishes.
+ * @param {object} options {deviceId, topic, controller}
  */
 export function generateHaYaml(messages, options = {}) {
   const topic = options.topic || "ebusd";
-  const readable = (circuit, name) => messages.find((m) => m.circuit === circuit && m.name === name && !m.write);
-  const writable = (circuit, name) => messages.find((m) => m.circuit === circuit && m.name === name && m.write);
-  const field = (m, preferred) => (m?.fields?.includes(preferred) ? preferred : m?.fields?.[0] || "value");
+  const roleOf = (m) => m.role || m.name;
+  const readable = (circuit, role) => messages.find((m) => m.circuit === circuit && roleOf(m) === role && !m.write);
+  const writable = (circuit, role) => messages.find((m) => m.circuit === circuit && roleOf(m) === role && m.write);
+  const hasField = (m, name) => (m?.fieldOf ? name in m.fieldOf : !!m?.fields?.includes(name));
+  const field = (m, preferred) => (m?.fieldOf?.[preferred]) || (m?.fields?.includes(preferred) ? preferred : m?.fields?.[0] || "value");
   const notes = [];
   const lines = [];
   const circuits = [...new Set(messages.map((m) => m.circuit))];
-  const controller = options.controller || circuits.find((c) => messages.some((m) => m.circuit === c && /^Z\d(RoomTemp|DayTemp|OpMode)$/.test(m.name)))
-    || circuits.find((c) => messages.some((m) => m.circuit === c && /^Hwc(TempDesired|OpMode)$/.test(m.name)));
+  const controller = options.controller || circuits.find((c) => messages.some((m) => m.circuit === c && /^Z\d(RoomTemp|DayTemp|OpMode)$/.test(roleOf(m))))
+    || circuits.find((c) => messages.some((m) => m.circuit === c && /^Hwc(TempDesired|OpMode)$/.test(roleOf(m))));
   const deviceId = options.deviceId || `ebusd_${(controller || "heating").replace(/[^a-z0-9]/gi, "_")}`;
-  const statusMessage = messages.find((m) => m.name === "RunDataStatuscode" && !m.write);
+  const statusMessage = messages.find((m) => roleOf(m) === "RunDataStatuscode" && !m.write);
   const availability = [
     `      availability_topic: ${topic}/global/running`,
     `      payload_available: "true"`,
     `      payload_not_available: "false"`,
   ];
-  const zones = [...new Set(messages.filter((m) => m.circuit === controller).map((m) => (m.name.match(/^Z(\d)(RoomTemp|DayTemp|OpMode|NightTemp)$/) || [])[1]).filter(Boolean))].sort();
+  const zones = [...new Set(messages.filter((m) => m.circuit === controller).map((m) => (roleOf(m).match(/^Z(\d)(RoomTemp|DayTemp|OpMode|NightTemp)$/) || [])[1]).filter(Boolean))].sort();
   if (!controller) notes.push("# no controller circuit with zone (Z1RoomTemp, Z1DayTemp, Z1OpMode) or hot water (HwcTempDesired, HwcOpMode) messages in the setup");
 
   lines.push("mqtt:");
@@ -66,12 +70,12 @@ export function generateHaYaml(messages, options = {}) {
   const hwcDesired = controller && readable(controller, "HwcTempDesired"), hwcDesiredW = controller && writable(controller, "HwcTempDesired");
   const hwcMode = controller && readable(controller, "HwcOpMode"), hwcModeW = controller && writable(controller, "HwcOpMode");
   if (hwcDesired || hwcMode) {
-    const storage = (controller && readable(controller, "HwcStorageTemp")) || messages.find((m) => !m.write && m.fields?.includes("hwcstoragetemp"))
-      || messages.find((m) => !m.write && /^(HwcTemp|HwcStorageTemp|StorageTemp)$/.test(m.name));
+    const storage = (controller && readable(controller, "HwcStorageTemp")) || messages.find((m) => !m.write && hasField(m, "hwcstoragetemp"))
+      || messages.find((m) => !m.write && /^(HwcTemp|HwcStorageTemp|StorageTemp)$/.test(roleOf(m)));
     lines.push("", "  water_heater:", `    - name: "Warmwasser"`, `      unique_id: ${deviceId}_water_heater`, `      device:`, `        identifiers: [${yamlQuote(deviceId)}]`, ...availability,
       `      temperature_unit: C`, `      precision: 1.0`, `      min_temp: 35`, `      max_temp: 65`, `      modes: ["off", "eco", "heat_pump"]`);
     if (storage) lines.push(`      # Ist: Speichertemperatur (${storage.circuit} ${storage.name})`, `      current_temperature_topic: ${topic}/${storage.circuit}/${storage.name}`,
-      `      current_temperature_template: "{{ value_json.${storage.fields?.includes("hwcstoragetemp") ? "hwcstoragetemp" : field(storage, "value")}.value }}"`);
+      `      current_temperature_template: "{{ value_json.${hasField(storage, "hwcstoragetemp") ? field(storage, "hwcstoragetemp") : field(storage, "value")}.value }}"`);
     else notes.push("# water heater: no storage temperature message (HwcStorageTemp or a message with field hwcstoragetemp) in the setup, current_temperature omitted");
     if (hwcDesired) lines.push(`      temperature_state_topic: ${topic}/${controller}/${hwcDesired.name}`, `      temperature_state_template: "{{ value_json.${field(hwcDesired, "value")}.value }}"`);
     if (hwcDesiredW) lines.push(`      temperature_command_topic: ${topic}/${controller}/${hwcDesiredW.name}/set`);

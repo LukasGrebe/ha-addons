@@ -178,7 +178,7 @@ def api_export_rawlog(ctx, req):
     from_ms, to_ms = window(req.query, 86400_000)
     if to_ms - from_ms > 31 * 86400_000:
         raise ApiError("at most 31 days at once")
-    own = int(req.query.get("own", "31"), 16)
+    own = int(req.query.get("own") or ctx.settings.data.get("own_address", "31"), 16)
     name = "ebusd-%s-%s.raw" % (time.strftime("%Y%m%d-%H%M", time.localtime(from_ms / 1000)),
                                 time.strftime("%Y%m%d-%H%M", time.localtime(to_ms / 1000)))
     req.handler.send_stream(ctx.db.rawlog(from_ms, to_ms, own_address=own, include_broken=req.query.get("all") == "1"),

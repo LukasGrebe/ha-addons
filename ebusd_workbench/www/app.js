@@ -2,6 +2,8 @@
 import { Timeline } from "./timeline.js";
 import { Definitions } from "./definitions.js";
 import { SettingsView } from "./settings.js";
+import { Decoder } from "./decoder.js";
+import { setup } from "./setup.js";
 
 // All URLs are relative: the app is served through Home Assistant ingress under a prefix.
 export const api = {
@@ -99,7 +101,7 @@ export const bus = {
   emit(name, data) { for (const fn of this.handlers[name] ?? []) fn(data); },
 };
 
-export const app = { status: null, settings: null, views: {} };
+export const app = { status: null, settings: null, views: {}, decoder: null };
 window.workbench = app;  // for debugging and tests
 
 function updateStatusBar() {
@@ -141,6 +143,8 @@ function showTab(name) {
 
 async function main() {
   await refreshStatus();
+  setup.load();
+  app.decoder = new Decoder();
   app.views.timeline = new Timeline(document.getElementById("tab-timeline"));
   app.views.definitions = new Definitions(document.getElementById("tab-definitions"));
   app.views.settings = new SettingsView(document.getElementById("tab-settings"));
@@ -151,6 +155,9 @@ async function main() {
   bus.on("show-tab", showTab);
   showTab(["timeline", "definitions", "settings"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "timeline");
   setInterval(refreshStatus, 10_000);
+  // the browser-side copy of the recording and its decodings; the views listen to "decodes-changed"
+  app.decoder.init().catch((err) => { console.error(err); toast(`store failed: ${err.message}`, "err", 8000); });
 }
 
-main().catch((err) => { console.error(err); toast(`failed to start: ${err.message}`, "err", 10000); });
+// the page (not a test importing the modules in Node)
+if (document.getElementById("tabs")) main().catch((err) => { console.error(err); toast(`failed to start: ${err.message}`, "err", 10000); });

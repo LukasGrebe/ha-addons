@@ -111,6 +111,15 @@ class Api(unittest.TestCase):
         self.assertGreater(len(lines), 50)
         self.assertRegex(lines[0], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} ([<>][0-9a-f]+)+$")
         self.assertEqual(self.request("GET", "/api/export/rawlog?from=0&to=99999999999999")[0], 400)
+        # ebusd's own address comes from the settings unless given: its telegrams are split into direction changes
+        own_lines = [l for l in lines if ">" in l]
+        self.assertEqual(self.request("PUT", "/api/settings", {"own_address": "10"})[0], 200)
+        code, _, body = self.request("GET", f"/api/export/rawlog?from={self.end_ms - 3600_000}&to={self.end_ms}")
+        self.assertEqual(code, 200)
+        as_10 = [l for l in body.decode().splitlines() if ">" in l]
+        self.assertNotEqual(len(own_lines), len(as_10))
+        self.assertTrue(all(l.split(" ", 2)[2].startswith(">10") for l in as_10), as_10[:2])
+        self.request("PUT", "/api/settings", {"own_address": "31"})
 
     def test_repo_and_deploy(self):
         self.assertEqual(self.request("GET", "/api/repo/file?path=x")[0], 400)

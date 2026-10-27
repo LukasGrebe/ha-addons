@@ -177,9 +177,19 @@ class SettingsFile(unittest.TestCase):
             data = Settings(path).as_dict()
             self.assertEqual((data["id_bytes"], data["id_overrides"], data["deploy_subdir"]), (8, {"b504": 2, "08b509": 5}, "en"))
             self.assertEqual(data["compile"]["entry"], "src/main.tsp")
-            for bad in ({"entities": "x"}, {"id_overrides": {"zz": 1}}, {"id_overrides": {"b509": "x"}}, [], {"compile": 1}):
+            for bad in ({"entities": "x"}, {"id_overrides": {"zz": 1}}, {"id_overrides": {"b509": "x"}}, [], {"compile": 1},
+                        {"own_address": "3"}, {"own_address": "zz"}):
                 with self.assertRaises((ValueError, TypeError)):
                     settings.update(bad)
+            # ebusd's own address and the setup (included definitions, chosen candidates, renames) round-trip
+            self.assertEqual(settings.as_dict()["own_address"], "31")
+            settings.update({"own_address": " F1 "})
+            setup = {"included": ["a.csv|c|Name|"], "chosen": {"10→08 b509 0d": "a.csv|c|Name|"},
+                     "names": {"a.csv|c|Name|": {"name": "Verbose", "fields": {"temp": "temperature"}}}, "circuits": {"c": "heating"}}
+            settings.update({"setup": setup})
+            data = Settings(path).as_dict()
+            self.assertEqual(data["own_address"], "f1")
+            self.assertEqual(data["setup"], setup)
 
 
 if __name__ == "__main__":

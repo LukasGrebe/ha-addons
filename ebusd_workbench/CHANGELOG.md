@@ -1,3 +1,27 @@
+# 0.2.0 (unreleased)
+
+The timeline becomes the place where definitions are compared, chosen and named.
+
+## Features
+* Browser store (IndexedDB): the distinct telegrams of the recording are kept once with their
+  counts and times, the timeline's bars as pointers to them, and every decoding of a telegram
+  with every fitting definition next to it, with the definition's source (checkout or
+  community layer), file and condition; kept up to date every few seconds, decoded in a Web
+  Worker, incremental (identification and condition telegrams first); survives reloads
+* Definitions compile automatically at start; the timeline names its rows after the decoding
+  definition and shows the decoded values in the bars
+* Candidate picker in the timeline: every definition that decodes a row, with status, source
+  and its reading; hovering previews the decoding in the bars, picking puts the definition into
+  the setup of this installation
+* Names of my config: messages, fields and circuits can be renamed (verbose or industry terms
+  instead of the upstream names); the exported CSV files, MQTT topics and Home Assistant YAML
+  use the new names, the upstream names stay in comments and keep the entities' roles
+* Setup drawer in the timeline with the included definitions and the exports (deploy, download,
+  Home Assistant YAML, eBUSd app options); the setup is ebusd's own choice until changed
+* Evidence checks: address mapping between the profile author's installation and this bus
+  (`f1=31`), ebusd's own address as a setting used by the raw log export too
+* `ebusd-check` reports the messages a condition refers to
+
 # 0.1.0 (unreleased)
 
 First version (MVP).
