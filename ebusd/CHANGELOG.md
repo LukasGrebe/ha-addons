@@ -1,0 +1,793 @@
+# Unreleased
+
+## Features
+* `log` command in the built-in terminal: note what you did or saw, e.g. `log 8:52:23 ~1s Modus auf Einschaltempfehlung geändert`, to find its telegrams in the SQLite telegram log by time. The time is optional (default: now) and can have an uncertainty (default ±500 ms; `~2s`, or `-10m` for something that started before you saw it); without a message, `log` stores the time and asks for it. Events are stored in the new table `event` of the telegram log database and are not deleted by the retention. See the [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#logging-what-you-did-log)
+
+## App Changes
+* SQLite telegram log: the database takes about 65 % less space: on a real system 73 instead of 205 bytes per telegram, i.e. about 9 instead of 25 MB per day at 120,000 telegrams per day. Data bytes are stored as binary instead of hex text, `raw` only where the other columns cannot give it back (escape sequences, repetitions after NAK, broken telegrams), and instead of four indexes there is one for commands, while the table itself is ordered by time. An existing database is converted at the first start: typically in under a minute, without delaying ebusd; telegrams received meanwhile are written afterwards. If that fails (e.g. disk full), the old database is kept as `telegrams.v1-<date>-<time>.db` and a new one is started. Versions 26.1.9 and 26.1.10 cannot use a converted database (their telegram log stays off), so to go back to them, give them another `sqlite_db` file
+* SQLite telegram log, changed queries: `dd`, `s_dd` and `raw` are binary (`hex(dd)`, `dd = x'0d2800'`) and `raw` is empty where not needed; `id` is gone, `ts` is unique now (order by it); `type` is only in the view `telegram_hex`, which shows everything as before. See the [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#table-telegram)
+
+# 26.1.10 (2026-10-22)
+
+## Bug Fixes
+* Use the map type `app_config` instead of the legacy `addon_config`, which Supervisor warns about (thanks @uwemarcus, fixes [#256](https://github.com/LukasGrebe/ha-addons/issues/256))
+* Several `--log` options for different targets (e.g. `--log=all:notice` and `--log=bus:debug`) no longer cause a duplicate flag warning (thanks @aavdberg, fixes [#258](https://github.com/LukasGrebe/ha-addons/issues/258))
+* SQLite telegram log: the database could not be created under `/share` (e.g. `/share/ebusd/telegrams.db` as in the docs), because the app mounted `/share` read-only. `/share` is now writable for the app, and a folder the log cannot write to is reported clearly instead of "unable to open database file".
+
+# 26.1.9 (2026-10-21)
+
+## Features
+* Add optional SQLite telegram log: set `sqlite_db` (e.g. `/share/ebusd/telegrams.db`) to store every telegram ebusd receives from the bus, including unknown, own and broken ones. Each telegram is split into the eBUS fields QQ ZZ PB SB NN DD CRC ACK / NN DD CRC ACK with a nanosecond timestamp, a status (`ok`, `crc`, `nak`, `timeout`, …) and the raw bytes, indexed for querying by address, command and time. Telegrams older than `sqlite_retention_days` (default 10) are deleted. See the [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#sqlite-telegram-log)
+* The image now contains `python3` (for the telegram log) and the `sqlite3` command line tool, usable from the built-in terminal
+
+## App Changes
+* Test upcoming versions: install **eBUSd (next)** from `https://github.com/LukasGrebe/ha-addons#channel-next`, and every pull request gets an installable test app (see [Testing upcoming versions](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#testing-upcoming-versions))
+* Every change is tested before release against simulated USB and network eBUS adapters (plain and enhanced protocol) and an MQTT broker
+* Images are built with Home Assistant's new build actions, aarch64 natively instead of emulated; the base image is now set in the Dockerfile (`build.yaml` removed) and ttyd (web terminal) is pinned to 1.7.8
+* A published version is never rebuilt anymore: until now, every change merged into main replaced the images of the current version
+
+# 26.1.8 (2026-04-11)
+
+## Bug Fixes
+* Fix crash at startup when `--configpath` or `--configlang` are absent from `commandline_options` — `grep` returned exit code 1 (no match), which with `set -o pipefail` and `set -o errexit` (both set by bashio) caused the script to exit silently after printing the version line. This broke every user who did not have these flags set, which is most users.
+
+# 26.1.7 (2026-04-03)
+
+## Features
+* Mount `/share` — the HA shared folder (`/share` on the host) is now accessible inside the container, allowing ebusd CSV files or other assets stored there to be referenced directly via `--configpath=/share/...` (thanks @muewe, [#226](https://github.com/LukasGrebe/ha-addons/pull/226))
+
+## App Changes
+* Add `seed_mqtt_cfg` option (default: `true`) — replaces the previous behaviour of unconditionally injecting `--mqttjson` and `--mqttint=/config/mqtt-hassio.cfg` whenever the Mosquitto broker was detected. The addon now seeds `mqtt-hassio.cfg` into the config folder on first start and adds both flags only when this option is enabled, giving power users a clean opt-out (fixes [#219](https://github.com/LukasGrebe/ha-addons/issues/219))
+* `--mqttjson` is no longer force-added by the addon — it lives in `commandline_options` as a removable default. Users managing their own MQTT entities via CSV/YAML can remove it freely
+* Skip Supervisor MQTT credential auto-fill when `--mqtthost` is already present in `commandline_options` — use an external broker without credential conflicts
+* Warn at startup when `--configpath` points to a local directory containing no CSV files at the locations ebusd expects; suggests the correct path including parent directories and CDN language subdirectories (`en/`, `de/`, etc.) — addresses the common mistake of pointing at a repo root instead of the language subfolder
+* Warn when `--configpath` language folder and `--configlang` do not match when using a local CDN clone
+* Warn when a `commandline_options` entry contains multiple flags in one line, or when the same flag appears more than once
+* Add German translation (`de.yaml`)
+* Update all translations (cz, it, pl) with `seed_mqtt_cfg` and revised `commandline_options` descriptions
+* Expand DOCS.md: dedicated MQTT section, `seed_mqtt_cfg` usage, external broker setup, `--configpath`/`--configlang` guidance, startup log reference table
+
+# 26.1.6 (2026-03-17)
+> ### ⚠️ Breaking in app configuration: use `commandline_options` for ebusd run flags instead of individual options
+>
+> **`commandline_options` has changed from a single text field to a list of individual flags.**
+> Each ebusd flag must be a separate entry. The default list contains `--mqttjson` which is
+> required for HA MQTT discovery — **do not remove it unless you know what you are doing.**
+>
+> **If you used `commandline_options` before:** your existing value is detected and used as-is
+> with a warning in the logs. Convert it manually: split your flags into one entry per line.
+>
+> **If you upgraded from version 25.1 or older:** your old config fields (`scanconfig`,
+> `loglevel_all`, `mqtttopic`, `mode`, `readonly`, etc.) are **no longer applied**.
+> The addon will warn you in the logs at startup. You must re-add them as entries in
+> `commandline_options`. See the [migration guide](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#migrating-from-version-251-or-older).
+
+## App Changes
+* Fix missing ebusd command log line when `commandline_options` was in old string format
+* Silence ttyd startup noise — web terminal output redirected to /dev/null
+* Docs: add port-opening requirement for raw TCP access on port 8888
+* Docs: add config folder path migration guide for users upgrading from ≤25.1
+
+# 26.1.5 (2026-03-17)
+## App Changes
+
+
+* `commandline_options` changed from a single string to a **list of flags** — one entry per flag, no more word-splitting issues; `--mqttjson` pre-filled as default (fixes [#201](https://github.com/LukasGrebe/ha-addons/issues/201), [#202](https://github.com/LukasGrebe/ha-addons/issues/202))
+* Detect old (≤25.1) config fields at startup and log a clear warning with migration instructions
+* Log addon version as first line on every startup to simplify debugging
+* MQTT gracefully skipped when Supervisor service unavailable; configure manually via `commandline_options` if using an external broker (fixes [#204](https://github.com/LukasGrebe/ha-addons/issues/204))
+
+# 26.1.4 (2026-03-17)
+## App Changes
+* Fix crash on startup when Mosquitto integration is not available — MQTT is auto-configured when the Supervisor service is present; when not available the addon starts without it and MQTT can still be configured manually via `commandline_options` (fixes [#204](https://github.com/LukasGrebe/ha-addons/issues/204))
+
+# 26.1.3 (2026-03-17)
+## App Changes
+* Fix startup regression introduced in 26.1.2: `commandline_options` not set caused a literal `null` argument to be passed to ebusd, resulting in `invalid arguments` and a restart loop
+
+# 26.1.2 (2026-03-17)
+## App Changes
+* Fix `commandline_options` passing multiple flags as a single argument — each space-separated flag is now correctly split into individual CLI arguments (fixes [#201](https://github.com/LukasGrebe/ha-addons/issues/201))
+
+# 26.1.1 (2026-03-17)
+## App Changes
+* Add web terminal (ttyd via xterm.js) accessible via Open Web UI on the addon Info page — supports interactive commands, long-running output, and Ctrl+C/D
+* Fix `commandline_options` passing multiple flags as a single argument — each space-separated flag is now correctly split into individual CLI arguments (fixes [#201](https://github.com/LukasGrebe/ha-addons/issues/201))
+
+* Redact MQTT username and password from addon logs
+* Modify .github/workflows/update-ebusd.yml to preserve App Changes sections when prepending new upstream releases to CHANGELOG.md
+
+
+# 26.1 (2026-02-08)
+## Bug Fixes
+* fix potential memory leak
+* fix reading write only and broadcast messages from cache
+
+## Features
+* add support for more than one level of load instructions
+* add "--mqttcaos" option
+
+
+# 25.1 (2025-04-13)
+## Bug Fixes
+* fix for device string symlink with colon
+* fix "read" and "write" command response
+* fix dump of divisor
+* fix max value for S3N, S3N, SLG, and SLR types
+* fix socket options for KNXnet/IP integration
+* fix constant encoding in json
+* fix parsing unexpected mDNS response
+* fix longer message key and check
+* fix unnecessary poll on scan messages
+
+## Features
+* add "-m" option to "encode" and "decode" commands
+* add output for commands executed with "--inject=stop"
+* add secondary replacement value for date types
+* add value range and step support for numeric types
+* add numeric base types without replacement value (e.g. "U1L", "S1L", "U2L", "S2L", "U2B", "S2B", etc.)
+* add also include write messages as read-only ones in MQTT definition topic if writes are excluded
+
+
+# 24.1 (2024-10-27)
+## Bug Fixes
+* fix conditional messages not being sent to message definition in MQTT integration and not being used in KNX group association
+* fix CSV dump of config files on command line
+* fix DTM type with recent dates
+* fix for some updated messages not appearing on KNX or MQTT
+* fix for parsing certain condition ranges
+* fix for "reload" command not starting the scan again
+* fix datetime type mapping in MQTT
+
+## Features
+* add "inject" command
+* add config path to verbose "info" command
+* add "answer" command
+* add option to inject start-up commands
+* add verbose raw data option to "read" and "write" commands
+* add option to allow write direction in "read" command when inline defining a new message
+* add option to discover device via mDNS
+* add dedicated log level for device messages
+* add option to extend MQTT variables from env/cmdline
+* add date+datetime mapping, better device update check, and remove single-field-message field names in Home Assistant MQTT discovery integration
+
+## Breaking Changes
+* change default config path to https://ebus.github.io/ serving files generated from new TypeSpec message definition sources
+* change validation of identifiers to no longer accept unusual characters
+* change default device connection to be resolved automatically via mDNS
+
+
+# 23.3 (2023-12-26)
+## Bug Fixes
+* fix MQTT topic string validation
+* fix lost scanconfig default behaviour
+* fix send empty message instead of logging an error for MQTT on messages without any field
+* fix MacOS build
+* fix name prefix warnings in Home Assistant MQTT discovery integration
+* fix impossible usage of multi-field writes in MQTT integration
+* fix initial broadcast scan
+* fix potentially unusable SSL context
+* fix SYN generator timing
+* fix missing check for PB/SB validity
+* fix non-SSL build
+* fix scan when no signal
++ fix negative float values in KNX integration
+
+## Features
+* add temperatures in Kelvin and ... to Home Assistant MQTT discovery integration
+* add options to turn off scanconfig and limit number of retries
+* remove dependency on argp
+* add time fields to Home Assistant MQTT discovery integration
+* add templates endpoint to HTTP JSON
+* add reworked eBUS protocol engine that is especially useful for slow network issues
+* add knxd support to devel docker image
+
+
+# 23.2 (2023-07-08)
+## Bug Fixes
+* fix bounds check for variable length datatypes
+* add timeout for enhanced protocol info exchange and allow more of them being optional
+* fix some warnings in Home Assistant MQTT discovery integration
+* fix for high traffic on KNX integration
+* add workaround for libssl issues, add debug logging and force it using IPv4
+* fix log level potentially set too late during startup
+* fix too low timeout for config web service
+* fix MQTT topic construction with prefix containing a separator
+
+## Features
+* add log entry for unstartable TCP ports
+* add support for injecting scan messages being used for scan procedure
+* add value lists support to MQTT integration and use it for Home Assistant MQTT discovery integration
+* add update check for v5 device
+* add "scan status" command and add the status to "info" command
+
+
+# 23.1 (2023-01-06)
+## Bug Fixes
+* fix potentially invalid settings picked up from environment variables
+* fix potentially unnecessary arbitration start for non-enhanced proto
+* fix smaller issues in KNX integration
+* fix numeric replacement+infinite and float min/max values in MQTT JSON payload format
+* fix duplicate definition sent for same message when writable messages are included in MQTT integration
+* fix UDP based devices no longer working since 22.4
+* fix for older SSL libraries not automatically retrying if necessary
+* fix enhanced side data transfer from device to host
+* fix for fast participants starting immediately after own SYN at the end of a sent command
+* add a single retry when initial config location check fails
+
+## Features
+* add support for setting visual ping, IP gateway, MAC from ID, and variant to ebuspicloader
+* add step variable for numeric values to message definition in MQTT integration
+* add yes/no values and writable heating curve to Home Assistant MQTT discovery integration
+* add device version to update check and switch to Home Assistant update integration for current update check and additionally for device
+* add preferred language support to web services and use it instead of default LANG environment with fallback to German
+* add option to exit non-zero on non-success response from ebusd to ebusctl
+
+
+# 22.4 (2022-09-18)
+## Bug Fixes
+* fix some smaller glitches (short argument names, compilation on small devices, argument help)
+* fix revision in gh build for update check
+* fix for include instruction without subdirectory
+* add timeout to network device connection
+
+## Features
+* add continuation to initial scan until succeeded as well as repetition to incomplete regular scan
+* add restart of enhanced device state when connection was reset
+* add KNX integration via KNXnet/IP multicast routing and optionally via knxd client
+
+
+# 22.3 (2022-05-08)
+## Bug Fixes
+* fix potential race condition in connection handling
+* fix ebusctl final read
+* fix missing MQTT topic prefix with "--mqttint=..."
+* fix weird SSL connect errors
+* fix for /decode endpoint
+* fix for Home Assistant MQTT discovery config to truncate long updatecheck string
+
+## Features
+* add timeout check to arbitration
+* add allow using older libmosquitto version
+* add "isreverse" to /datatype endpoint
+* add high speed serial mode to enhanced protocol
+* add support for flashing via network to ebuspicloader
+* add allow using "--mqttvar=..." multiple times to ease overriding integration settings
+
+
+# 22.2 (2022-02-27)
+## Bug Fixes
+* fix for reconnect in HTTPS client
+* fix for potentially truncated float representation
+* fix for unmatchable incoming MQTT topics
+* fix for non-JSON MQTT payload format
+
+## Features
+* add "--cafile" and "--capath" options with support for insecure HTTPS connections
+* add support for extra infos of current adapter 3 firmware
+* add option to send message dump to a file
+* add "--mqttjson=short" option for smaller message payload
+* add negative filtering to MQTT integration
+* add rewrite outdated config path with the new one
+
+
+# 22.1 (2022-02-12)
+## Bug Fixes
+* fix smaller bugs related to cleanup
+* add more device latency to unix build
+* fix for debian package overwriting previous conf files
+* fix for potentially truncated float representation
+* fix for determining unique field names in a message
+
+## Features
+* added arbitration delay setting to ebuspicloader
+* updated new location of config and update check web service
+* remove ebusfeed from regular build
+* add support for picking up environment variables as command line options
+* add support for generic MQTT integration by allowing publish of message definition content
+* add support for Home Assistant MQTT discovery feature
+* add Alpine Linux APKBUILD (thanks to tim-devel)
+* add QoS setting and adjustable global topic to MQTT
+* add option to move dynamic circuit and name parts to MQTT payload allowing to push to e.g. Azure IoT hub
+* add SSL support to HTTP client
+
+
+# 21.3 (2021-11-07)
+
+## Bug Fixes
+* fix for escaping double quote in CSV format
+* adjusted helper shell scripts and Munin plugin to newer netcat
+* fix for weekday in BDA data type (for sending only)
+* fix some compiler warnings
+* fix non-unique message keys in HTTP JSON output with "full" query parameter
+* fix for message after debian install
+* fix for replacing already existing message definitions
+* fix missing length in CSV dump for some data types
+* fix some missing data type lengths in "grab decode" result
+* fix for injecting several messages via command line args
+
+## Features
+* added DTM and BDZ data types
+* added "-n" argument to "hex" and "direct" commands for automatically determining message length from input
+* added level/pollprio/condition/field flags and field result type as well as list of types to HTTP JSON output
+* added message dump from commandline in JSON format
+* added support for newer MQTT broker versions
+* added some PIC calibration data to "ebuspicloader" verbose output
+* added support for upcoming adapter 3 firmware enhancements
+* added config override path
+* added support for adding message definition, retrieving data types and raw messages, and decode data types from raw values to HTTP port
+* added "--mqttverbose" option
+* added verbose option to "info" command
+
+## Breaking Changes
+* remove support for Debian 8 Jessie in docker
+
+
+# 21.2 (2021-02-08)
+
+## Bug Fixes
+* fix for UDP device connection issue
+* fix maxage check in HTTP/JSON port
+
+## Features
+* changed docker image to multi-architecture including Raspberry Pi, reduced image size
+* added trailing wildcard to "ebuspicloader" port
+* added i386 and arm64 architectures to docker image
+* added more startup logging
+* added colon as additional separator for "--log" option
+
+
+# 21.1 (2021-01-10)
+
+## Bug Fixes
+* fix for publishing several MQTT updates at once
+* optimized keep alive option for net devices
+* fix for duplicate entry "minarbitrationmicros" in HTTP GET
+* fix for extra send retry
+* fix for newer compiler versions
+* fix for potential illegal string usages
+* fix for named net device not being resolvable during startup
+
+## Features
+* added Raspberry Pi docker image
+* added support for Cygwin build
+* added option to use "\*" as trailing wildcard for circuit and name in MQTT /list topic
+* added "--mqttinsecure" option
+* updated to newest version of enhanced protocol
+* added adapter 3 PIC tool "ebuspicloader" for uploading new firmware and configuring fix IP address
+
+
+# 3.4 (2019-10-27)
+
+## Bug Fixes
+* fix for always enabled "--mqttchanges" option
+* fix for dynamically adjusted poll priority
+* fix for enhanced escape chars
+* fix for too frequent logging on MQTT broker communication error
+* fix for unexpected "different version available" message during update check
+* fix for detecting subsequent fields with less than 8 bits not fitting into 1 byte
+* fix for compilation and running on FreeBSD and MacOS with low latency setting for FTDI device (thanks to samm-git)
+* fix for switching to daemon mode when log file was not opened
+* fix for checking required arguments of "write" command with "-h"
+* fix for potential MQTT reconnect issue after lost connection
+
+## Features
+* added option to set poll priority with MQTT get topic
+* added "direct" command for listening to all valid messages from the bus
+* added MQTT /list topic for retrieval of all known messages
+* added support for init scripts on non-LSB distributions (thanks to andr2000)
+* added support for logging to syslog instead of file (thanks to samm-git)
+* added adjustable verbosity and option to include unknown messages to "listen" command
+
+
+# 3.3 (2018-12-26)
+
+## Bug Fixes
+* fix for missing MQTT subscription after broker reconnect
+* fix for answering to first scan only in answer mode
+* fix dont add transfer latency to receive timeout when acting as SYN generator
+* fix for bit combinations during write to SymbolString
+* fix for MQTT handling after broker disconnect
+* fix for NaN in JSON
+* fix for deadlock in libmosquitto
+
+## Features
+* wait for being online before starting and automatically restart after 30 seconds
+* added "--mqttchanges" option to only publish changed messages and changed to publish all messages by default
+* added "--mqttclientid" to set own client ID instead of using the default
+* added support for single quotes to all commands
+* added "--mqttlog" and "--mqttversion" options
+
+## Breaking Changes
+* added support for enhanced network protocol mode for recent [ebusd-esp firmware](https://github.com/john30/ebusd-esp/) that allows the arbitration to be done directly by the Wemos
+
+
+# 3.2 (2018-05-10)
+
+## Breaking Changes
+* changed default configuration file location to config web service at ebusd.eu
+
+## Bug Fixes
+* corrected tag name set by make_debian
+* corrected MQTT /get topic on field level
+* corrected weird IP address logging
+* corrected logrotate script
+
+## Features
+* added support for retrieving configuration files from config web service
+* changed docker image to be smaller size and fixed missing library dependencies
+* added automatic reconnect to MQTT broker
+* changed logging for messages from "updated" to "received" and "sent" depending on who initiated the request and added message direction/scan/poll/update info
+* added support for serving .csv files and new argument maxage to HTTP/JSON port
+* added timeout argument and error result code to ebusctl
+* added "-def" option to "read" and "write" commands and "define" command to test message defintions and add new definitions during runtime and disabled all by default (use "--enabledefine" command line option).
+* added "encode" and "decode" commands for testing field definitions
+* added option to ignore failed host name resolution during initialization of MQTT
+* added logging when device became invalid and close it on error
+
+
+# 3.1 (2017-12-26)
+
+## Bug Fixes
+* corrected wrong defaults directory in Debian Jessie build
+* corrected dump of chained messages
+* corrected missing default MQTT topic
+* corrected dump of value list and constant fields
+* fix for input string vanishing on certain compiler versions in "write" command
+* fix for potential endless waits
+* corrected initial dumping and raw data logging
+* corrected address check with "-s" or "-d" argument in "read" and "write" commands
+* fixed timeout for update check
+* corrected wrong initial scan load message
+* corrected "read" command with field name and MQTT output by field when master and slave part both carry fields
+
+## Features
+* added helper script for reading all Vaillant registers for a single slave via "hex" command
+* check all message definitions independent of any condition when checking/dumping configuration
+* added option to disable automatic update check
+* added scan config mode to start log entry
+* added measurement and logging of min/max send-receive latency and include values in "info" command and JSON output
+* drop initial potential garbage for UDP/TCP devices
+* better support for cygwin builds
+* added measurement of arbitration delay
+* continue trying to get slave ID in scan config mode in case of communication errors
+
+
+# 3.0 (2017-08-29)
+
+## Breaking Changes
+* switched to C++11 compiler
+* separated access level from circuit name
+* introduced access control list and user authentication for access to certain messages
+* added automatic check for updates (ebusd and configuration)
+* use CSV header line for determining columns and picking multi-language columns by language preference
+* a circuit name is now required for all message configurations
+* raw logging allows logging of messages or each sent/received byte defaulting to messages
+* added systemd unit script
+
+## Bug Fixes
+* corrected numeric condition formatting
+* corrected reporting of CSV error position
+* corrected last update time of write messages
+* close log file on SIGHUP for better logrotate support
+* only allow a single scan at the same time
+* check allowed value range for base types during decoding
+* ignore first seconds of data when calculating symbols per second
+* exclude messages without name
+* fix for potentially zero resolution
+* fix for ebusd not answering scan request from another participant
+* corrected missing update notification on master message part
+* corrected grouping of JSON output by circuit
+* corrected address conflict detection when in answer mode
+* fixed potential memory leaks and misused iterator
+* corrected duplicates when using "--dumpconfig"
+* corrected unclean shutdown
+* also use transfer latency for SYN generator
+* fix for timeout message when decoding scan result failed
+* corrected flushing in dump and raw files
+* corrected unique keys in JSON port
+* fix for potential invalid access during configuration reload
+
+## Features
+* added support for MQTT handling via libmosquitto (will be compiled in when library is available)
+* allow empty ID in filename for circuit and suffix extraction
+* use scan ID as fallback for default circuit name
+* added U3N/U3R/S3N/S3R data types
+* added another log facility "other"
+* added support for using cmake in addition to autoconf
+* added Docker support
+* allow invalid SW and HW fields and remove all but alpha-numeric chars and underscore from ident when looking for scan config file
+* added "auth" command and user/access information to "info" command output
+* added user and secret arguments to HTTP/JSON port and added options to retrieve message definition and raw messages
+* use ACL in "read"/"write"/"find"/"scan" commands
+* added -a and -l options to "find" command
+* added possibility to define different log level per area on command line and with "log" command
+* added decode option to "grab" command presenting decoding hints for unknown messages
+* added option to use different source address QQ to "read"/"write"/"hex" commands
+* enhanced scan for individual slave
+* wait for broadcast scan answers before doing individual scans
+* enhanced SymbolString to be aware of master/slave and get rid of CRC (instead calculate while sending/receiving)
+* allow TTQ/TTH types to use less than 8 bits
+* added support for optional user-defined columns to config files
+* added circuit-level attributes to config files for use in JSON
+* added -N option to "read" command
+* added "--inject" option to inject remaining arguments as already seen messages
+* use scans initiated by other participants and allow "--readonly" with "--scanconfig[=none]"
+* set the serial device to low latency mode to fix huge latency found on recent kernel versions
+
+
+# 2.4 (2016-12-17)
+
+## Bug Fixes
+* fixed removed last byte in "hex" command answers
+* corrected checking duplicates of chained messages
+* fixed reading beyond message bounds
+* corrected output precision with reciprocal divisor
+* corrected caching of master-master messages
+* corrected default dump file name to "/tmp/ebusd_dump.bin"
+
+## Features
+* extended default definition in CSV to allow message name and comment prefix/suffix
+* added automatic reconnect of device if signal loss is persistent and extended "info" result with number of reconnects
+* extended "grab" command to allow selection of all or only unknown messages in grab result
+* added error log entry when ebusd address conflicts with another participant
+* extended BTI/HTI/BTM types to allow replacement value
+* added condition name to logging of "!load" instructions and "info" result
+* added "--lograwdatafile" and "--lograwdatasize" options logging received/sent bytes to a dedicated text file
+* added TTQ base type
+* added support for constant value fields
+
+
+# 2.3 (2016-11-06)
+
+## Bug Fixes
+* synchronously request a message if needed for loading "*.inc" files
+* corrected derivation for TEM_P type
+* allow chained messages to be polled
+* removed CRC from slave answer in decode
+
+## Features
+* no longer poll scan messages since those are expected not to change
+* added more message counts to "info" result
+* added uih circuit with bar chart containing yields to HTML interface
+
+
+# 2.2 (2016-10-16)
+
+## Breaking Changes
+* completely reworked base data types to allow user-defined types
+* added first version of TEM specific data type
+* allow inline rename of template reference
+* removed "stop" command for enhanced security
+* use broadcast ID messages for identification and automatic configuration file selection
+
+## Bug Fixes
+* corrected extra separator in CSV style dump
+* corrected BCD representation in JSON
+* corrected serial close()
+* fix for storing own prepared master data
+* no longer show messages that did not receive data in "find" command
+* check address argument for validity in "scan" command
+* only use cached data if no input is necessary in "read" command
+* fix for poll "continue" errors
+* fix for checking command line arguments
+* fix for DAY data type
+* corrected checking of inline conditions
+* escape special characters in string data types for JSON
+* corrected dumping of value lists
+
+## Features
+* allow running multiple ebusd instances by configuration file (/etc/default/ebusd on debian)
+* set keepalive option on network device
+* added hex option to "find" command
+* added optional initial active scan address to "--scanconfig" option that allows initiating a single destination address scan, a full scan, or sending a broadcast ident message (this is now the default)
+* added MIN datatype
+* avoid output of unprintable characters in string data types
+* split verbosity of "read" and "find" commands into 3 levels
+* added "indexed" parameter for JSON
+* allow non-exact values for truncated time types
+
+
+# 2.1 (2016-05-05)
+
+## Breaking Changes
+* added "hex" command for sending arbitrary hex data, disabled it by default (use "--enablehex" command line option), and limit "write -h" command to known messages only.  
+  This increases security by avoiding unintended sending of arbitrary messages.
+* changed ebusd default address to 0x31 in order to avoid address conflicts with popular devices on the bus
+* added "!load" instruction for CSV configuration files allowing conditional loading of single other CSV file
+* added "!include" instruction for CSV configuration files in order to include other files
+* added support for UDP connected devices
+
+## Bug fixes
+* require "-c" in "write" command
+* corrected duplicate messages check with condition
+* corrected maximum values for BCD and HCD types
+* corrected weekday calculation (for smaller systems mainly)
+* corrected determination of field name uniqueness
+* corrected JSON read of passive messages
+
+## Features
+* allow CSV to contain empty lines (no field filled in)
+* added shorter HCD and BCD data types
+* added data type NTS (null terminated string)
+* added EXP and EXR data types (exponential)
+* added option for changing PID file
+* allow using newlines within quoted fields in CSV
+* added support for string based conditions and on-the-fly condition definition
+* enhanced HTTP user interface
+* increased default receive timeout to 25ms
+* extract default circuit name from CSV file name
+* automatically start grabbing all messages
+* add circuit+message name of known messages to grab result
+* added buffer for network devices and flush potentially buffered input when connecting
+* added option for setting transfer latency and use default 10 ms for network device
+
+
+# 2.0 (2016-01-06)
+
+## Breaking Changes
+* automatic configuration file selection by querying device identification ("--scanconfig").  
+  Previous configuration files are still usable, but only without the "--scanconfig" command line parameter to ebusd (unless the files are renamed).  
+  This is now enabled by default in the init.d (or systemd) scripts to work with ebusd-2.x.x configuration files.
+* support for chained messages with fields covering more than one message ID
+
+## Bug fixes
+* avoid multiple identical derived messages
+* return "empty" for queries without result (e.g. grab result)
+* fix for stopping main loop in rare cases
+* fix for extracting default circuit name from CSV file name
+* fix for using pselect
+* fix for finishing active request when own master address reception timed out
+* fix for some memory issues
+* fix for closing serial device that is no tty
+* fix for dumping message definition
+* fix for cache invalidation
+* fixes for answer mode
+
+## Features
+* respond to broadcast "write" command with "done broadcast"
+* prepared for full file check with overlapping names and message keys
+* added replacement value for date/time types
+* extended "info" command with seen addresses, scan state, and loaded CSV file
+* improved CSV file check
+* insert index suffix extracted from CSV file name when applying defaults (format "ZZ.CCCCC[.index].csv")
+* added support for MACH architecture (Mac OS)
+* use empty condition messagename for referencing scan message
+* allow read and write message definitions having the same ID
+* add hint to decoding problems in "read" and "write" if answer was retrieved successfully
+* added script for converting "grab result" to CSV
+* exclusively lock serial device to prevent simultaneous access by another process
+* extended "-i" parameter of "find" command to accept further ID parts
+* include decode problems instead of returning invalid JSON
+* extended allowed message ID length and max STR and HEX length
+* extended "grab" command with "all" option for grabbing all messages instead of only unknown
+* allow float values being used for int types
+* added big endian data type variants (UIR, SIR, FLR, ULR, SLR)
+* use numeric value as fallback for value lists with unknown value association
+* increased verbosity during scan
+* increased default bus acquisition retries from 2 to 3
+* use named objects for JSON fields instead of array with fallback to numbered
+* exclude conditions from "find -f" command
+* let ebusd answer to scan request (if started with "--answer")
+* add special length '*' for consuming remaining input for some string types (IGN, STR, HEX)
+
+## Changed files
+https://github.com/john30/ebusd/compare/v1.3.0...v2.0
+
+
+# 1.3.0 (2015-10-24)
+
+## Breaking Changes
+* started with a new git repository for working on 2.0 version (previous repository was renamed to ebusd1)
+* added support for conditional message definitions based on other message values
+
+## Bug fixes
+* fix for numeric parsing of empty string
+* allow HTTP port query string keys without value
+* fix for thread cleanup
+* update last message update time when actively sending it
+* trim CSV lines and fields
+* corrected derivation of field name, comment and unit in templates
+* check invalid divisor/values for string and value list based types
+* fix for overriding destination address in "read" command
+* fix for cached master data
+
+## Features
+* new "read" option "-n" for retrieving name/value pairs in numeric form
+* new "find" option "-e" for exactly matching name and optional circuit (ignoring case)
+* new "find" option "-F" for listing messages in CSV format with selected columns only
+* added numeric, verbose, and required options to JSON and use "null" for unset or replacement value
+* allow static ".json" files being served by HTTP port
+* allow passing raw value when writing name/value pairs
+* enhanced static HTML user interface to dynamic
+* added possibility to use a different name for referenced field template
+* added data type HCD (for Ochsner)
+* added base type TTH (truncated time with 30 minutes resolution)
+* added base type VTM (reverse HTM)
+* added log entry for scan completion
+* automatically invalidate cached data of messages with same name+circuit (ignoring level)
+* added "info" command
+* added circuit and name to verbose "read" output
+* added option to pass additional input data to "read" command
+* added messages without dedicated destination and cached data decoding error to "find" result
+* new "write" option "-d" for overriding destination address
+* allow CSV file name to define default destination address and circuit name (format "ZZ.CCCCC.csv") and if present, concat default circuit name and security suffix (circuit name in CSV starting with "#")
+
+## Changed files
+https://github.com/john30/ebusd/compare/v1.2.0...v1.3.0
+
+
+# 1.2.0 (2015-05-25)
+
+## Bug fixes
+* corrected missing newline in ebusctl
+* avoid updating last message change time when only the querying master was modified
+* notify running requests on device error
+
+## Features
+* new command line option "--readonly" for read-only access to the bus
+* added support for retrieving data as JSON and additional files via optional HTTP port
+* added first version of static HTML user interface (to be extended to a dynamic one later)
+* new "read" option "-h" for sending hex read messages
+* new "read" option "-p PRIO" for setting the poll priority of a message
+* update cache on hex read or write
+
+## Changed files
+https://github.com/john30/ebusd/compare/v1.1.0...v1.2.0
+
+
+# 1.1.0 (2015-03-28)
+
+## Bug fixes
+* return passive messages returned in "read" regardless of their age
+* corrected divisor for chains of derived number types
+* corrected master number calculation (no influence on any behaviour)
+* fixed signed char warning on some compilers
+* corrected minimum lock count according to spec.
+* differentiate between valid empty result and not found field name
+* fixed scanning for messages in subdirectories for certain file systems (thanks to joltcoke)
+* allow mixing references to base types and templates in message definition
+* renamed "class" to "circuit" in commands and message definition
+* fixed reading cached values
+* extended max allowed data length to 25 (spec says 16)
+
+## Features
+* new command line option "--dumpconfig" for dumping message configurations
+* new "find" command option "-f" for retrieving message configurations in CSV format
+* new "find" command option "-i PB" to filter messages on primary command byte
+* extended "read" command "FIELD" argument with optional ".N" for retrieving the N''th field with that name
+* new "write" command option "-c" for compatibility with "read" and "find"
+* automatically detect number of masters on the bus and add to "state" command
+* support reciprocal divisor
+* cache symbols instead of formatted strings. this allows retrieval of individual fields and verbose read from cache
+* removed valid CRCs from log and hex "write"
+* shortened manufacturer names for "scan"
+* allow specifying multiple destination addresses in message definition and defaults
+* added Arch Linux PKGBUILD scripts (thanks to cogano)
+* new "read" command option "-d ZZ" for overriding destination address (e.g. for manual scan)
+* allow message definitions without any field
+* added broadcast ident message (requests all masters to send their identification) and added read ident for manual scan
+* added support for AUTO-SYN generation (experimental!)
+* added "grab" command for collecting and reporting seen unknown messages
+
+## Changed files
+https://github.com/john30/ebusd/compare/v1.0.0...v1.1.0
+
+
+# 1.0.0 (2015-02-18)
+
+## Breaking Changes
+This is the first version of the completely reworked ebusd since October 2014.
+
+## Bug fixes
+A lot of problems were fixed, such as memory leaks and segmentation faults.
+
+## Features
+The daemon is now fully aware of the eBUS protocol and future versions will also support addressing a running daemon as answering master/slave.
+The main new feature is a completely rewritten configuration file engine, which allows the use of templates and defaults and thus simplifies the configuration files a lot.
+On the client side, a lot of commands have been added, such as "listen" (automatically send changed values listened to or polled), "find", and "state".
+
+## Changed files
+https://github.com/john30/ebusd/commits/master
+
+Thanks to Roland Jax and other authors for all their work in previous versions!
