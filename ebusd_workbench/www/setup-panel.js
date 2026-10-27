@@ -8,6 +8,10 @@ import { messageColors } from "./colors.js";
 import { accessKind, describeConditions, kindSuffix } from "./compare.js";
 import { generateEbusdOptions, generateHaYaml } from "./hayaml.js";
 import { MINE, setup } from "./setup.js";
+import { mineLines, removeMine, upsertMine } from "./mine.js";
+
+const remembered = (key, fallback) => { try { const v = localStorage.getItem(key); return v === null ? fallback : v === "1"; } catch { return fallback; } };
+const remember = (key, value) => { try { localStorage.setItem(key, value ? "1" : "0"); } catch { /* ignore */ } };
 
 const STATUS_HELP = {
   active: "ebusd's choice with this source (file chosen by the scan, condition met)",
@@ -36,8 +40,11 @@ export class SetupPanel {
   constructor(root) {
     this.root = root;
     this.filter = "";
-    this.open = { baseline: false, others: false, ha: false };
+    this.open = { baseline: false, others: false, ha: false, mine: false };
     this.status = null;
+    this.folded = remembered("workbench.setupFolded", false);
+    this.yielding = false;    // folded while a message is inspected: the inspector takes the width
+    bus.on("select-row", (sel) => { this.yielding = !!sel; this.render(); });
     bus.on("decodes-changed", (reason) => { if (reason !== "progress") this.render(); });
     bus.on("setup-changed", () => this.render());
     bus.on("status", () => this.render());
@@ -90,14 +97,42 @@ export class SetupPanel {
     const changes = setup.changes(entries);
     const nChanges = changes.added.length + changes.removed.length + changes.renamed.length + changes.circuits.length;
     const primaryLabel = app.decoder?.source(app.decoder.primary)?.label || "ebusd's definitions";
+    const folded = this.folded || this.yielding;
+    root.classList.toggle("rail", folded);
+    if (folded) {
+      root.replaceChildren(h("button", { class: "railbtn", title: "show my setup", onclick: () => { this.folded = false; this.yielding = false; remember("workbench.setupFolded", false); this.render(); } },
+        h("span", { class: "vert" }, `◂ My setup · ${fmt.count(included.length)} definitions${nChanges ? ` · ${nChanges} change${nChanges === 1 ? "" : "s"}` : ""}`)));
+      return;
+    }
     root.replaceChildren(
-      h("div", { class: "head" }, h("b", {}, "My setup"), h("span", { class: "muted" }, `${fmt.count(included.length)} definitions`)),
-      h("div", { class: "hint pad8" }, `What this installation uses: ebusd's own choice (${fmt.count(baseline.length)} definitions of ${primaryLabel} fit your bus)${nChanges ? ` and your ${nChanges} change${nChanges === 1 ? "" : "s"}` : ", nothing changed yet"}. Pick definitions in the scratchpad or below; the names are what ebusd publishes once the files are saved for the eBUSd app.`),
+      h("div", { class: "head" }, h("b", {}, "My setup"), h("span", { class: "muted" }, `${fmt.count(included.length)} definitions`), h("span", { style: "margin-left:auto" }),
+        h("button", { class: "fold small", title: "fold my setup into a rail (it folds by itself while you inspect a message)", onclick: () => { this.folded = true; remember("workbench.setupFolded", true); this.render(); } }, "▸")),
+      h("div", { class: "hint pad8" }, `What this installation uses: ebusd's own choice (${fmt.count(baseline.length)} definitions of ${primaryLabel} fit your bus)${nChanges ? ` and your ${nChanges} change${nChanges === 1 ? "" : "s"}` : ", nothing changed yet"}. Pick definitions in the inspector or below; the names are what ebusd publishes once the files are saved for the eBUSd app.`),
       this.changesSection(changes, entries),
       this.baselineSection(included, changes, entries, primaryLabel),
       this.othersSection(included, entries),
+      this.mineSection(entries),
       this.haSection(included, entries),
       this.exportSection(included, entries));
+  }
+
+  /** Your own definition lines: where they fit, and a box to paste more. */
+  mineSection(entries) {
+    const lines = mineLines();
+    const byKey = new Map(entries.filter((e) => e.source === MINE).map((e) => [e.key, e]));
+    const area = h("textarea", { rows: 3, class: "rawcsv", spellcheck: "false", placeholder: "r,hmu,MyTemp,my temperature,,08,b511,01,temp,s,D2C,,°C,\none ebusd CSV line per message" });
+    return h("details", { class: "mine", open: this.open.mine, ontoggle: (e) => { this.open.mine = e.target.open; } },
+      h("summary", {}, h("b", {}, `My definitions: ${lines.length}`), h("span", { class: "muted" }, ` line${lines.length === 1 ? "" : "s"} of your own, edited in the inspector of their message`)),
+      h("div", { class: "list" }, lines.map((l) => { const def = byKey.get(l.key); return h("div", { class: "item" }, h("div", { class: "line" },
+        def ? msgChip(def.circuit, def.name, kindSuffix(def)) : h("span", { class: "mono" }, l.line.split(",").slice(1, 3).join(" ")),
+        def ? h("span", { class: def.errors ? "warn" : "ok" }, def.errors ? `${def.ok} of ${def.distinct} decode` : `decodes ${fmt.count(def.occurrences)}`) : h("span", { class: "muted" }, "fits no recorded telegram"),
+        h("span", { style: "margin-left:auto" }), h("button", { class: "small", title: "remove this line", onclick: async () => { if (confirm(`Remove ${l.line.slice(0, 60)}…?`)) await removeMine(l.key); } }, "✕"))); })),
+      h("div", { class: "pad8" }, h("div", { class: "muted" }, "Paste definition lines (from a forum post, an issue, a file):"), area,
+        h("div", { class: "row" }, h("button", { class: "small primary", onclick: async () => {
+          const text = area.value.trim();
+          if (!text) return;
+          try { for (const line of text.split("\n")) if (line.trim() && !line.trim().startsWith("#")) await upsertMine(line); area.value = ""; toast("added to your definitions and decoded over the recording"); } catch (err) { toast(err.message, "err", 6000); }
+        } }, "Add"))));
   }
 
   /** Your changes against ebusd's choice, each with a way back. */
@@ -122,7 +157,7 @@ export class SetupPanel {
     if (changes.unknownAdded) items.push(h("div", { class: "hint pad8" }, `${changes.unknownAdded} added definition${changes.unknownAdded === 1 ? "" : "s"} of a source that is not loaded right now`));
     return h("div", { class: "changes" },
       h("div", { class: "section-head" }, h("b", {}, "Your changes"), h("span", { class: "muted" }, ` ${items.length}`), h("span", { style: "margin-left:auto" }), items.length ? h("button", { class: "small", title: "back to ebusd's own choice: additions, removals and names", onclick: () => { if (confirm("Back to ebusd's own choice? Your additions, removals, picks and names are forgotten (your own definition lines stay).")) setup.reset(); } }, "reset") : null),
-      items.length ? h("div", { class: "list" }, items) : h("div", { class: "hint pad8" }, "None yet. Pick a card in the scratchpad, or add from the list below: what you add, take out or rename shows up here."));
+      items.length ? h("div", { class: "list" }, items) : h("div", { class: "hint pad8" }, "None yet. Tick “in setup” on a row of the inspector, or add from the list below: what you add, take out or rename shows up here."));
   }
 
   /** ebusd's own choice, by circuit, folded: the bulk that needs no attention. */
@@ -199,7 +234,7 @@ export class SetupPanel {
     }
     return h("details", { class: "ha", open: this.open.ha, ontoggle: (e) => { this.open.ha = e.target.open; } },
       h("summary", {}, h("b", {}, "In Home Assistant"), h("span", { class: "muted" }, ` ${fmt.count(entities.length)} entities`)),
-      h("div", { class: "hint pad8" }, "ebusd's MQTT discovery (mqtt-hassio.cfg of the eBUSd app) makes a sensor, number or select per field, named after the circuit, message and field; what you rename in the scratchpad is renamed there. Composite climate and water heater entities are made by hand with the YAML below."),
+      h("div", { class: "hint pad8" }, "ebusd's MQTT discovery (mqtt-hassio.cfg of the eBUSd app) makes a sensor, number or select per field, named after the circuit, message and field; what you rename in the inspector is renamed there. Composite climate and water heater entities are made by hand with the YAML below."),
       h("div", { class: "list entities" }, entities.slice(0, 300).map((e) => h("div", { class: `item ${e.write ? "write" : ""}` }, h("span", {}, e.name), h("span", { class: "mono muted", title: e.topic }, e.field))),
         entities.length > 300 ? h("div", { class: "hint pad8" }, `and ${entities.length - 300} more`) : null),
       h("div", { class: "row pad8" }, h("label", { class: "muted" }, "climate and water heater YAML for configuration.yaml · controller circuit "), controller, h("button", { class: "small", onclick: () => copyText(yamlPre.textContent) }, "copy YAML")),

@@ -15,18 +15,9 @@
 </header>
 <div id="sources" class="sources"></div>
 <main class="page">
-  <div class="left">
-    <section id="bus" class="bus" aria-label="the bus">
-      <div class="bus-head">
-        <b>Messages on the bus</b>
-        <span class="seg" id="bus-views"><button data-view="table" class="active" title="one row per message, what needs a look first">list</button><button data-view="timeline" title="the telegrams over time, with Home Assistant events and your notes">timeline</button></span>
-      </div>
-      <div id="messages" class="bus-view"></div>
-      <div id="timeline" class="bus-view" style="display:none"></div>
-    </section>
-    <div id="pad-handle" class="pad-handle" title="drag to give the bus or the scratchpad more room"></div>
-    <section id="pad" class="pad" aria-label="scratchpad"></section>
-  </div>
+  <section id="bus" class="bus" aria-label="the messages on the bus">
+    <div id="messages" class="bus-view"></div>
+  </section>
   <aside id="setup" class="setup" aria-label="my setup"></aside>
 </main>
 <footer id="extras" class="extras"></footer>

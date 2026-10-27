@@ -1,13 +1,27 @@
-# 0.5.1 (unreleased)
+# 0.5.2 (unreleased)
 
 ## Features
 * **The inspector**: the selected message laid out byte by byte, every definition that fits it as
   a row that carves the bytes into fields (bit fields in bit columns), the bytes of one recorded
   telegram with buttons to step through the recording, what every definition decodes from it, a
   sparkline per field over the whole recording, and the chart of the clicked field below. Cells
-  where a definition reads the same bytes differently are highlighted; a definition of your own is
-  edited in place (name, type, divisor, unit per field, or its line). It replaces the source,
-  comparison, history and editor columns and the names table of a card
+  where a definition reads the same bytes differently are highlighted. It replaces the cards with
+  their source, comparison, history and editor columns
+* The inspector opens **in the list, right under the selected message** (a second click or Esc
+  closes it) instead of a pane at the bottom; the list stays put while a message is inspected,
+  and the inspector redraws only when something about it changed, never while you type, keeping
+  the scroll position and the selected text. *My setup* folds to a rail meanwhile (and on
+  demand) so that the inspector has the width
+* **Every field is editable, no modes**: the name of a message or field of a source's definition
+  becomes the name in your config, a changed type, divisor or unit makes a copy of your own that
+  is picked for the message, a row of kind *mine* edits your line. The **in setup** checkbox
+  picks a definition for the message (the ● button and the names row are gone). **＋ a
+  definition of your own** starts a line from the bytes, one raw field per part, and the tooltip
+  of a byte lists what it could be as every number type; this replaces the *write a definition
+  from the bytes* card
+* **My definitions** moved to the setup column: your lines with how each fares, and the paste box
+* The timeline is set aside for now (its settings, entities and grouping, are under Advanced);
+  the research time range is set under Advanced, the whole recording by default
 * The sources strip and the devices line fold to one line each (remembered per browser); folded,
   the sources show one combined bar for fetching and decoding
 * A pull request on an old base that today's TypeSpec library rejects is compiled partially: only

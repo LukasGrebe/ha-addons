@@ -179,8 +179,6 @@ export class Decoder {
     if (this.syncing || !this.store) return;
     const db = app.status?.db;
     if (!db?.exists || !db.has_telegram_table || !db.first_ms) return;
-    // the timeline's first load goes first when it is shown: the device answers one thing at a time best
-    if (app.views.timeline?.visible?.()) await Promise.race([app.views.timeline.firstLoad, new Promise((r) => setTimeout(r, 20000))]);
     this.syncing = true;
     try {
       const start = this.meta.lastSync ?? db.first_ms;

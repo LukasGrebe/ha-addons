@@ -57,12 +57,10 @@ Everything is on one page; nothing opens in a tab, a popover or a dialog.
 |---|---|
 | **Top bar** | What the app is doing right now (fetching, compiling, reading the recording, decoding), the database and the Home Assistant connection. |
 | **Definitions from** | The sources: each one with how many of its definitions fit your bus, what it adds compared with ebusd's own definitions, a checkbox to leave it out, ↻ to fetch it again. **+ add** lists the open pull requests of ebusd-configuration, the ones that mention your devices first, and takes a pull request number, `owner/repo#branch` or a GitHub URL. |
-| **Messages on the bus** | The devices on the bus, each with what ebusd loads for it and how much of its traffic it understands, and the messages as a list that leads with what needs a look. The same messages as a **timeline** on request. Click a message for the scratchpad. |
-| **Scratchpad** | Below the bus: for the selected message every definition that fits it, as cards that fold open in place; your own definitions; a definition read off the bytes. |
-| **My setup** | On the right: ebusd's own choice plus your changes, everything else that fits the bus, how it shows up in Home Assistant, and saving for the eBUSd app. |
-| **Advanced** | One folded line at the bottom: research with ebus-evidence, the browser store, pasted telegrams, about this app. |
-
-The handle between the bus and the scratchpad gives either more room; the height is remembered.
+| **Messages on the bus** | The devices on the bus, each with what ebusd loads for it and how much of its traffic it understands, and the messages as a list that leads with what needs a look. Click a message: its inspector opens right under it. |
+| **The inspector** | Under the selected message: its telegram byte by byte with every definition that fits it as a row (the fields over the bytes they read, what each decodes, a sparkline per field), all of it editable; the chart of a field; the definitions that fail; the search over the open pull requests. |
+| **My setup** | On the right: ebusd's own choice plus your changes, everything else that fits the bus, your own definition lines, how it shows up in Home Assistant, and saving for the eBUSd app. It folds to a rail while a message is inspected, so that the inspector has the width. |
+| **Advanced** | One folded line at the bottom: research with ebus-evidence, the browser store, pasted telegrams, settings, about this app. |
 
 ### How to go about it
 
@@ -70,10 +68,10 @@ The handle between the bus and the scratchpad gives either more room; the height
    *no file* is one ebusd understands nothing of), how much of its traffic is understood?
 2. Work through **needs a look**: the messages ebusd does not understand today, the ones with the
    most traffic first. A message *other sources know* is one click away from your setup; a message
-   *unknown everywhere* can be read off its bytes in the scratchpad.
-3. For a message, compare the **cards** in the scratchpad: do the values look right over the whole
+   *unknown everywhere* gets a definition of your own in the inspector, started from its bytes.
+3. For a message, compare the **rows of the inspector**: do the values look right over the whole
    recording (a temperature of 21.5 °C is plausible, 6553.5 °C is not), does the definition decode
-   every recorded variant, which of several namings do you prefer? Pick one, rename if you like.
+   every recorded variant, which of several namings do you prefer? Tick one, rename if you like.
 4. **Save** the setup for the eBUSd app and copy the Home Assistant YAML.
 
 ---
@@ -138,10 +136,11 @@ asked. Rows are built from the browser store, so filtering is instant.
 | Column | Meaning |
 |---|---|
 | message | the name of the definition it is shown with (the one you picked, else ebusd's choice, else one in your setup, else what another source would use) with its kind; without one, the address, command and ID in hex and **＋ define** |
+| ▾ | the message whose inspector is open; a second click (or Esc) closes it |
 | understood by | `ebusd` when ebusd's own definitions decode it today; the other sources that would; *fits, but ebusd would not use it* when definitions match but are hidden (another device variant, an unmet condition); *nothing* when no definition anywhere fits |
-| latest value | decoded with the row's definition (hovering a card in the scratchpad shows that card's decoding instead), else the hex |
+| latest value | decoded with the row's definition, else the hex |
 | telegrams, values, last seen | how much traffic, how many distinct telegrams (values), when the last one was recorded |
-| fits | how many definitions from every source fit the message: click to compare |
+| fits | how many definitions from every source fit the message: the rows of the inspector |
 | setup | whether the row's definition is in your setup |
 
 **needs a look** (the default) lists what ebusd does not understand, most traffic first, with the
@@ -150,38 +149,16 @@ and **other sources know them** are the two halves of it; **all messages** lists
 device, and folds commands with many messages (the registers of `b524`) into one line; **in my
 setup** what you chose. The filter box matches names, circuits, addresses and commands.
 
-### The timeline
+While a message's inspector is open the list **stays put**: new telegrams do not move the rows
+until you close the inspector or change the filter.
 
-**timeline** in the head of the bus shows the same telegrams over time: one row per source →
-destination, command and message ID (the ID is the first data bytes after the command: 1 byte by
-default, 3 for `b509`, 6 for `b524`), a bar for every stretch where the value stayed the same,
-labelled with the decoded value, the number of repetitions and the typical interval, a tick for
-a single telegram, broken telegrams in red. It is the view for correlating: Home Assistant entity
-changes and your notes are flags in the events lane above the rows.
+### Events
 
-- Controls like the browser's developer tools: the wheel **scrolls the rows**; **Ctrl/⌘ + wheel**
-  or a trackpad pinch zooms the time axis around the pointer; **Shift + wheel** or a sideways
-  swipe moves in time; dragging the chart moves, a double click zooms in. `+`/`-`/`←`/`→` work
-  as well, `N` returns to **live** mode in which the right edge follows the current time, Esc
-  clears the selection. The strip at the top shows the whole recording (red: telegrams with
-  errors): drag the edges of the blue window to resize it, drag inside to move it, drag outside
-  to select a new one.
-- A window with more than 200 000 telegrams is **summed up in steps of time** (about one per
-  pixel); a lavender bar says how many different values a row had within steps. Zoom in for
-  every value.
-- **Pivot**: the **+** and **−** buttons next to a row split it at its next message ID byte or
-  combine it with the rows that share all but its last byte; a row that is one whole message of
-  a definition with several fields shows the **values as rows of their own** with **+** instead.
-  Commands with many messages get a header row with **⊟ one row**. A notice offers to **group
-  like the definitions** once the recording is decoded; the scratchpad sets the ID length per
-  command.
-- **⚙ events and grouping** in the timeline's toolbar: the Home Assistant entities whose state
-  changes are shown (the circulation pump, a thermostat, a window sensor, …; the Workbench
-  subscribes to them through the Home Assistant API and stores every change in the table
-  `ha_state` of the telegram database), and the ID lengths per command.
-- **＋ event** notes what you did or saw ("set hot water to 50 °C", with the time and how exact
-  it is), like the `log` command of the eBUSd app's terminal: orange flags with the uncertainty as
-  a band across the rows; the terminal command is shown and can be copied.
+The timeline view of earlier versions is set aside for now; what it recorded stays and may come
+back. Home Assistant entity changes are stored next to the telegrams (the entities are chosen
+under *Advanced → Settings*; the Workbench subscribes to them through the Home Assistant API),
+and the `log` command of the eBUSd app's terminal notes what you did or saw ("set hot water to
+50 °C", with the time and how exact it is).
 
 | Table | Content |
 |---|---|
@@ -190,32 +167,50 @@ changes and your notes are flags in the events lane above the rows.
 
 ---
 
-## Scratchpad
+## The inspector
 
-Click a message in the list (or a row of the timeline): the scratchpad shows everything about
-it. The head says the message, how many recorded variants and telegrams it has and who asked for
-it (in the timeline view also the **ID bytes** of its command and **rows like the definitions**).
+Click a message in the list: its inspector opens in a row right under it (click the message
+again or press Esc to close it; *My setup* folds to a rail meanwhile and comes back when you
+click the rail). The head says the message, how many recorded variants and telegrams it has and
+who asked for it.
 
-Then the **inspector**: a table with the telegram laid out byte by byte (request data after the
-ID, then the answer; a byte some definition reads as bits is eight bit columns) and one block per
-definition that fits the message:
+Then the table: the telegram laid out byte by byte (request data after the ID, then the answer;
+a byte some definition reads as bits is eight bit columns) and one block per definition that fits
+the message:
 
-- the definition's fields over the bytes they read, each with its type, divisor and unit; the row
-  label has ● to **use it for this message** (it joins your setup, the others leave it), its source,
-  kind and how many recorded variants it decodes, *in setup* and **copy** (a copy of your own);
+- its **fields** over the bytes they read, each with its name, type, divisor and unit; the row
+  label has the **in setup** checkbox (ticked, the definition is used for this message: it joins
+  your setup and the message's other definitions leave it), the message **name** box, its source,
+  kind and how many recorded variants it decodes, and **copy** (a copy of your own);
 - what it **decodes** from the telegram shown;
 - a **sparkline** per field over the whole recording.
 
-Cells where a definition reads the same bytes differently from the row's definition are
-highlighted, so two definitions of one message are compared by eye. The **telegram** row shows one
-recorded telegram (newest first; the one you clicked in the timeline) with **◀ older** and
-**newer ▶** to step through the recording. Click any field, value or sparkline for the **chart**
-of that field below the table (hover for a value, click to move the timeline there) and its values
-as a list. A definition of the setup gets a row with the **names in your config** per field.
+Every box is editable, there are no modes:
 
-A definition of your own (kind *mine*) is edited in the table: name, type (as in the CSV: `UCH`,
-`D2C`, `BI0:1`, `BCD:2`), divisor or value names and unit per field, or its whole line as text;
-every change is saved and decoded over the recording at once.
+| You change | What happens |
+|---|---|
+| the name of a message or field of a source's definition | the name in your config (MQTT topic, entity name); the definition itself stays as upstream has it, the upstream name is in the tooltip |
+| the type, divisor or unit of a source's definition | a **copy of your own** with that change appears as a row of kind *mine* and is picked for the message |
+| anything on a row of kind *mine* | your line is saved and decoded over the recording at once; its whole line is also there as text (*as ebusd reads it*) |
+
+Types are written as in the CSV (`UCH`, `D2C`, `BI0:1`, `BCD:2`, …); a divisor is a number
+(`10`), a factor negative (`-10`), value names `0=off;1=on`.
+
+The **telegram** row shows one recorded telegram (newest first) with **◀ older** and **newer ▶**
+to step through the recording; the tooltip of a byte lists what it could be, read as every number
+type of ebusd from that byte on (`UCH` 23, `D2C` 2.3, `SIN` …), which is how an unknown message
+is read. **＋ a definition of your own** (the last row) starts one for the message: prefilled with
+the kind (active read or write when ebusd itself polls or sends, passive for what other devices
+exchange), the circuit (from the identification of the device), address, command and ID, and
+one raw field per part; carve it into fields by giving them types, names, divisors and units.
+
+Cells where a definition reads the same bytes differently from the message's definition are
+highlighted, so two definitions of one message are compared by eye. Click any field, value or
+sparkline for the **chart** of that field below the table (hover for a value, click a point to
+show that telegram in the table) and its values as a list.
+
+The inspector only redraws when something about it changed (another definition fits, your pick
+changed), never while you type; what you selected and where you scrolled stays.
 
 Statuses of a definition:
 
@@ -229,16 +224,13 @@ Statuses of a definition:
 | companion | not seen on the bus: the counterpart of a seen definition, usually the write definition |
 | custom | your own definition, never chosen automatically |
 
-**hide failing** hides cards that fail to decode some recorded telegram; they stay reachable in
-the *N failing* card at the end, each with the reason. In the timeline view **many cards on one
-row** usually means the row groups telegrams by fewer ID bytes than the definitions use (for
-`b51a` the register is 3 bytes, the default row key 1): the "candidates" are then different
-messages (registers). A notice says so and **Split this row like the definitions** fixes the
-grouping; the list groups messages like the definitions by itself.
+**hide failing** leaves out definitions that fail to decode some recorded telegram; they stay
+reachable in the *N definitions that fail* card below the table, each with the reason, with *in
+setup* and *copy* as well.
 
 ### Searching the open pull requests for a message
 
-Below the cards, **search the open pull requests for this message** asks every open pull
+Below the table, **search the open pull requests for this message** asks every open pull
 request of ebusd-configuration (the ones that are not sources yet) whether it decodes the
 message: the device fetches them once (a tarball each, cached), the browser compiles each once
 per commit (cached) and runs ebusd's decoder over the recorded telegrams of the message with it.
@@ -253,25 +245,10 @@ without reading the pull requests by hand.
 
 Your definitions are ebusd CSV lines, one per message, stored in the app's settings (every
 browser sees them). They are a source like the others: decoded over the whole recording as soon
-as they change, shown as cards of kind *mine* wherever they fit, never ebusd's choice. Three
-ways to make one:
-
-- **copy** on a card (or *Save as my version* in its editor): a copy to change fields, types,
-  divisors, units, names.
-- **＋ write a definition from the bytes**, the last card of every message (it opens by itself
-  for a message no definition decodes): prefilled from the recording with the kind (active read
-  or write when ebusd itself polls or sends, passive read or write for what other devices
-  exchange, passive read for broadcasts), circuit (from the identification of the device),
-  address, command and ID, and the data bytes. Click a byte to see what it could be, every
-  number type (UCH, D1C, D2C, FLT, EXP, …) with its latest value and its range over the whole
-  history, and apply one; the rest stays raw (HEX). Name the fields, add a divisor or unit; the
-  history of the selected field is charted and ebusd's decoder checks the line against every
-  recorded variant while you work.
-- **Paste** lines (from a forum post, an issue, a file) into the scratchpad when nothing is
-  selected.
-
-Without a selection the scratchpad lists your lines with how each fares over the recording; each
-folds open into its editor.
+as they change, shown as rows of kind *mine* wherever they fit, never ebusd's choice. They come
+from the inspector (**copy** on a row, a changed type, divisor or unit, **＋ a definition of your
+own**) or from **My definitions** in the setup column, where lines from a forum post, an issue or
+a file are pasted; that list says how each line fares over the recording and removes one with ✕.
 
 ---
 
@@ -281,7 +258,7 @@ What this installation uses: **ebusd's own choice** (every definition of ebusd's
 that decodes a message of your bus the way ebusd does today, folded away by circuit) **plus your
 changes**, listed one by one with a way back: definitions you added from other sources or from
 the hidden ones (+), definitions you took out (−), messages and fields you renamed (✎), circuits
-you renamed. Picking a card in the scratchpad adds it (and takes the row's other definitions out);
+you renamed. Ticking *in setup* on a row of the inspector adds it (and takes the message's other definitions out);
 **reset** goes back to ebusd's own choice. Circuit names can be changed (`vwz → vwzio` if your
 entities use that topic). ebusd's choice follows the recording: a message seen for the first time
 tomorrow is understood tomorrow, your changes stay.

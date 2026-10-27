@@ -1,7 +1,7 @@
 // The less frequent things, at the bottom of the page in one section that folds open: research
 // with ebus-evidence (profile checks over the recording, the raw log export), the browser store
-// and pasted telegrams, and what this app is. The settings of the timeline (entities to watch,
-// telegram grouping) live in the timeline's own toolbar.
+// and pasted telegrams, the settings (Home Assistant entities to watch, telegram grouping) and
+// what this app is.
 import { api, app, append, bus, fmt, h, toast } from "./app.js";
 import { SettingsView } from "./settings.js";
 import { describeMatch, fmtTime, parseAddressMap, runProfile, summaryJson } from "./evidence.js";
@@ -26,14 +26,14 @@ export class Extras {
 
   build() {
     const aboutRoot = h("div");
-    this.settings = new SettingsView(aboutRoot, { entities: false, grouping: false, info: true });
+    this.settings = new SettingsView(aboutRoot);
     this.storeBox = h("div", { class: "hint" });
     append(this.root,
-      this.section("Advanced", "research with ebus-evidence, the browser store, pasted telegrams, about this app",
+      this.section("Advanced", "research with ebus-evidence, the browser store, pasted telegrams, settings, about this app",
         h("div", { class: "xs-parts" },
           h("div", {}, h("h3", {}, "Research with ebus-evidence"), this.evidencePanel()),
           h("div", {}, h("h3", {}, "Browser store and pasted telegrams"), this.advancedPanel()),
-          h("div", {}, h("h3", {}, "About"), aboutRoot))));
+          h("div", {}, h("h3", {}, "Settings and about"), aboutRoot))));
     this.updateStore();
   }
 
@@ -78,8 +78,8 @@ export class Extras {
         const tsp = await app.builder.loadCompiler();
         const profile = tsp.yaml.load(profileText.value);
         if (!profile || !Array.isArray(profile.checks)) throw new Error("the profile has no checks list");
-        const tl = app.views.timeline;
-        const from = tl.t0, to = tl.t1;
+        const from = new Date(fromInput.value).getTime(), to = new Date(toInput.value).getTime();
+        if (!(from < to)) throw new Error("invalid time range");
         const addressMap = parseAddressMap(addresses.value);
         status.textContent = "loading the telegrams of the window…";
         const { telegrams } = await api.get(`api/telegrams/distinct?from=${Math.floor(from)}&to=${Math.ceil(to)}&limit=50000`);
@@ -108,10 +108,10 @@ export class Extras {
         h("span", { class: "hint" }, "A summary for discussion; the verified bundle comes from ebus-evidence itself, from the raw log below.")));
     };
     // raw log export
-    const tl = () => app.views.timeline;
     const toLocal = (ms) => { const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60000); return d.toISOString().slice(0, 16); };
-    const fromInput = h("input", { type: "datetime-local", value: toLocal(Date.now() - 3600e3) });
-    const toInput = h("input", { type: "datetime-local", value: toLocal(Date.now()) });
+    const db0 = app.status?.db;
+    const fromInput = h("input", { type: "datetime-local", value: toLocal(db0?.first_ms || Date.now() - 3600e3) });
+    const toInput = h("input", { type: "datetime-local", value: toLocal(db0?.first_ms ? db0.last_ms + 1000 : Date.now()) });
     const broken = h("input", { type: "checkbox" });
     const ownInput = h("input", { type: "text", value: own, size: 3, title: "ebusd's own address on this bus (--address)", onchange: () => this.saveOwnAddress(ownInput.value) });
     return h("div", {},
@@ -120,12 +120,13 @@ export class Extras {
       h("div", { class: "row" },
         h("button", { class: "small", onclick: async () => { try { profileText.value = await (await fetch("evidence/hw5103-open-evidence.yaml")).text(); } catch (err) { toast(err.message, "err"); } } }, "load example profile (hw5103)"),
         h("label", { class: "muted", title: addresses.title }, "addresses ", addresses),
-        h("button", { class: "primary small", onclick: run }, "Run checks on the bus window"), status),
+        h("button", { class: "primary small", onclick: run }, "Run checks on the time range"), status),
+      h("div", { class: "row" }, h("b", {}, "Time range"), fromInput, "–", toInput,
+        h("button", { class: "small", onclick: () => { fromInput.value = toLocal(Date.now() - 3600e3); toInput.value = toLocal(Date.now()); } }, "last hour"),
+        h("button", { class: "small", onclick: () => { const db = app.status?.db; if (db?.first_ms) { fromInput.value = toLocal(db.first_ms); toInput.value = toLocal(db.last_ms + 1000); } } }, "whole recording")),
       profileText, body,
       h("div", { class: "row", style: "margin-top:10px" }, h("b", {}, "ebusd raw log for ebus-evidence"), h("span", { class: "hint" }, "the recorded telegrams as ebusd message-mode raw log (--lograwdata); run ebus-evidence doctor / import / export on another computer for a verified bundle")),
-      h("div", { class: "row" }, fromInput, "–", toInput,
-        h("button", { class: "small", onclick: () => { if (tl()) { fromInput.value = toLocal(tl().t0); toInput.value = toLocal(tl().t1); } } }, "bus window"),
-        h("button", { class: "small", onclick: () => { const db = app.status?.db; if (db?.first_ms) { fromInput.value = toLocal(db.first_ms); toInput.value = toLocal(db.last_ms + 1000); } } }, "whole recording"),
+      h("div", { class: "row" }, h("span", { class: "muted" }, "the time range above"),
         h("label", { class: "muted" }, broken, " include broken telegrams"), h("label", { class: "muted" }, "own address ", ownInput),
         h("button", { class: "small", onclick: () => {
           const f = new Date(fromInput.value).getTime(), t = new Date(toInput.value).getTime();

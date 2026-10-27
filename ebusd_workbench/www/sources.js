@@ -15,7 +15,7 @@ const KIND_HELP = {
   cdn: "ready-made CSV files from ebus.github.io, exactly what ebusd loads",
   pr: "a pull request of john30/ebusd-configuration: TypeSpec sources, compiled here in the browser",
   repo: "a branch of another GitHub repository: TypeSpec sources compiled here, or CSV files as they are",
-  mine: "the lines you wrote or copied into the scratchpad, decoded over the recording like any other source",
+  mine: "your own definition lines (My definitions in the setup column), decoded over the recording like any other source",
 };
 
 /** The definition lines of a CSV tree by file and message (comments, headers and templates left out): Map(key -> line). */

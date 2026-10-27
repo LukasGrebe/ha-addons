@@ -5,12 +5,13 @@
 // recording. Definitions are compared by eye: cells where a definition reads the same bytes
 // differently are highlighted. A definition of your own is edited in place: name, type, divisor
 // and unit per field, or its line as text.
-import { app, append, bus, fmt, h, toast } from "./app.js";
+import { app, append, fmt, h, toast } from "./app.js";
 import { messageColors } from "./colors.js";
 import { accessKind, describeConditions, whyNot } from "./compare.js";
 import { buildDefinition, parseDefinition, splitType } from "./definition-edit.js";
-import { MINE, setup } from "./setup.js";
-import { upsertMine, removeMine } from "./mine.js";
+import { TYPES } from "./define.js";
+import { MINE, mineKey, setup } from "./setup.js";
+import { mineLines, removeMine, upsertMine } from "./mine.js";
 
 /** Bytes a data type takes (bits for BI0..BI7); types with :n take n (bytes, or bits for BIx). */
 const TYPE_LEN = {
@@ -95,6 +96,17 @@ export function sparkline(canvas, points, { t0, t1, width = 110, height = 26 } =
   }
 }
 
+/** What a byte (and the bytes from it on) could be, as the number types of ebusd read them. */
+function readings(bytes, offset, part) {
+  const lines = [`${part === "m" ? "request" : "answer"} byte ${offset}: 0x${bytes[offset].toString(16).padStart(2, "0")} = ${bytes[offset]} = ${bytes[offset].toString(2).padStart(8, "0")}b`, "read from here as:"];
+  for (const [type, spec] of Object.entries(TYPES)) {
+    if (bytes.length < offset + spec.len) continue;
+    const v = spec.decode(bytes.slice(offset, offset + spec.len));
+    lines.push(`  ${type} (${spec.name}): ${v === null ? "no value" : v}`);
+  }
+  return lines.join("\n");
+}
+
 /**
  * The inspector of a message.
  * @param ctx {row, telegrams, defs: [{def, group}], decoder, view, telegramIndex, selected: {defKey, field},
@@ -129,7 +141,8 @@ export function inspector(ctx) {
     return { start, span };
   };
   const signature = (f) => `${f.part}|${f.code}${f.bits ? ":" + f.bits : ""}|${f.divisor}|${f.unit}`;
-  const reference = layouts.find((l) => l.def.key === ctx.selected?.defKey) || layouts.find((l) => l.def.key === row.defKey) || layouts[0] || null;
+  const pickKey = ctx.defKey ?? row.defKey;   // the definition the message is shown with: your pick, else ebusd's choice, else one of the setup
+  const reference = layouts.find((l) => l.def.key === ctx.selected?.defKey) || layouts.find((l) => l.def.key === pickKey) || layouts[0] || null;
   const refSig = new Map();
   if (reference) for (const f of reference.fields) { const s = spanOf(f); if (s) for (let c = s.start; c < s.start + s.span; c++) refSig.set(c, signature(f)); }
 
@@ -154,13 +167,16 @@ export function inspector(ctx) {
     const def = l.def, g = l.group;
     const mine = def.source === MINE;
     const isRef = reference && reference.def.key === def.key;
-    const chosen = row.defKey === def.key;
+    const chosen = pickKey === def.key;
     const dec = current ? decoder.decodesOf(current.line)?.get(def.key) : null;
     // the row of fields
     const fieldsRow = h("tr", { class: `def ${isRef ? "ref" : ""} ${chosen ? "chosen" : ""}` });
+    const nameInput = h("input", { class: "msgname", value: mine ? def.name : setup.exportName(def), title: mine ? "the message name (edits your line)" : `the message name in your config (MQTT topic ebusd/${setup.circuitOf(def)}/…); upstream: ${def.name}`,
+      onchange: (e) => { if (mine) { const parsed = parseDefinition(def.csv); parsed.header.name = e.target.value.trim(); e.target.blur(); upsertMine(buildDefinition(parsed), def.key).then(() => ctx.onChange?.()).catch((err) => toast(err.message, "err")); } else setup.rename(def, e.target.value); } });
     const label = h("td", { class: "fixed label", rowspan: mine ? 4 : 3 },
       h("div", { class: "deflabel" },
-        h("button", { class: `pick ${chosen ? "on" : ""}`, title: chosen ? "used for this message and part of your setup" : "use this definition for this message (it joins your setup, the others leave it)", onclick: () => setup.choose(row.key, def.key, ctx.otherKeys, decoder.entries) }, chosen ? "●" : "○"),
+        h("label", { class: "insetup", title: chosen ? "used for this message and part of your setup" : "use this definition for this message: it joins your setup, the message's other definitions leave it" },
+          h("input", { type: "checkbox", checked: ctx.included.has(def.key), onchange: (e) => (e.target.checked ? setup.choose(row.key, def.key, ctx.otherKeys, decoder.entries) : setup.include(def.key, false, decoder.entries)) })),
         chip(def.circuit, def.name),
         h("span", { class: `tbadge ${mine ? "custom" : def.source === "release" ? "" : "src"}` }, mine ? "mine" : def.sourceLabel || def.source),
         g?.members?.length > 1 ? h("span", { class: "tmeta", title: `the same definition in ${g.members.length} files: ${g.members.map((m) => m.def.file.replace(/^.*\//, "")).join(", ")}` }, `×${g.members.length}`) : null,
@@ -168,8 +184,8 @@ export function inspector(ctx) {
       h("div", { class: "defmeta muted", title: `${def.file}\n${describeConditions(def) ? `only when ${describeConditions(def)}\n` : ""}${def.key === ctx.usedKey ? "ebusd uses this definition today." : whyNot(def, decoder.scan?.[def.source] || {}, null, ctx.usedDef)}` },
         accessKind(def), g?.coverage ? (g.coverage.errors ? h("span", { class: "warn" }, ` · fails on ${g.coverage.errors} of ${g.coverage.distinct}`) : h("span", { class: "ok" }, ` · decodes all ${fmt.count(g.coverage.ok)}`)) : null),
       h("div", { class: "defacts" },
-        h("label", { class: "muted", title: "part of your setup" }, h("input", { type: "checkbox", checked: ctx.included.has(def.key), onchange: (e) => setup.include(def.key, e.target.checked, decoder.entries) }), " in setup"),
-        mine ? h("button", { class: "small", title: "remove this line from your definitions", onclick: async () => { if (confirm(`Remove ${def.circuit} ${def.name} from your definitions?`)) await removeMine(def.key); } }, "remove") : h("button", { class: "small", title: "copy into your scratchpad to change it", onclick: async () => { try { await upsertMine(def.csv); toast(`${def.circuit} ${def.name} copied: the copy (mine) is below`); ctx.onChange?.(); } catch (err) { toast(err.message, "err"); } } }, "copy")));
+        h("span", { class: "muted" }, "name "), nameInput,
+        mine ? h("button", { class: "small", title: "remove this line from your definitions", onclick: async () => { if (confirm(`Remove ${def.circuit} ${def.name} from your definitions?`)) await removeMine(def.key); } }, "remove") : h("button", { class: "small", title: "a copy of your own (mine), to change it freely", onclick: async () => { try { await upsertMine(def.csv); toast(`${def.circuit} ${def.name} copied: the copy (mine) is below`); ctx.onChange?.(); } catch (err) { toast(err.message, "err"); } } }, "copy")));
     fieldsRow.appendChild(label);
     const { header } = parseDefinition(def.csv);
     fieldsRow.appendChild(h("td", { class: "fixed mono muted", title: "source (any) and destination the definition is for" }, `${header.qq || "--"} ${header.zz || "--"}`));
@@ -187,19 +203,23 @@ export function inspector(ctx) {
       const differs = refSig.size > 0 && !isRef && [...Array(s.span).keys()].some((k) => refSig.get(s.start + k) !== signature(f));
       const fieldIndex = parsed.fields.findIndex((x) => x === parsed.fields.find((y) => y.name === f.name && y.part === f.part && y.type === f.type));
       const selected = ctx.selected?.defKey === def.key && ctx.selected?.field === f.name;
-      const typeText = `${f.code}${f.bits && f.bits > 1 ? `:${f.bits}` : f.len > 1 && !TYPE_LEN[f.code] ? `:${f.len}` : ""}`;
-      let cell;
-      if (mine) {
-        const edit = (key, value) => { parsed.fields[fieldIndex][key] = value.trim(); upsertMine(buildDefinition(parsed), def.key).then(() => ctx.onChange?.()).catch((err) => toast(err.message, "err")); };
-        cell = h("td", { class: `field mine ${f.bit !== null ? "bitfield" : ""} ${selected ? "sel" : ""}`, colspan: s.span, onclick: (e) => { if (!e.target.closest("input")) ctx.onSelect(def.key, f.name); } },
-          h("input", { class: "fname", value: f.name, title: "field name", onchange: (e) => edit("name", e.target.value) }),
-          h("div", { class: "ftype" }, h("input", { class: "ftypein", value: f.type, title: "type as in the CSV (UCH, D2C, BI0:1, BCD:2, …)", onchange: (e) => edit("type", e.target.value) }),
-            h("input", { class: "fdiv", value: f.divisor, placeholder: "÷/values", title: "divisor (10), factor (-10) or value names (0=off;1=on)", onchange: (e) => edit("divisor", e.target.value) }),
-            h("input", { class: "funit", value: f.unit, placeholder: "unit", onchange: (e) => edit("unit", e.target.value) })));
-      } else {
-        cell = h("td", { class: `field ${f.bit !== null ? "bitfield" : ""} ${differs ? "diff" : ""} ${selected ? "sel" : ""}`, colspan: s.span, title: `${f.name}: ${f.part === "m" ? "request" : "answer"} ${f.type}${f.divisor ? ` divisor/values ${f.divisor}` : ""}${f.unit ? ` unit ${f.unit}` : ""}${f.comment ? `\n${f.comment}` : ""}\nclick for the chart`, onclick: () => ctx.onSelect(def.key, f.name) },
-          h("div", { class: "fname" }, f.name), h("div", { class: "ftype muted" }, `${typeText}${f.divisor ? ` ÷${f.divisor}` : ""}${f.unit ? ` ${f.unit}` : ""}`));
-      }
+      // the name of a source definition's field is renamed for your config; its type, divisor or unit changed makes a copy of your own
+      const edit = (key, value, input = null) => {
+        if (!mine && key === "name") { setup.renameField(def, f.name, value); return; }
+        input?.blur();
+        // several edits on a source's row go into the one copy: the second edit builds on the copy the first made
+        const copy = mine ? null : mineLines().find((l) => l.key === mineKey(parseDefinition(def.csv).header))?.line;
+        const next = parseDefinition(copy || def.csv);
+        next.fields[fieldIndex][key] = value.trim();
+        upsertMine(buildDefinition(next), mine ? def.key : null).then((k) => { if (!mine) { toast(`a copy of your own with ${f.name} as ${value.trim()}: it is below (mine)`); setup.choose(row.key, k, ctx.otherKeys, decoder.entries); } ctx.onChange?.(); }).catch((err) => toast(err.message, "err"));
+      };
+      const names = mine ? null : setup.fieldMap(def);
+      const cell = h("td", { class: `field ${mine ? "mine" : ""} ${f.bit !== null ? "bitfield" : ""} ${differs ? "diff" : ""} ${selected ? "sel" : ""}`, colspan: s.span, title: `${f.name}: ${f.part === "m" ? "request" : "answer"} ${f.type}${f.divisor ? ` divisor/values ${f.divisor}` : ""}${f.unit ? ` unit ${f.unit}` : ""}${f.comment ? `\n${f.comment}` : ""}\nclick for the chart; edit the name for your config, edit type, divisor or unit for a copy of your own`,
+        onclick: (e) => { if (!e.target.closest("input")) ctx.onSelect(def.key, f.name); } },
+        h("input", { class: "fname", value: mine ? f.name : (names[f.name] || f.name), title: mine ? "field name" : `field name in your config (upstream: ${f.name})`, onchange: (e) => edit("name", e.target.value, e.target) }),
+        h("div", { class: "ftype" }, h("input", { class: "ftypein", value: f.type, title: "type as in the CSV (UCH, D2C, BI0:1, BCD:2, …)", onchange: (e) => edit("type", e.target.value, e.target) }),
+          h("input", { class: "fdiv", value: f.divisor, placeholder: "÷/values", title: "divisor (10), factor (-10) or value names (0=off;1=on)", onchange: (e) => edit("divisor", e.target.value, e.target) }),
+          h("input", { class: "funit", value: f.unit, placeholder: "unit", title: "unit", onchange: (e) => edit("unit", e.target.value, e.target) })));
       fieldsRow.appendChild(cell);
       const value = dec && dec.result === "ok" && dec.fields && f.name in dec.fields ? dec.fields[f.name] : null;
       valueRow.appendChild(h("td", { class: `value mono ${selected ? "sel" : ""}`, colspan: s.span, onclick: () => ctx.onSelect(def.key, f.name) }, dec ? (dec.result === "ok" ? (value === null || value === undefined ? "–" : `${value}${f.unit && typeof value === "number" ? ` ${f.unit}` : ""}`) : h("span", { class: "err", title: dec.result }, "✗")) : h("span", { class: "muted" }, "…")));
@@ -218,23 +238,6 @@ export function inspector(ctx) {
       body.appendChild(h("tr", { class: "raw" }, h("td", { class: "fixed muted rowname", colspan: 3 }, "as ebusd reads it"), h("td", { colspan: columns.length }, area,
         h("div", { class: "row" }, h("button", { class: "small primary", onclick: async () => { try { await upsertMine(area.value, def.key); ctx.onChange?.(); } catch (err) { toast(err.message, "err"); } } }, "save line")))));
     }
-    // the names in your config, for a definition of the setup
-    if (ctx.included.has(def.key) && !mine) {
-      const names = h("tr", { class: "mynames" });
-      const nameInput = h("input", { class: "fname", value: setup.exportName(def), title: "the message name in your config (MQTT topic ebusd/<circuit>/<name>)", onchange: (e) => setup.rename(def, e.target.value) });
-      names.append(h("td", { class: "fixed muted rowname", colspan: 4 }, "in my config: ", nameInput));
-      let c2 = 0;
-      const map = setup.fieldMap(def);
-      for (const f of l.fields.slice().sort((a, b) => (a.part === b.part ? 0 : a.part === "m" ? -1 : 1) || a.byte - b.byte || (a.bit ?? 0) - (b.bit ?? 0))) {
-        const s = spanOf(f);
-        if (!s || s.start < c2) continue;
-        while (c2 < s.start) { names.appendChild(h("td", { class: "gap" })); c2++; }
-        names.appendChild(h("td", { colspan: s.span }, h("input", { class: "fname", value: map[f.name] || f.name, title: `entity: ${setup.circuitOf(def)} ${setup.exportName(def)} ${map[f.name] || f.name}`, onchange: (e) => setup.renameField(def, f.name, e.target.value) })));
-        c2 += s.span;
-      }
-      while (c2 < columns.length) { names.appendChild(h("td", { class: "gap" })); c2++; }
-      body.appendChild(names);
-    }
   }
 
   // -- the telegram: one recorded telegram, bytes per column, with the buttons to step through the recording
@@ -252,13 +255,17 @@ export function inspector(ctx) {
   for (const c of columns) {
     const byte = cur[c.part][c.byte];
     if (byte === undefined) { telegramRow.appendChild(h("td", { class: "hex muted" }, c.bit === null ? "··" : "·")); continue; }
-    if (c.bit === null) telegramRow.appendChild(h("td", { class: "hex mono", title: `${c.part === "m" ? "request" : "answer"} byte ${c.byte}: 0x${byte.toString(16).padStart(2, "0")} = ${byte} = ${byte.toString(2).padStart(8, "0")}b` }, byte.toString(16).padStart(2, "0")));
+    if (c.bit === null) telegramRow.appendChild(h("td", { class: "hex mono", title: readings(cur[c.part], c.byte, c.part) }, byte.toString(16).padStart(2, "0")));
     else telegramRow.appendChild(h("td", { class: `hex bit mono ${(byte >> c.bit) & 1 ? "on" : ""}`, title: `bit ${c.bit} of 0x${byte.toString(16).padStart(2, "0")}` }, String((byte >> c.bit) & 1)));
   }
   body.insertBefore(telegramRow, body.firstChild);
+  if (ctx.onNew) {
+    body.appendChild(h("tr", { class: "newdef" }, h("td", { class: "fixed label", colspan: 4 },
+      h("button", { class: "small primary", title: "a line of your own for this message: one raw field per part, to carve into fields here", onclick: () => ctx.onNew() }, "＋ a definition of your own")),
+      h("td", { colspan: columns.length, class: "muted" }, "starts with the bytes as they are; then give the fields a type (the tooltip of a byte in the telegram row says what it could be), a name, a divisor, a unit")));
+  }
 
   const root = h("div", { class: "inspector-wrap" }, table);
-  if (!layouts.length) append(root, h("div", { class: "hint pad8" }, "No definition fits this message yet: the bytes above are all there is. Read them off in the card below, or search the open pull requests."));
   // the sparklines need the recording
   ctx.view.loadSeries(row).then((data) => {
     if (!data || !root.isConnected) return;

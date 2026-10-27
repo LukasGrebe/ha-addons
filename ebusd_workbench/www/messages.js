@@ -3,7 +3,7 @@
 // look: messages ebusd does not understand today, and messages only another source (the upcoming
 // release, a pull request, your scratchpad) understands. The devices on the bus head the list,
 // each with what ebusd loads for it and how much of its traffic is understood. A click on a row
-// selects the message for the scratchpad.
+// opens the inspector of the message under its row.
 import { app, append, bus, fmt, h } from "./app.js";
 import { seriesQuery } from "./chart.js";
 import { idLengthOf, messageColors } from "./colors.js";
@@ -12,8 +12,8 @@ import { MINE, setup } from "./setup.js";
 
 const FILTERS = [
   ["attention", "needs a look", "messages ebusd does not understand today: unknown ones (most traffic first) and ones another source understands"],
-  ["unknown", "unknown everywhere", "messages no source decodes: read them off the bytes in the scratchpad"],
-  ["new", "other sources know them", "messages ebusd does not understand, but the upcoming release, a pull request or your scratchpad does"],
+  ["unknown", "unknown everywhere", "messages no source decodes: start a definition of your own from their bytes in the inspector"],
+  ["new", "other sources know them", "messages ebusd does not understand, but the upcoming release, a pull request or a definition of your own does"],
   ["all", "all messages", "every message on the bus, by device"],
   ["setup", "in my setup", "messages whose definition is in your setup"],
 ];
@@ -60,8 +60,8 @@ export class MessagesView {
 
   build() {
     const el = (this.el = {});
-    el.filters = h("span", { class: "seg group" }, FILTERS.map(([id, label, title]) => h("button", { class: id === this.filter ? "active" : "", title, "data-filter": id, onclick: () => { this.filter = id; this.device = null; this.render(); } }, label)));
-    el.search = h("input", { type: "search", placeholder: "filter: name, circuit, address, command…", size: 28, oninput: () => { this.query = el.search.value.trim().toLowerCase(); this.render(); } });
+    el.filters = h("span", { class: "seg group" }, FILTERS.map(([id, label, title]) => h("button", { class: id === this.filter ? "active" : "", title, "data-filter": id, onclick: () => { this.filter = id; this.device = null; this.render(true); } }, label)));
+    el.search = h("input", { type: "search", placeholder: "filter: name, circuit, address, command…", size: 28, oninput: () => { this.query = el.search.value.trim().toLowerCase(); this.render(true); } });
     el.info = h("span", { class: "hint" });
     el.toolbar = h("div", { class: "toolbar msg-toolbar" }, el.filters, h("span", { class: "group" }, el.search), h("span", { class: "group", style: "margin-left:auto" }, el.info));
     el.devices = h("div", { class: "devices" });
@@ -200,11 +200,14 @@ export class MessagesView {
     return out;
   }
 
-  render() {
+  /** @param force draw the list again even while a message is selected (your own filter, search or device click) */
+  render(force = false) {
     const el = this.el;
     for (const b of el.filters.querySelectorAll("button")) b.classList.toggle("active", b.dataset.filter === this.filter);
     this.renderDevices();
+    if (this.selected && this.inspHost && !force) return;   // the list stays put while you inspect a message
     const rows = this.shownRows();
+    if (this.selected && force && !rows.some((r) => r.key === this.selected.key)) { bus.emit("select-row", null); return; }
     const d = app.decoder;
     const total = this.allRows.length;
     el.info.textContent = total ? `${fmt.count(rows.length)} of ${fmt.count(total)} messages${this.device ? ` of ${this.device}` : ""}` : "";
@@ -220,6 +223,20 @@ export class MessagesView {
       h("th", { style: "width:18px" }), h("th", {}, "message"), h("th", {}, "understood by"), h("th", {}, "latest value"), h("th", { class: "num" }, "telegrams"), h("th", { class: "num", title: "distinct telegrams (values) seen" }, "values"), h("th", {}, "last seen"), h("th", { class: "num", title: "definitions that fit this message, from every source" }, "fits"), h("th", { title: "part of your setup" }, "setup"))),
       h("tbody", {}, this.grouped(rows).map((r) => (r.kind === "group" ? this.groupRow(r) : this.row(r)))));
     append(el.list, table);
+    this.placeInspector();
+  }
+
+  /** The inspector of the selected message sits in a row of its own right under the message. */
+  mountInspector(key, host) { this.inspHost = host; this.inspKey = key; this.placeInspector(); }
+
+  unmountInspector() { this.inspRow?.remove(); this.inspRow = null; this.inspHost = null; this.inspKey = null; this.render(true); }
+
+  placeInspector() {
+    if (!this.inspHost) return;
+    const tr = [...this.el.list.querySelectorAll("tr.msg")].find((x) => x.dataset.key === this.inspKey);
+    if (!tr) return;
+    if (!this.inspRow) this.inspRow = h("tr", { class: "insp" }, h("td", { colspan: 9 }, this.inspHost));
+    if (tr.nextSibling !== this.inspRow) tr.insertAdjacentElement("afterend", this.inspRow);
   }
 
   renderDevices() {
@@ -230,7 +247,7 @@ export class MessagesView {
     const primaryLabel = app.decoder?.source(app.decoder.primary)?.label || "ebusd";
     const open = this.devicesOpen;
     el.classList.toggle("folded", !open);
-    el.appendChild(h("button", { class: "fold small", title: open ? "fold the devices into one line" : "show every device with its numbers", onclick: () => { this.devicesOpen = !open; remember("workbench.devicesOpen", this.devicesOpen); this.render(); } }, open ? "▾" : "▸"));
+    el.appendChild(h("button", { class: "fold small", title: open ? "fold the devices into one line" : "show every device with its numbers", onclick: () => { this.devicesOpen = !open; remember("workbench.devicesOpen", this.devicesOpen); this.render(true); } }, open ? "▾" : "▸"));
     for (const dev of list) {
       const id = dev.ident;
       const share = dev.n ? Math.round((dev.knownN / dev.n) * 100) : 0;
@@ -238,7 +255,7 @@ export class MessagesView {
       const title = (dev.broadcast ? "broadcasts: telegrams to every device" : id ? `${id.manufacturer} ${id.ident} (SW ${id.sw}, HW ${id.hw})\n${dev.file ? `${primaryLabel} loads ${dev.file}` : `${primaryLabel} loads no file for this identification`}` : "no identification recorded (scan telegram 0704 missing: is --scanconfig on?)") + (open ? "" : `\n${stats}`);
       const name = dev.broadcast ? "broadcast" : id ? `${id.manufacturer} ${id.ident.replace(/0{1,2}$/, "")}${id.hw ? ` HW${id.hw}` : ""}` : "unidentified device";   // ebusd drops up to two trailing zeros of an identification (HMU00 -> HMU, 70000 -> 700)
       const nofile = !dev.broadcast && id && !dev.file;
-      el.appendChild(h("button", { class: `device ${this.device === dev.zz ? "active" : ""} ${nofile ? "nofile" : ""}`, title, onclick: () => { this.device = this.device === dev.zz ? null : dev.zz; if (this.device && this.filter === "attention" && !this.allRows.some((r) => r.zz === dev.zz && r.attention)) this.filter = "all"; this.render(); } },
+      el.appendChild(h("button", { class: `device ${this.device === dev.zz ? "active" : ""} ${nofile ? "nofile" : ""}`, title, onclick: () => { this.device = this.device === dev.zz ? null : dev.zz; if (this.device && this.filter === "attention" && !this.allRows.some((r) => r.zz === dev.zz && r.attention)) this.filter = "all"; this.render(true); } },
         h("span", { class: "mono addr" }, dev.zz), h("b", {}, open ? name : name.replace(/^Vaillant /, "")),
         nofile ? h("span", { class: "err", title: `${primaryLabel} loads no file for ${id.ident} (${id.manufacturer}): ebusd decodes nothing of this device unless a source adds a file for it` }, "no file") : open && dev.file ? h("span", { class: "mono muted" }, dev.file.replace(/^.*\//, "")) : null,
         open ? h("span", { class: "muted", title: "understood by ebusd today or by what you put into your setup" }, `${dev.messages} messages · ${share} % of the traffic understood`) : null,
@@ -250,7 +267,7 @@ export class MessagesView {
 
   groupRow(g) {
     const open = this.openGroups.has(`${g.zz}${g.pbsb}`);
-    return h("tr", { class: "group", onclick: () => { const k = `${g.zz}${g.pbsb}`; this.openGroups[open ? "delete" : "add"](k); this.render(); } },
+    return h("tr", { class: "group", onclick: () => { const k = `${g.zz}${g.pbsb}`; this.openGroups[open ? "delete" : "add"](k); this.render(true); } },
       h("td", {}, h("span", { class: "fold" }, open ? "▾" : "▸")),
       h("td", { colspan: 2 }, h("span", { class: "mono" }, `${g.zz} ${g.pbsb}`), ` · ${g.members.length} messages`, g.known ? h("span", { class: "muted" }, ` · ${g.known} understood by ebusd`) : null, g.newOnly ? h("span", { class: "accent" }, ` · ${g.newOnly} with other sources`) : null, g.unknown ? h("span", { class: "warn" }, ` · ${g.unknown} unknown`) : null),
       h("td", {}), h("td", { class: "num" }, fmt.count(g.n)), h("td", {}), h("td", {}), h("td", {}), h("td", {}));
@@ -285,7 +302,7 @@ export class MessagesView {
     const senders = [...r.senders.keys()].map((q) => `${q}${ROLE[q] ? ` (${q === (app.settings?.own_address || "31") ? "ebusd" : ROLE[q]})` : ""}`).join(", ");
     const title = `${r.label}${r.def ? `\n${r.def.circuit} ${r.def.name} (${r.def.sourceLabel || r.def.source}, ${r.def.file.replace(/^.*\//, "")})` : ""}\nasked by ${senders}\n${fmt.count(r.candidates.size)} definition${r.candidates.size === 1 ? "" : "s"} fit: click to compare and choose`;
     return h("tr", { class: `msg ${this.selected?.key === r.key ? "selected" : ""} attention${r.attention}`, "data-key": r.key, title, onclick: () => this.select(r, null, true) },
-      h("td", {}, h("span", { class: "fold" }, this.selected?.key === r.key ? "▸" : "")),
+      h("td", {}, h("span", { class: "fold" }, this.selected?.key === r.key ? "▾" : "")),
       h("td", { class: "name" }, r.def ? [chip(r.def.circuit, r.def.name), setup.exportName(r.def) !== r.def.name ? h("span", { class: "export" }, `→ ${setup.exportName(r.def)}`) : null, h("span", { class: "tmeta" }, accessKind(r.def))] : [h("span", { class: "mono" }, r.label), h("span", { class: "tmeta" }, r.zz === "fe" ? "broadcast" : r.latest?.slave ? "answered" : "no answer")],
         !r.def ? h("span", { class: "define" }, "＋ define") : null),
       h("td", {}, understood),
@@ -300,9 +317,14 @@ export class MessagesView {
   // -- the selection, for the scratchpad -------------------------------------------------------------------
 
   select(row, run = null, emit = false) {
+    if (emit && row && this.selected?.key === row.key) { bus.emit("select-row", null); return; }   // a click on the selected message closes its inspector
     this.selected = row;
-    if (emit) bus.emit("select-row", { row, run, options: !row.candidates.size ? { tab: "new" } : {}, view: this });
-    for (const tr of this.el.list.querySelectorAll("tr.msg")) tr.classList.toggle("selected", !!row && tr.dataset.key === row.key);
+    if (emit) bus.emit("select-row", row ? { row, run, options: {}, view: this } : null);
+    for (const tr of this.el.list.querySelectorAll("tr.msg")) {
+      const on = !!row && tr.dataset.key === row.key;
+      tr.classList.toggle("selected", on);
+      const fold = tr.querySelector(".fold"); if (fold) fold.textContent = on ? "▾" : "";
+    }
   }
 
   setPreview(row, defKey) {
