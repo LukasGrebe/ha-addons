@@ -16,7 +16,7 @@
 // the identification telegrams and the ones that decoded to a message a condition refers to.
 import { api, app, bus, fmt } from "./app.js";
 import { openStore } from "./store.js";
-import { CSV_HEADER, MINE, MINE_FILE } from "./setup.js";
+import { CSV_HEADER, MINE, MINE_FILE, splitCsv } from "./setup.js";
 import { idLengthOf } from "./colors.js";
 
 const SYNC_INTERVAL = 5000;
@@ -65,9 +65,12 @@ export class Decoder {
     this.build = null;            // {id, at, sources: [{id, label, kind, filesId, files, head, title, enabled, delta}]}
     this.buildChecked = false;    // the builder has had its say since the page loaded: the build from the store may be stale before
     this.scan = {};               // source -> zz -> {manufacturer, ident, sw, hw, file}
-    this.scanFresh = new Set();   // "buildId|source" whose scan was taken from the current files
+    this.scanFresh = new Set();   // "filesId|source" whose scan was taken from these files
     this.conditionRefs = {};      // source -> Set of message names a condition refers to
     this.loaded = {};             // source -> {messages, errors, files, stderr} of the last run
+    this.filters = {};            // source -> {filesId, filter}: the commands a small source defines (see filterOf)
+    this.newTelegrams = 0;        // telegrams read from the recording since the list was last drawn
+    this.lastUi = 0;              // when the views were last told about new decodings during a long decode
     this.meta = { key: "current", source: "", lastSync: null, scan: {} };
     this.syncing = false;
     this.decoding = false;
@@ -124,6 +127,9 @@ export class Decoder {
 
   emit(reason) { bus.emit("decodes-changed", reason); }
 
+  /** The list drew the telegrams it has: the count of newer ones starts again. */
+  markDrawn() { this.newTelegrams = 0; }
+
   async saveMeta() {
     this.meta.scan = this.scan;
     try { await this.store.putAll("meta", [this.meta]); } catch (err) { console.warn(err); }
@@ -147,14 +153,13 @@ export class Decoder {
   /** A summary for the UI. */
   status() {
     const enabled = this.enabledSources();
-    const stamps = Object.fromEntries(enabled.map((s) => [s.id, s.filesId]));
     const primary = this.primary;
     let known = 0, decoded = 0;
     const perSource = Object.fromEntries(enabled.map((s) => [s.id, { id: s.id, label: s.label, kind: s.kind, decoded: 0, pending: 0, known: 0, definitions: 0, loaded: this.loaded[s.id] || null }]));
     for (const t of this.telegrams.values()) {
       let all = enabled.length > 0;
       for (const s of enabled) {
-        const done = t.decoded?.[s.id] === stamps[s.id];
+        const done = this.isDone(t, s);
         if (done) perSource[s.id].decoded++; else { perSource[s.id].pending++; all = false; }
       }
       if (all) decoded++;
@@ -216,6 +221,7 @@ export class Decoder {
         if (put.length) await this.store.putAll("telegrams", put);
         this.meta.lastSync = to;
         await this.saveMeta();
+        this.newTelegrams += added;
         if (added || changed) this.emit("telegrams");
         added = changed = 0;
       }
@@ -326,16 +332,55 @@ export class Decoder {
 
   // -- decoding ------------------------------------------------------------------------------
 
+  /** Whether a telegram is decoded with a source: done by the worker, or skipped because the source defines no command of its kind. */
+  isDone(t, source) {
+    if (t.decoded?.[source.id] === source.filesId) return true;
+    const filter = this.filterOf(source);
+    return !!filter && !filter.matches(t);
+  }
+
+  /**
+   * The commands a small source (your own lines, a partially compiled pull request) defines, as a filter
+   * over the telegrams: only telegrams of those commands can decode with it, so the rest are not run
+   * through ebusd's library at all (a new line of your own is checked in a moment, not over the whole
+   * recording). Null for a full source, or when a line's command cannot be read.
+   */
+  filterOf(source) {
+    if (source.kind !== "mine" && !source.partial) return null;
+    const cached = this.filters[source.id];
+    if (cached && cached.filesId === source.filesId) return cached.filter;
+    const any = new Set(), exact = new Set();
+    let filter = null;
+    scan: {
+      for (const text of Object.values(source.files || {})) {
+        if (typeof text !== "string") continue;
+        for (const raw of text.split("\n")) {
+          const line = raw.trim();
+          if (!line || line.startsWith("#") || line.startsWith("*")) continue;
+          const cells = splitCsv(line.replace(/^(\[[^\]]*\])+/, ""));
+          if (/^type$/i.test((cells[0] || "").trim())) continue;   // the column header line
+          const zz = (cells[5] || "").trim().toLowerCase(), pbsb = (cells[6] || "").trim().toLowerCase();
+          if (!/^[0-9a-f]{4}$/.test(pbsb)) break scan;   // a template line or an unknown format: no filter
+          if (/^[0-9a-f]{2}$/.test(zz)) exact.add(zz + pbsb); else any.add(pbsb);
+        }
+      }
+      filter = { any, exact, matches: (t) => !!t.master && (exact.has(t.master.slice(2, 8)) || any.has(t.master.slice(4, 8))) };
+    }
+    this.filters[source.id] = { filesId: source.filesId, filter };
+    return filter;
+  }
+
   async decodePending() {
     if (!this.build || !this.buildChecked || this.decoding) return;
     const sources = this.enabledSources().filter((s) => s.files && Object.keys(s.files).length);
     if (!sources.length) return;
-    const work = sources.map((s) => ({ source: s, pending: [...this.telegrams.values()].filter((t) => t.decoded?.[s.id] !== s.filesId).sort(byFirst) })).filter((w) => w.pending.length);
-    const stale = sources.filter((s) => !this.scanFresh.has(`${this.build.id}|${s.id}`));
+    const work = sources.map((s) => ({ source: s, pending: [...this.telegrams.values()].filter((t) => !this.isDone(t, s)).sort(byFirst) })).filter((w) => w.pending.length);
+    const stale = sources.filter((s) => !this.scanFresh.has(`${s.filesId}|${s.id}`));
     if (!work.length && !stale.length) return;
     this.decoding = true;
     this.error = null;
     const total = work.reduce((n, w) => n + w.pending.length, 0);
+    const quiet = total < 100;   // a trickle of new telegrams: no narration in the top bar (the count of newer telegrams says it)
     let done = 0;
     try {
       // the identification of the devices with the files of this build (persisted results may be stale)
@@ -346,13 +391,13 @@ export class Decoder {
           // the build changed meanwhile (a source refreshed, unticked or removed): this source is done for now
           const current = this.source(source.id);
           if (!current || current.filesId !== source.filesId || current.enabled === false) { done += pending.length - i; break; }
-          this.progress = `decoding with ${source.label}: ${fmt.count(Math.min(i + BATCH, pending.length))} of ${fmt.count(pending.length)} telegrams`;
-          this.fraction = done / total;
+          this.progress = quiet ? null : `decoding with ${source.label}: ${fmt.count(Math.min(i + BATCH, pending.length))} of ${fmt.count(pending.length)} telegrams`;
+          this.fraction = quiet ? null : done / total;
           this.emit("progress");
           await this.decodeBatch(source, pending.slice(i, i + BATCH));
           done += Math.min(BATCH, pending.length - i);
-          this.rebuildEntries(false);
-          this.emit("decodes");
+          // the views are told at most every 1.5 s during a long decode: each telling costs them a redraw
+          if (Date.now() - this.lastUi > 1500 || done >= total) { this.lastUi = Date.now(); this.rebuildEntries(false); this.emit("decodes"); }
         }
         await this.refreshScan(source);
       }
@@ -366,15 +411,14 @@ export class Decoder {
       this.rebuildEntries(true);
       this.emit("decodes");
       // telegrams that arrived while decoding
-      const stamps = this.stamps();
-      if (!this.error && [...this.telegrams.values()].some((t) => this.enabledSources().some((s) => t.decoded?.[s.id] !== stamps[s.id]))) setTimeout(() => this.decodePending(), 50);
+      if (!this.error && [...this.telegrams.values()].some((t) => this.enabledSources().some((s) => !this.isDone(t, s)))) setTimeout(() => this.decodePending(), 50);
     }
   }
 
   /** The devices' identification as this source's files see it: the scan telegrams alone, replacing what was stored. */
   async refreshScan(source) {
     const lines = [...this.telegrams.values()].filter((t) => isScanLine(t.line)).map((t) => t.line);
-    this.scanFresh.add(`${this.build.id}|${source.id}`);
+    this.scanFresh.add(`${source.filesId}|${source.id}`);
     if (!lines.length) return;
     try {
       const result = await this.run({ files: source.files, filesId: source.filesId, args: ["--candidates"], stdin: lines.join("\n") + "\n", worker: source.id });

@@ -1,6 +1,29 @@
-# 0.5.2 (unreleased)
+# 0.5.3 (unreleased)
 
 ## Features
+* **The eBUS specification as hints**: the addresses of a telegram are named in the inspector
+  (the device the scan identified, ebusd for its own address, else the role the specification
+  assigns: heating controller, burner control unit, …), the command bytes are explained in the
+  tooltip (the primary command's path or manufacturer, the standard services, Vaillant's as
+  ebusd's definitions use them), and a message ID longer than a byte is explained. The tables
+  of the specification's appendix (master and slave addresses, manufacturer codes, primary
+  command bytes) and its standard services live in `www/ebus-spec.js`
+* **ebusd's own scan** (the identification 07 04 and, for Vaillant, the serial number in four
+  parts b5 09 24…27) is marked as such instead of *nothing understands it*, and leaves *needs a
+  look*
+* **The search over the pull requests remembers**: what was found stays per message in the
+  browser store and shows at once when the message is opened again; a search again only runs
+  the pull requests with a new commit or more telegrams, and a pull request compiled before is
+  not even loaded from the device again
+* **A definition of your own is checked in a moment**: only the telegrams of the commands your
+  lines define go through ebusd's library (the same for a partially compiled pull request)
+  instead of the whole recording; the views are told about new decodings at most every 1.5 s
+  during a long decode, and the device scan is refreshed per set of files, not per build
+* The top bar no longer narrates a trickle of new telegrams per source; while a message is
+  inspected it counts the newer telegrams the paused list will show. Compiling for the search
+  is reported in the search's own line only
+
+## Features of 0.5.2
 * **The inspector**: the selected message laid out byte by byte, every definition that fits it as
   a row that carves the bytes into fields (bit fields in bit columns), the bytes of one recorded
   telegram with buttons to step through the recording, what every definition decodes from it, a

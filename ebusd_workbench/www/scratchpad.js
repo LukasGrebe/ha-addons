@@ -153,6 +153,7 @@ export class Scratchpad {
         h("span", { class: "mono key" }, row.label),
         row.name ? h("span", { class: "name" }, row.name) : null,
         h("span", { class: "muted" }, `${fmt.count(m.telegrams.length)} recorded variants · ${fmt.count(m.total)} telegrams${senders ? ` · asked by ${senders}` : ""}`),
+        row.id && row.id.length > 2 ? h("span", { class: "muted", title: "the message ID is as many data bytes as the fitting definitions use to tell this message from its siblings (an energy statistic per source and usage, a register); 1 byte is only the default when nothing fits" }, `· ${row.id.length / 2}-byte ID`) : null,
         h("span", { style: "margin-left:auto" }),
         h("label", { class: "muted", title: "hide definitions that fail to decode some recorded telegram" }, h("input", { type: "checkbox", checked: !!app.settings?.ui?.hideFailing, onchange: (e) => setup.setUi("hideFailing", e.target.checked) }), " hide failing"),
         setup.chosenFor(row.key) ? h("button", { class: "small", title: "forget the pick for this message and use ebusd's choice again", onclick: () => setup.choose(row.key, null) }, "back to ebusd's choice") : null,
@@ -170,8 +171,11 @@ export class Scratchpad {
   notes() {
     const { row } = this.state;
     const out = [];
+    if (row.scan) out.push(h("div", { class: "note-box" }, row.pbsb === "0704"
+      ? "ebusd's scan: the identification every device answers (manufacturer, device id, software and hardware version). Nothing to define."
+      : "ebusd's scan of a Vaillant device: its serial number in four parts as text (b5 09 24, 25, 26 and 27; vaillant/scan.csv, Scan Id), asked by ebusd itself right after the identification. Nothing to define."));
     if (!row.defKey && this.model.candidates.length) out.push(h("div", { class: "note-box" }, "ebusd itself has no definition for this message: none of these would be used as they are. Tick one for your setup, or change a copy of it."));
-    if (!this.model.candidates.length) out.push(h("div", { class: "note-box" }, "No definition of any source decodes this message. Start one of your own from the bytes below (the tooltip of a byte says what it could be), or search the open pull requests."));
+    if (!this.model.candidates.length && !row.scan) out.push(h("div", { class: "note-box" }, "No definition of any source decodes this message. Start one of your own from the bytes below (the tooltip of a byte says what it could be), or search the open pull requests."));
     return out.length ? h("div", {}, out) : null;
   }
 

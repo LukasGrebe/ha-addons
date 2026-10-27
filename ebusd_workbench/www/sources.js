@@ -77,28 +77,30 @@ export class Builder {
 
   schedule() { clearTimeout(this.timer); this.timer = setTimeout(() => this.rebuild(), 300); }
 
-  async loadCompiler() {
+  async loadCompiler(quiet = false) {
     if (!this.tsp) {
-      this.setState({ busy: true, text: "loading the TypeSpec compiler…" });
+      if (!quiet) this.setState({ busy: true, text: "loading the TypeSpec compiler…" });
       this.tsp = await import("./vendor/ebus-tsp.js");
+      if (!quiet) this.setState({ busy: false });
     }
     return this.tsp;
   }
 
   /** Compile the TypeSpec sources of a source to CSV, once per commit (cached in the browser store). */
-  async compile(source, stamp, files) {
+  async compile(source, stamp, files, { quiet = false } = {}) {
     const store = app.decoder.store;
     const cacheKey = `tsp:${stamp}`;
+    const state = (s) => { if (!quiet) this.setState(s); };
     try {
       const cached = await store.get("compiles", cacheKey);
       if (cached?.outputs) return { outputs: cached.outputs, summary: cached.summary, cached: true };
     } catch (err) { console.warn(err); }
-    const tsp = await this.loadCompiler();
+    const tsp = await this.loadCompiler(quiet);
     const language = app.status?.sources?.language || "en";
     const entry = files["main.tsp"] !== undefined ? "main.tsp" : Object.keys(files).find((p) => p.endsWith(".tsp"));
     if (!entry) throw new Error("no .tsp file to compile");
     const translations = language !== "en" && files[`${language}.yaml`] !== undefined ? `${language}.yaml` : undefined;
-    this.setState({ busy: true, text: `compiling ${source.label} (${Object.keys(files).length} files)…` });
+    state({ busy: true, text: `compiling ${source.label} (${Object.keys(files).length} files)…` });
     const t0 = performance.now();
     let result = await tsp.compileEbusTsp(files, { entry, translations });
     let partial = null;
@@ -106,7 +108,7 @@ export class Builder {
       // an old base that today's TypeSpec library rejects: only what the pull request changes, and what that imports
       partial = await this.partialEntry(source, files);
       if (partial) {
-        this.setState({ busy: true, text: `compiling only the ${partial.count} files ${source.label} changes…` });
+        state({ busy: true, text: `compiling ${source.label} (only the ${partial.count} files it changes)…` });
         result = await tsp.compileEbusTsp({ ...files, [partial.entry]: partial.text }, { entry: partial.entry, translations });
       }
     }
@@ -119,6 +121,11 @@ export class Builder {
     const summary = `${Object.keys(result.outputs).length} files compiled in ${fmt.duration(ms)}${result.diagnostics.length ? `, ${result.diagnostics.length} warnings` : ""}${partial ? `; only the ${partial.count} files the pull request changes: its base is older than today's TypeSpec library` : ""}`;
     try { await store.putAll("compiles", [{ id: cacheKey, outputs: result.outputs, summary, partial: !!partial, at: new Date().toISOString() }]); } catch (err) { console.warn(err); }
     return { outputs: result.outputs, summary, partial: !!partial, cached: false };
+  }
+
+  /** A compile result from the browser store, without needing the files (the search over the pull requests asks this first). */
+  async cachedCompile(stamp) {
+    try { const c = await app.decoder.store.get("compiles", `tsp:${stamp}`); return c?.outputs ? { outputs: c.outputs, summary: c.summary, partial: !!c.partial, cached: true } : null; } catch { return null; }
   }
 
   /** An entry file that imports only the TypeSpec files a pull request changes (from GitHub's list), or null. */

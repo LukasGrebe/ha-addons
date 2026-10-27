@@ -419,3 +419,4 @@ table.inspector td.field .ftypein { width: 46%; } table.inspector td.field .fdiv
 table.inspector td.field { min-width: 130px; }
 table.inspector td.field.bitfield { min-width: 64px; max-width: 90px; }
 table.inspector td.field.bitfield .ftype { display: none; }
+table.inspector td.fixed .addrname { font-family: var(--sans, system-ui, sans-serif); font-size: 10px; color: var(--muted); white-space: normal; max-width: 160px; line-height: 1.2; margin-top: 1px; }

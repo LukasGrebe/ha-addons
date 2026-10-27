@@ -7,7 +7,7 @@
 // scratchpad, …) and the files it came from, so that candidates can be compared and chosen without
 // decoding again.
 const DB_NAME = "ebusd-workbench";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORES = {
   telegrams: { keyPath: "line", indexes: [["first_ms", "first_ms"]] },
   occurrences: { keyPath: ["line", "t0"], indexes: [["t0", "t0"], ["line", "line"]] },
@@ -15,6 +15,7 @@ const STORES = {
   definitions: { keyPath: "key", indexes: [] },
   compiles: { keyPath: "id", indexes: [] },
   meta: { keyPath: "key", indexes: [] },
+  searches: { keyPath: "id", indexes: [] },   // the last search over the pull requests per message
 };
 
 function request(req) {

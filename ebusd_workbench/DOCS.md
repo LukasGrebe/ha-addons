@@ -197,9 +197,24 @@ Types are written as in the CSV (`UCH`, `D2C`, `BI0:1`, `BCD:2`, …); a divisor
 (`10`), a factor negative (`-10`), value names `0=off;1=on`.
 
 The **telegram** row shows one recorded telegram (newest first) with **◀ older** and **newer ▶**
-to step through the recording; the tooltip of a byte lists what it could be, read as every number
-type of ebusd from that byte on (`UCH` 23, `D2C` 2.3, `SIN` …), which is how an unknown message
-is read. **＋ a definition of your own** (the last row) starts one for the message: prefilled with
+to step through the recording. Its source and destination are named: the device the scan
+identified (a master is named after its slave side: `10` is the master side of the controller at
+`15`), *ebusd* for its own address, else the role the eBUS specification assigns to the address
+(heating controller, burner control unit, …; the tooltip has the details). The tooltip of the
+command bytes says what the specification or, for Vaillant, ebusd's definitions make of them
+(`07 04` identification, `b5 09` register access, `b5 16` broadcasts and energy statistics, …).
+The tooltip of a byte lists what it could be, read as every number type of ebusd from that byte
+on (`UCH` 23, `D2C` 2.3, `SIN` …), which is how an unknown message is read.
+
+The **message ID** is as many data bytes as the fitting definitions use to tell a message from
+its siblings: one byte by default, three for the Vaillant registers of `b5 09`, eight for an
+energy statistic of `b5 16` (`1000ffff03030000`: the energy source and usage are in the ID,
+so *electricity for heating* and *environment for hot water* are two messages, two rows). The
+head of the inspector says so for IDs longer than a byte.
+
+**ebusd's scan** is marked as such: the identification `07 04` ebusd asks every device for, and
+for Vaillant the serial number in four parts (`b5 09 24` to `27`, sent by ebusd itself right
+after the identification, defined in `vaillant/scan.csv`). Nothing to define there. **＋ a definition of your own** (the last row) starts one for the message: prefilled with
 the kind (active read or write when ebusd itself polls or sends, passive for what other devices
 exchange), the circuit (from the identification of the device), address, command and ID, and
 one raw field per part; carve it into fields by giving them types, names, divisors and units.
@@ -234,7 +249,10 @@ Below the table, **search the open pull requests for this message** asks every o
 request of ebusd-configuration (the ones that are not sources yet) whether it decodes the
 message: the device fetches them once (a tarball each, cached), the browser compiles each once
 per commit (cached) and runs ebusd's decoder over the recorded telegrams of the message with it.
-The first search takes a few minutes, later ones are quick. The result lists the pull requests
+The first search takes a few minutes; what it found stays in the browser store per message and
+shows at once when the message is opened again, and a search again only runs the pull requests
+with a new commit or more telegrams of the message (a pull request compiled before is not even
+loaded from the device again). The result lists the pull requests
 that decode the message, with the definition's name, whether ebusd would use it with that pull
 request (or it is hidden in a file for another variant) and the latest decoded value; **+ add as
 a source** makes it a source like the others. This is how a message no source understands, or
@@ -244,8 +262,9 @@ without reading the pull requests by hand.
 ### Your own definitions
 
 Your definitions are ebusd CSV lines, one per message, stored in the app's settings (every
-browser sees them). They are a source like the others: decoded over the whole recording as soon
-as they change, shown as rows of kind *mine* wherever they fit, never ebusd's choice. They come
+browser sees them). They are a source like the others: decoded as soon as they change (only the
+telegrams of the commands your lines define go through ebusd's library, so a new line is checked
+in a moment), shown as rows of kind *mine* wherever they fit, never ebusd's choice. They come
 from the inspector (**copy** on a row, a changed type, divisor or unit, **＋ a definition of your
 own**) or from **My definitions** in the setup column, where lines from a forum post, an issue or
 a file are pasted; that list says how each line fares over the recording and removes one with ✕.

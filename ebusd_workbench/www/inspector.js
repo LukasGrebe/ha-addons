@@ -10,6 +10,7 @@ import { messageColors } from "./colors.js";
 import { accessKind, describeConditions, whyNot } from "./compare.js";
 import { buildDefinition, parseDefinition, splitType } from "./definition-edit.js";
 import { TYPES } from "./define.js";
+import { addressName, commandInfo, describeAddress, describeCommand } from "./ebus-spec.js";
 import { MINE, mineKey, setup } from "./setup.js";
 import { mineLines, removeMine, upsertMine } from "./mine.js";
 
@@ -115,6 +116,8 @@ function readings(bytes, offset, part) {
 export function inspector(ctx) {
   const { row, telegrams, decoder } = ctx;
   const idBytes = (row.row.id || "").length / 2;
+  const devices = decoder.devices(), own = app.settings?.own_address || "31";
+  const nameOf = (addr) => addressName(addr, { devices, own });
   const sorted = telegrams.slice().sort((a, b) => (b.last_ms || 0) - (a.last_ms || 0));   // newest first
   const index = Math.max(0, Math.min(sorted.length - 1, ctx.telegramIndex || 0));
   const current = sorted[index] || null;
@@ -147,9 +150,10 @@ export function inspector(ctx) {
   if (reference) for (const f of reference.fields) { const s = spanOf(f); if (s) for (let c = s.start; c < s.start + s.span; c++) refSig.set(c, signature(f)); }
 
   const table = h("table", { class: "inspector" });
-  const fixedHead = ["", "QQ ZZ", "PB SB", "ID"];
+  const fixedHead = [["", ""], ["QQ ZZ", "source and destination address"], ["PB SB", "primary and secondary command byte"],
+    ["ID", `message ID: the first ${idBytes} data byte${idBytes === 1 ? "" : "s"}, as many as the fitting definitions use to tell this message from its siblings (1 when nothing fits)`]];
   // -- header: the byte columns
-  const head = h("tr", { class: "cols" }, fixedHead.map((t) => h("th", { class: "fixed" }, t)));
+  const head = h("tr", { class: "cols" }, fixedHead.map(([t, title]) => h("th", { class: "fixed", title }, t)));
   let i = 0;
   while (i < columns.length) {
     const c = columns[i];
@@ -188,7 +192,7 @@ export function inspector(ctx) {
         mine ? h("button", { class: "small", title: "remove this line from your definitions", onclick: async () => { if (confirm(`Remove ${def.circuit} ${def.name} from your definitions?`)) await removeMine(def.key); } }, "remove") : h("button", { class: "small", title: "a copy of your own (mine), to change it freely", onclick: async () => { try { await upsertMine(def.csv); toast(`${def.circuit} ${def.name} copied: the copy (mine) is below`); ctx.onChange?.(); } catch (err) { toast(err.message, "err"); } } }, "copy")));
     fieldsRow.appendChild(label);
     const { header } = parseDefinition(def.csv);
-    fieldsRow.appendChild(h("td", { class: "fixed mono muted", title: "source (any) and destination the definition is for" }, `${header.qq || "--"} ${header.zz || "--"}`));
+    fieldsRow.appendChild(h("td", { class: "fixed mono muted", title: `source (any) and destination the definition is for${header.zz ? `: ${nameOf(header.zz)}` : ""}` }, `${header.qq || "--"} ${header.zz || "--"}`));
     fieldsRow.appendChild(h("td", { class: "fixed mono muted" }, header.pbsb));
     fieldsRow.appendChild(h("td", { class: "fixed mono muted" }, header.id || ""));
     const valueRow = h("tr", { class: `decoded ${isRef ? "ref" : ""}` });
@@ -249,9 +253,11 @@ export function inspector(ctx) {
     current ? h("span", { class: "muted", title: current.line }, `${current.n ? `×${fmt.count(current.n)}` : "pasted"} · last ${current.last_ms ? fmt.dateTime(current.last_ms, true) : "?"}`) : null);
   telegramRow.appendChild(h("td", { class: "fixed label" }, h("b", {}, "telegram"), stepper));
   const master = current?.master || "";
-  telegramRow.appendChild(h("td", { class: "fixed mono" }, master ? `${master.slice(0, 2)} ${master.slice(2, 4)}` : ""));
-  telegramRow.appendChild(h("td", { class: "fixed mono" }, master.slice(4, 8)));
-  telegramRow.appendChild(h("td", { class: "fixed mono" }, row.row.id || ""));
+  const cmd = master ? commandInfo(master.slice(4, 8)) : null;
+  telegramRow.appendChild(h("td", { class: "fixed mono", title: master ? `${describeAddress(master.slice(0, 2), { devices, own })}\n\n${describeAddress(master.slice(2, 4), { devices, own })}` : "" },
+    master ? [`${master.slice(0, 2)} ${master.slice(2, 4)}`, h("div", { class: "addrname" }, `${nameOf(master.slice(0, 2))} → ${nameOf(master.slice(2, 4))}`)] : ""));
+  telegramRow.appendChild(h("td", { class: "fixed mono", title: master ? describeCommand(master.slice(4, 8)) : "" }, master.slice(4, 8), cmd?.service || cmd?.primary ? h("div", { class: "addrname" }, cmd.service || cmd.primary) : null));
+  telegramRow.appendChild(h("td", { class: "fixed mono", title: `message ID of ${idBytes} byte${idBytes === 1 ? "" : "s"}: as many data bytes as the fitting definitions use to tell this message from its siblings (1 when nothing fits)` }, row.row.id || ""));
   for (const c of columns) {
     const byte = cur[c.part][c.byte];
     if (byte === undefined) { telegramRow.appendChild(h("td", { class: "hex muted" }, c.bit === null ? "··" : "·")); continue; }

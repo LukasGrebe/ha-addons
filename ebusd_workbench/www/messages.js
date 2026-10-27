@@ -9,6 +9,7 @@ import { seriesQuery } from "./chart.js";
 import { idLengthOf, messageColors } from "./colors.js";
 import { accessKind } from "./compare.js";
 import { MINE, setup } from "./setup.js";
+import { addressName } from "./ebus-spec.js";
 
 const FILTERS = [
   ["attention", "needs a look", "messages ebusd does not understand today: unknown ones (most traffic first) and ones another source understands"],
@@ -19,7 +20,6 @@ const FILTERS = [
 ];
 const GROUP_MIN = 8;
 const hexByte = (n) => (n === null || n === undefined ? "--" : n.toString(16).padStart(2, "0"));
-const ROLE = { "10": "controller", "71": "remote control", "31": "ebusd", "03": "controller", "f1": "ebusd" };
 const chip = (circuit, name) => { const c = messageColors(circuit, name); return h("span", { class: "chip-msg", style: `color:${c.text};background:${c.background};border-color:${c.border}` }, `${circuit} ${name}`); };
 const remembered = (key, fallback) => { try { const v = localStorage.getItem(key); return v === null ? fallback : v === "1"; } catch { return fallback; } };
 const remember = (key, value) => { try { localStorage.setItem(key, value ? "1" : "0"); } catch { /* ignore */ } };
@@ -113,6 +113,7 @@ export class MessagesView {
     }
     const included = new Set(setup.includedKeys(d.entries));
     const order = Object.fromEntries(d.sources().map((s, i) => [s.id, i]));
+    const own = app.settings?.own_address || "31";
     for (const row of rows.values()) {
       row.qq = [...row.senders.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;   // the usual sender (for defining the message)
       row.row.qq = row.qq ? parseInt(row.qq, 16) : null;
@@ -125,6 +126,9 @@ export class MessagesView {
       // 0 handled (ebusd understands it, or you put a definition into your setup), 1 something fits but ebusd would not use it,
       // 2 another source understands it, 3 nothing fits
       row.attention = row.known || row.inSetup ? 0 : row.newIn.length ? 2 : row.candidates.size ? 1 : 3;
+      // ebusd's own scan of the devices: the identification, and for Vaillant the serial number in four parts; nothing to define
+      row.scan = row.pbsb === "0704" || (row.pbsb === "b509" && /^2[4-7]$/.test(row.id) && row.senders.has(own));
+      if (row.scan) row.attention = 0;
     }
     this.allRows = [...rows.values()];
     this.senders = senders;
@@ -149,6 +153,7 @@ export class MessagesView {
     const d = app.decoder;
     const primary = d.primary;
     const idents = d.devices();
+    this.idents = idents;
     const byZz = new Map();
     for (const row of this.allRows) {
       let dev = byZz.get(row.zz);
@@ -161,7 +166,7 @@ export class MessagesView {
       const ident = idents[dev.zz] || null;
       return { ...dev, ident, file: ident?.files?.[primary] ?? null, broadcast: dev.zz === "fe" };
     }).sort((a, b) => (a.broadcast - b.broadcast) || b.n - a.n);
-    const masters = [...(this.senders || new Map()).entries()].filter(([qq]) => !byZz.has(qq)).sort((a, b) => b[1] - a[1]).map(([qq, n]) => ({ qq, n, role: qq === (app.settings?.own_address || "31") ? "ebusd" : ROLE[qq] || "master" }));
+    const masters = [...(this.senders || new Map()).entries()].filter(([qq]) => !byZz.has(qq)).sort((a, b) => b[1] - a[1]).map(([qq, n]) => ({ qq, n, role: addressName(qq, { devices: idents, own: app.settings?.own_address || "31" }) }));
     return { list, masters };
   }
 
@@ -223,6 +228,7 @@ export class MessagesView {
       h("th", { style: "width:18px" }), h("th", {}, "message"), h("th", {}, "understood by"), h("th", {}, "latest value"), h("th", { class: "num" }, "telegrams"), h("th", { class: "num", title: "distinct telegrams (values) seen" }, "values"), h("th", {}, "last seen"), h("th", { class: "num", title: "definitions that fit this message, from every source" }, "fits"), h("th", { title: "part of your setup" }, "setup"))),
       h("tbody", {}, this.grouped(rows).map((r) => (r.kind === "group" ? this.groupRow(r) : this.row(r)))));
     append(el.list, table);
+    app.decoder?.markDrawn?.();
     this.placeInspector();
   }
 
@@ -298,13 +304,15 @@ export class MessagesView {
     if (r.known) understood.push(h("span", { class: "tbadge active", title: "ebusd understands this message today" }, "ebusd"));
     for (const s of r.newIn) understood.push(srcBadge(s, d.source(s)?.label));
     if (!r.known && r.inSetup) understood.push(h("span", { class: "tbadge custom", title: "a definition of your setup" }, "my setup"));
-    if (!r.known && !r.newIn.length && !r.inSetup) understood.push(h("span", { class: r.candidates.size ? "warn" : "err" }, r.candidates.size ? "fits, but ebusd would not use it" : "nothing"));
-    const senders = [...r.senders.keys()].map((q) => `${q}${ROLE[q] ? ` (${q === (app.settings?.own_address || "31") ? "ebusd" : ROLE[q]})` : ""}`).join(", ");
+    if (r.scan && !r.known) understood.push(h("span", { class: "tbadge active", title: "ebusd's own scan of the device: the identification (07 04) and, for Vaillant, the serial number in four parts (b5 09 24…27, vaillant/scan.csv). Nothing to define." }, "ebusd's scan"));
+    if (!r.known && !r.newIn.length && !r.inSetup && !r.scan) understood.push(h("span", { class: r.candidates.size ? "warn" : "err" }, r.candidates.size ? "fits, but ebusd would not use it" : "nothing"));
+    const devices = this.idents || {}, own = app.settings?.own_address || "31";
+    const senders = [...r.senders.keys()].map((q) => `${q} (${addressName(q, { devices, own })})`).join(", ");
     const title = `${r.label}${r.def ? `\n${r.def.circuit} ${r.def.name} (${r.def.sourceLabel || r.def.source}, ${r.def.file.replace(/^.*\//, "")})` : ""}\nasked by ${senders}\n${fmt.count(r.candidates.size)} definition${r.candidates.size === 1 ? "" : "s"} fit: click to compare and choose`;
     return h("tr", { class: `msg ${this.selected?.key === r.key ? "selected" : ""} attention${r.attention}`, "data-key": r.key, title, onclick: () => this.select(r, null, true) },
       h("td", {}, h("span", { class: "fold" }, this.selected?.key === r.key ? "▾" : "")),
       h("td", { class: "name" }, r.def ? [chip(r.def.circuit, r.def.name), setup.exportName(r.def) !== r.def.name ? h("span", { class: "export" }, `→ ${setup.exportName(r.def)}`) : null, h("span", { class: "tmeta" }, accessKind(r.def))] : [h("span", { class: "mono" }, r.label), h("span", { class: "tmeta" }, r.zz === "fe" ? "broadcast" : r.latest?.slave ? "answered" : "no answer")],
-        !r.def ? h("span", { class: "define" }, "＋ define") : null),
+        !r.def && !r.scan ? h("span", { class: "define" }, "＋ define") : null, !r.def && r.scan ? h("span", { class: "tmeta" }, "scan") : null),
       h("td", {}, understood),
       h("td", { class: "mono value", title: dec ? `${value}\n${latestHex}` : "" }, value.length > 400 ? `${value.slice(0, 398)}…` : value),
       h("td", { class: "num" }, fmt.count(r.n)),

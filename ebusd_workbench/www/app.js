@@ -134,6 +134,8 @@ export function activity() {
   if (app.compileState?.busy) parts.push(app.compileState.text);
   const st = app.decoder?.status();
   if (st?.progress) { parts.push(st.progress); fraction = st.fraction; }
+  const newer = app.decoder?.newTelegrams || 0;
+  if (newer && app.views?.pad?.isOpen) parts.push(`${fmt.count(newer)} newer telegram${newer === 1 ? "" : "s"} · the list is paused while you inspect`);
   const error = st?.error || app.compileState?.error || null;
   return { parts, fraction, st, error };
 }
