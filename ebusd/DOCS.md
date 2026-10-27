@@ -388,10 +388,10 @@ on the heater or the defrosting you saw outside, note it with `log` in the built
 terminal (**Open Web UI**). It is stored in the same database:
 
 ```bash
-log Modus auf Einschaltempfehlung geändert              # now
-log 8:52:23 ~1s Modus auf Einschaltempfehlung geändert   # 8:52:22 to 8:52:24
+log Modus auf Einschaltempfehlung geändert              # now, give or take 500 ms
+log 8:52:23 ~2s Modus auf Einschaltempfehlung geändert   # 8:52:21 to 8:52:25
 log 8:50 -10m Dampf vom Abtauen                          # 8:40 to 8:50: started before you saw it
-log 2026-10-26 22:15 Warmwasser auf 50 °C                # with a date (also 26.10.2026 or 26.10.)
+log 2026-10-26 22:15 Warmwasser auf 50 °C                # 22:15 to 22:16 (also 26.10.2026 or 26.10.)
 log                                                      # now, then asks what happened
 ```
 
@@ -403,8 +403,8 @@ log                                                      # now, then asks what h
   removes it again.
 - **Uncertainty** (optional), when it may have happened: `~1s` (or `+-1s`, `±1s`) before
   or after, `-10m` up to 10 minutes before, `+30s` up to 30 seconds after, `-10m+30s` both.
-  Units `ms`, `s`, `m` (or `min`) and `h`. Without one, the precision of the time:
-  `8:52` is 8:52:00 to 8:53:00, `8:52:23` that second, now exactly.
+  Units `ms`, `s`, `m` (or `min`) and `h`. Without one, 500 ms before or after, or the
+  whole minute for a time without seconds (`8:52` is 8:52:00 to 8:53:00).
 - **Message**: the rest of the line. Put `--` before a message that starts like a time
   (`log -- 10:30 Uhr Termin`).
 - `log --help` shows all of this; `log` needs **SQLite telegram log (database file)** to

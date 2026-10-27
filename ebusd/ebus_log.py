@@ -3,16 +3,17 @@
 
 usage: log [[DATE] TIME] [UNCERTAINTY] [MESSAGE...]
 
-  log Modus auf Einschaltempfehlung geändert             now
-  log 8:52:23 ~1s Modus auf Einschaltempfehlung geändert  8:52:22 to 8:52:24
+  log Modus auf Einschaltempfehlung geändert             now, give or take 500 ms
+  log 8:52:23 ~2s Modus auf Einschaltempfehlung geändert  8:52:21 to 8:52:25
   log 8:50 -10m Dampf vom Abtauen                         8:40 to 8:50
-  log 2026-10-26 22:15 Warmwasser auf 50 °C               also 26.10.2026 or 26.10.
+  log 2026-10-26 22:15 Warmwasser auf 50 °C               22:15 to 22:16; also 26.10.2026 or 26.10.
   log                                                     now, then asks what happened
 
 TIME         8:52, 8:52:23 or 8:52:23.5 (local time); without a date the last time the
              clock showed it. Without a time: the moment you press Enter.
 UNCERTAINTY  ~1s (or +-1s) before or after, -10m before, +30s after, -10m+30s both;
-             units ms, s, m, h. Without: the precision of TIME (8:52 is 8:52:00 to 8:53:00).
+             units ms, s, m, h. Without: ~500ms, or the whole minute for a time
+             without seconds (8:52 is 8:52:00 to 8:53:00).
 MESSAGE      the rest of the line; put -- before a message that starts like a time.
 
 The event is stored in the table `event` of the database set in the app option
@@ -36,6 +37,8 @@ except ImportError:
 OPTIONS = "/data/options.json"
 SECOND = 10**9
 FUTURE_TOLERANCE = 5 * 60 * SECOND  # clocks differ; a time this far ahead still counts as today
+DEFAULT_UNCERTAINTY = SECOND // 2  # before or after, if none is given
+MINUTE = 60 * SECOND
 UNITS = {"ms": SECOND // 1000, "s": SECOND, "m": 60 * SECOND, "min": 60 * SECOND, "h": 3600 * SECOND}
 
 TIME = re.compile(r"(\d{1,2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,9}))?)?")
@@ -65,24 +68,22 @@ def parse_date(word, now):
 
 
 def parse_time(word, day, now):
-    """Return (ts, resolution) of a local time like 8:52, 8:52:23 or 8:52:23.5.
+    """Return (ts, whole_minute) of a local time like 8:52, 8:52:23 or 8:52:23.5.
 
-    Without day, it is the last time the clock showed it: today, or yesterday if
-    it is still to come today.
+    whole_minute is True for a time without seconds. Without day, it is the last
+    time the clock showed it: today, or yesterday if it is still to come today.
     """
     hour, minute, second, fraction = TIME.fullmatch(word).groups()
-    fraction = fraction or ""
-    resolution = SECOND // 10**len(fraction) if second else 60 * SECOND
     fraction_ns = int(fraction.ljust(9, "0")) if fraction else 0
     clock = (int(hour), int(minute), int(second or 0))
     try:
         if day is not None:
-            return local_ns(day, *clock) + fraction_ns, resolution
+            return local_ns(day, *clock) + fraction_ns, second is None
         today = datetime.date.fromtimestamp(now // SECOND)
         ts = local_ns(today, *clock) + fraction_ns
         if ts > now + FUTURE_TOLERANCE:
             ts = local_ns(today - datetime.timedelta(days=1), *clock) + fraction_ns
-        return ts, resolution
+        return ts, second is None
     except ValueError:
         raise ValueError(f"{word} is not a valid time") from None
 
@@ -123,17 +124,19 @@ def parse(words, now):
         if not (words and TIME.fullmatch(words[0])):
             raise ValueError("a date needs a time, e.g. 2026-10-26 22:15")
     if words and TIME.fullmatch(words[0]):
-        ts, resolution = parse_time(words.pop(0), day, now)
+        ts, whole_minute = parse_time(words.pop(0), day, now)
         if ts > now + FUTURE_TOLERANCE:
             raise ValueError(f"{show(ts)} is in the future")
     else:
-        ts, resolution = now, 0
+        ts, whole_minute = now, False
     uncertainty = parse_uncertainty(words[0]) if words else None
     if uncertainty:
         words.pop(0)
         ts_min, ts_max = ts - uncertainty[0], ts + uncertainty[1]
+    elif whole_minute:  # 8:52: some time in that minute
+        ts_min, ts_max = ts, ts + MINUTE
     else:
-        ts_min, ts_max = ts, ts + resolution
+        ts_min, ts_max = ts - DEFAULT_UNCERTAINTY, ts + DEFAULT_UNCERTAINTY
     message = " ".join(words + rest).strip()
     return ts, ts_min, ts_max, message or None
 

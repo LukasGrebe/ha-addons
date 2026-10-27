@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "ebusd"))
 import ebus_log as e  # noqa: E402
 
 S = e.SECOND
+H = S // 2  # default uncertainty
 TZ = os.environ.get("TZ")
 
 
@@ -44,17 +45,17 @@ class Parse(unittest.TestCase):
         return e.parse(line.split(), NOW)
 
     def test_now(self):
-        self.assertEqual(self.parse(""), (NOW, NOW, NOW, None))
+        self.assertEqual(self.parse(""), (NOW, NOW - H, NOW + H, None))
         self.assertEqual(self.parse("Modus auf Einschaltempfehlung geändert"),
-                         (NOW, NOW, NOW, "Modus auf Einschaltempfehlung geändert"))
+                         (NOW, NOW - H, NOW + H, "Modus auf Einschaltempfehlung geändert"))
 
-    def test_time_window_is_its_precision(self):
-        ts = local(2026, 10, 27, 8, 52)
-        self.assertEqual(self.parse("8:52 Dampf"), (ts, ts, ts + 60 * S, "Dampf"))
+    def test_default_uncertainty(self):
         ts = local(2026, 10, 27, 8, 52, 23)
-        self.assertEqual(self.parse("08:52:23 Knopf"), (ts, ts, ts + S, "Knopf"))
+        self.assertEqual(self.parse("08:52:23 Knopf"), (ts, ts - H, ts + H, "Knopf"))
         ts = local(2026, 10, 27, 8, 52, 23, 250000)
-        self.assertEqual(self.parse("8:52:23,25"), (ts, ts, ts + S // 100, None))
+        self.assertEqual(self.parse("8:52:23,25"), (ts, ts - H, ts + H, None))
+        ts = local(2026, 10, 27, 8, 52)  # without seconds: some time in that minute
+        self.assertEqual(self.parse("8:52 Dampf"), (ts, ts, ts + 60 * S, "Dampf"))
 
     def test_uncertainty(self):
         ts = local(2026, 10, 27, 8, 52, 23)
@@ -64,11 +65,12 @@ class Parse(unittest.TestCase):
         self.assertEqual(self.parse("8:50 -10m Dampf"), (ts, ts - 600 * S, ts, "Dampf"))
         self.assertEqual(self.parse("8:50 -10min+0,5h"), (ts, ts - 600 * S, ts + 1800 * S, None))
         self.assertEqual(self.parse("+30s"), (NOW, NOW, NOW + 30 * S, None))
+        self.assertEqual(self.parse("8:52 ~0s")[1:3], (local(2026, 10, 27, 8, 52),) * 2)
 
     def test_message_like_uncertainty_or_time(self):
-        self.assertEqual(self.parse("+5 Grad"), (NOW, NOW, NOW, "+5 Grad"))
-        self.assertEqual(self.parse("-5s-5s"), (NOW, NOW, NOW, "-5s-5s"))
-        self.assertEqual(self.parse("-- 10:30 Uhr Termin"), (NOW, NOW, NOW, "10:30 Uhr Termin"))
+        self.assertEqual(self.parse("+5 Grad"), (NOW, NOW - H, NOW + H, "+5 Grad"))
+        self.assertEqual(self.parse("-5s-5s"), (NOW, NOW - H, NOW + H, "-5s-5s"))
+        self.assertEqual(self.parse("-- 10:30 Uhr Termin"), (NOW, NOW - H, NOW + H, "10:30 Uhr Termin"))
         ts = local(2026, 10, 27, 8, 0)
         self.assertEqual(self.parse("8:00 -- ~1s"), (ts, ts, ts + 60 * S, "~1s"))
 
@@ -155,19 +157,19 @@ class Command(unittest.TestCase):
         self.assertTrue(self.prompted)
         self.assertIn("logged. What happened?", out)
         self.assertTrue(out.endswith(": Dampf vom Abtauen\n"))
-        self.assertEqual(self.events(), [(0, "Dampf vom Abtauen")])
+        self.assertEqual(self.events(), [(S, "Dampf vom Abtauen")])
 
     def test_prompt_time_only(self):
         self.assertEqual(self.run_log("-5m")[0], 0)
         self.assertEqual(self.run_log(answer=EOFError())[0], 0)
-        self.assertEqual(self.events(), [(300 * S, None), (0, None)])
+        self.assertEqual(self.events(), [(300 * S, None), (S, None)])
 
     def test_prompt_cancelled(self):
         self.run_log("kept")
         code, out, _ = self.run_log(answer=KeyboardInterrupt())
         self.assertEqual(code, 130)
         self.assertIn("Removed", out)
-        self.assertEqual(self.events(), [(0, "kept")])
+        self.assertEqual(self.events(), [(S, "kept")])
 
     def test_time_taken_before_the_prompt(self):
         def answer(prompt):
@@ -193,14 +195,14 @@ class Command(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), mock.patch("builtins.input", answer):
             self.assertEqual(e.main([]), 0)
         self.assertEqual(modes, ["delete"])
-        self.assertEqual(self.events(), [(0, "x")])
+        self.assertEqual(self.events(), [(S, "x")])
 
     def test_table_created_in_database_without_it(self):
         db = e.ebus_sqlite.open_db(self.db)
         db.executescript("DROP VIEW event_local; DROP TABLE event")  # e.g. schema 2 before the log command
         db.close()
         self.assertEqual(self.run_log("x")[0], 0)
-        self.assertEqual(self.events(), [(0, "x")])
+        self.assertEqual(self.events(), [(S, "x")])
 
     def test_errors(self):
         code, _, err = self.run_log("25:00", "x")
