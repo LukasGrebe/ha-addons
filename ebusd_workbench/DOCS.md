@@ -100,6 +100,15 @@ allows 60 requests per hour without a token; the list of open pull requests is c
 hour. Only public repositories work. Symbolic links in the repositories (ebusd-configuration
 shares definitions between devices that way) are followed.
 
+A pull request whose base is older than today's TypeSpec library (its whole tree no longer
+compiles) is compiled **partially**: only the files it changes (GitHub's list, fetched once) and
+what they import. Such a source carries a *partial* badge; its definitions are real, but "ebusd's
+choice" and its counts cover those files only.
+
+Both strips fold (▾ / ▸, remembered per browser): the sources into one line with the names, how
+many are off and one combined bar for fetching and decoding; the devices into one line of
+address and model.
+
 A source says what it adds compared with ebusd's definitions: `+17 new, 12 changed` means
 17 definitions that the release does not have at all and 12 that differ (by file, circuit, name
 and direction). Hover for the commit and when it was fetched. Untick a source to leave it out

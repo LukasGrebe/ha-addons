@@ -100,16 +100,35 @@ export class Builder {
     const translations = language !== "en" && files[`${language}.yaml`] !== undefined ? `${language}.yaml` : undefined;
     this.setState({ busy: true, text: `compiling ${source.label} (${Object.keys(files).length} files)…` });
     const t0 = performance.now();
-    const result = await tsp.compileEbusTsp(files, { entry, translations });
+    let result = await tsp.compileEbusTsp(files, { entry, translations });
+    let partial = null;
+    if (!result.ok && /^pr\//.test(source.id)) {
+      // an old base that today's TypeSpec library rejects: only what the pull request changes, and what that imports
+      partial = await this.partialEntry(source, files);
+      if (partial) {
+        this.setState({ busy: true, text: `compiling only the ${partial.count} files ${source.label} changes…` });
+        result = await tsp.compileEbusTsp({ ...files, [partial.entry]: partial.text }, { entry: partial.entry, translations });
+      }
+    }
     const errors = result.diagnostics.filter((d) => d.severity === "error");
     const ms = Math.round(performance.now() - t0);
     if (!result.ok) {
       const where = errors.slice(0, 3).map((d) => `${d.file ? `${d.file}:${d.line || "?"} ` : ""}${d.message}`).join("; ");
-      throw new Error(`${errors.length} compile error${errors.length === 1 ? "" : "s"}: ${where}`);
+      throw new Error(`${errors.length} compile error${errors.length === 1 ? "" : "s"}${partial ? ` (also in the ${partial.count} files it changes)` : ""}: ${where}`);
     }
-    const summary = `${Object.keys(result.outputs).length} files compiled in ${fmt.duration(ms)}${result.diagnostics.length ? `, ${result.diagnostics.length} warnings` : ""}`;
-    try { await store.putAll("compiles", [{ id: cacheKey, outputs: result.outputs, summary, at: new Date().toISOString() }]); } catch (err) { console.warn(err); }
-    return { outputs: result.outputs, summary, cached: false };
+    const summary = `${Object.keys(result.outputs).length} files compiled in ${fmt.duration(ms)}${result.diagnostics.length ? `, ${result.diagnostics.length} warnings` : ""}${partial ? `; only the ${partial.count} files the pull request changes: its base is older than today's TypeSpec library` : ""}`;
+    try { await store.putAll("compiles", [{ id: cacheKey, outputs: result.outputs, summary, partial: !!partial, at: new Date().toISOString() }]); } catch (err) { console.warn(err); }
+    return { outputs: result.outputs, summary, partial: !!partial, cached: false };
+  }
+
+  /** An entry file that imports only the TypeSpec files a pull request changes (from GitHub's list), or null. */
+  async partialEntry(source, files) {
+    try {
+      const { files: changed } = await api.get(`api/sources/changes?id=${encodeURIComponent(source.id)}`);
+      const paths = [...new Set(changed.map((f) => f.path).filter((p) => p.startsWith("src/") && p.endsWith(".tsp") && !/(^|\/)(main|_templates)\.tsp$/.test(p)).map((p) => p.slice(4)))].filter((p) => files[p] !== undefined);
+      if (!paths.length) return null;
+      return { entry: "__workbench_changes.tsp", count: paths.length, text: paths.map((p) => `import "./${p}";`).join("\n") + "\n" };
+    } catch (err) { console.warn(`changed files of ${source.id}:`, err); return null; }
   }
 
   /** The build: every enabled, fetched source as a CSV tree (compiled if need be) plus the scratchpad. */
@@ -135,6 +154,7 @@ export class Builder {
             entry.files = compiled.outputs;
             entry.summary = compiled.summary;
             entry.tsp = true;
+            entry.partial = !!compiled.partial;
           } else {
             entry.files = data.files;
             entry.summary = `${Object.keys(data.files).length} CSV files`;
@@ -180,9 +200,13 @@ export class Builder {
 
 // -- the strip: every source with its state, and the way to add one ----------------------------------------
 
+const remembered = (key, fallback) => { try { const v = localStorage.getItem(key); return v === null ? fallback : v === "1"; } catch { return fallback; } };
+const remember = (key, value) => { try { localStorage.setItem(key, value ? "1" : "0"); } catch { /* ignore */ } };
+
 export class SourcesStrip {
   constructor(root) {
     this.root = root;
+    this.expanded = remembered("workbench.sourcesOpen", true);   // the whole strip, or one line
     this.open = false;          // the add panel
     this.suggest = null;        // the open pull requests of ebusd-configuration
     this.suggestError = null;
@@ -268,6 +292,7 @@ export class SourcesStrip {
       h("b", {}, s.label),
       s.kind === "pr" && s.title ? h("span", { class: "muted t" }, s.title.length > 48 ? `${s.title.slice(0, 47)}…` : s.title) : null,
       h("span", { class: "muted" }, parts.join(" · ")),
+      built?.partial ? h("span", { class: "tbadge warn", title: "its base is older than today's TypeSpec library: only the files the pull request changes are compiled, so \"ebusd's choice\" and the counts of this source cover those files only" }, "partial") : null,
       s.url ? h("a", { href: s.url, target: "_blank", rel: "noopener", title: "open on GitHub", class: "muted" }, "↗") : null,
       h("a", { href: "#", class: "muted", title: "fetch again (the pull request may have been updated)", onclick: (e) => { e.preventDefault(); this.refresh(s.id); } }, "↻"),
       s.kind !== "cdn" ? h("a", { href: "#", class: "err", title: "remove this source", onclick: (e) => { e.preventDefault(); if (confirm(`Remove ${s.label}?`)) this.remove(s.id); } }, "✕") : null);
@@ -307,14 +332,52 @@ export class SourcesStrip {
 
   toggle(open = !this.open) { this.open = open; this.render(); }
 
+  /** One bar for all sources: fetching, then decoding (every enabled source over the recording), then what fits. */
+  combined() {
+    const list = this.sources();
+    const fetching = list.filter((s) => s.enabled && s.state === "fetching").length;
+    const st = app.decoder?.status();
+    let done = 0, total = 0, busySources = 0;
+    for (const s of st?.build?.sources || []) { done += s.decoded; total += s.decoded + s.pending; if (s.pending) busySources++; }
+    if (fetching) return h("span", { class: "combined busy", title: "the device fetches the sources from GitHub" }, h("span", { class: "spinner" }), ` fetching ${fetching} source${fetching === 1 ? "" : "s"}…`);
+    if (app.compileState?.busy) return h("span", { class: "combined busy" }, h("span", { class: "spinner" }), ` ${app.compileState.text}`);
+    if (total && done < total) {
+      const pct = Math.round((done / total) * 100);
+      return h("span", { class: "combined busy", title: `${fmt.count(done)} of ${fmt.count(total)} telegram decodings done (${busySources} source${busySources === 1 ? "" : "s"} still decoding)` },
+        h("span", { class: "progress" }, h("span", { class: "fill", style: `width:${Math.max(2, pct)}%` })), ` decoding ${pct} %`);
+    }
+    if (!st?.build) return null;
+    return h("span", { class: "combined", title: `${fmt.count(st.known)} of ${fmt.count(st.telegrams)} distinct telegrams known to ebusd` }, `${fmt.count(st.definitions)} definitions fit your bus`);
+  }
+
+  /** A source as a word in the folded strip: its label, a spinner while it decodes. */
+  miniChip(s) {
+    const decoded = app.decoder?.status().build?.sources.find((x) => x.id === s.id) || null;
+    const built = app.decoder?.source(s.id) || null;
+    const bad = s.state === "error" || built?.error;
+    return h("span", { class: `src mini ${bad ? "err" : ""}`, title: [`${s.label} (${s.id})`, s.title ? `“${s.title}”` : "", bad ? `error: ${s.error || built?.error}` : "", built?.delta ? `+${built.delta.added.length} new, ${built.delta.changed.length} changed` : ""].filter(Boolean).join("\n") },
+      decoded?.pending || s.state === "fetching" ? h("span", { class: "spinner" }) : null, h("b", {}, s.label));
+  }
+
   render() {
     const root = this.root;
     if (!root) return;
     const list = this.sources();
-    const row = h("div", { class: "src-row" }, h("span", { class: "muted lbl", title: "every source is a complete set of definitions, decoded side by side; untick one to leave it out" }, "Definitions from"),
-      list.map((s) => this.chip(s)), this.mineChip(),
-      h("button", { class: `small ${this.open ? "active" : ""}`, onclick: () => this.toggle() }, this.open ? "− add" : "+ add a pull request or repository"),
-      !list.length && !app.status?.sources ? null : !list.length ? h("span", { class: "warn" }, "no sources yet: add ebusd's definitions with “release”") : null);
+    const fold = h("button", { class: "fold small", title: this.expanded ? "fold the sources into one line" : "show every source with its state", onclick: () => { this.expanded = !this.expanded; remember("workbench.sourcesOpen", this.expanded); this.render(); } }, this.expanded ? "▾" : "▸");
+    const label = h("span", { class: "muted lbl", title: "every source is a complete set of definitions, decoded side by side; untick one to leave it out" }, "Definitions from");
+    const add = h("button", { class: `small ${this.open ? "active" : ""}`, onclick: () => this.toggle() }, this.open ? "− add" : this.expanded ? "+ add a pull request or repository" : "+ add");
+    const none = !list.length && !app.status?.sources ? null : !list.length ? h("span", { class: "warn" }, "no sources yet: add ebusd's definitions with “release”") : null;
+    let row;
+    if (this.expanded) {
+      row = h("div", { class: "src-row" }, fold, label, list.map((s) => this.chip(s)), this.mineChip(), add, none);
+    } else {
+      const on = list.filter((s) => s.enabled), off = list.length - on.length;
+      const lines = (app.settings?.custom || "").split("\n").filter((l) => l.trim() && !l.trim().startsWith("#")).length;
+      row = h("div", { class: "src-row folded" }, fold, label, on.map((s) => this.miniChip(s)),
+        off ? h("span", { class: "muted", title: "sources left out (unfold to tick them)" }, `+${off} off`) : null,
+        lines ? h("span", { class: "src mini", title: KIND_HELP.mine }, h("b", {}, "my definitions"), h("span", { class: "muted" }, ` ${lines}`)) : null,
+        this.combined(), add, none);
+    }
     root.replaceChildren(row, this.open ? this.addPanel() : "");
   }
 }

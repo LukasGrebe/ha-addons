@@ -274,6 +274,12 @@ def api_sources_prefetch(ctx, req):
     return {"sources": ctx.sources.prefetch([int(n) for n in numbers])}
 
 
+@route("GET", "/api/sources/changes")
+def api_sources_changes(ctx, req):
+    """The files a pull request changes (for compiling only those when its whole tree does not compile)."""
+    return ctx.sources.changes(req.query.get("id", ""))
+
+
 @route("GET", "/api/sources/files")
 def api_sources_files(ctx, req):
     """The definition files of a fetched source: CSV ready for ebusd, or TypeSpec to compile in the browser."""

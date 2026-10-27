@@ -64,11 +64,12 @@ class Fetcher:
 
     def __call__(self, url, timeout=0):
         self.calls.append(url)
-        for prefix, data in self.routes.items():
-            if url.startswith(prefix):
-                if isinstance(data, Exception):
-                    raise data
-                return data if isinstance(data, bytes) else json.dumps(data).encode()
+        matches = sorted((prefix for prefix in self.routes if url.startswith(prefix)), key=len, reverse=True)   # the longest prefix wins
+        if matches:
+            data = self.routes[matches[0]]
+            if isinstance(data, Exception):
+                raise data
+            return data if isinstance(data, bytes) else json.dumps(data).encode()
         raise SourceError(f"not found on GitHub: {url}")
 
 
@@ -80,6 +81,7 @@ ROUTES = {
     "https://api.github.com/repos/eBUS/ebus.github.io/commits/main": {"sha": "abc123", "html_url": "u", "commit": {"message": "update\n\nmore", "committer": {"date": "2026-06-22T17:53:00Z"}}},
     "https://api.github.com/repos/john30/ebusd-configuration/pulls/660": {"title": "vaillant: consolidate HW5103", "head": {"sha": "b3fd23e"}, "user": {"login": "claus"},
                                                                           "updated_at": "2026-10-02T07:03:34Z", "state": "open", "merged_at": None, "changed_files": 7, "html_url": "pr-url"},
+    "https://api.github.com/repos/john30/ebusd-configuration/pulls/660/files": [{"filename": "src/main.tsp", "status": "modified"}, {"filename": "src/vaillant/08.hmu.tsp", "status": "modified"}, {"filename": "README.md", "status": "modified"}],
     "https://api.github.com/repos/john30/ebusd-configuration/pulls?state=open": [
         {"number": 702, "title": "vaillant/hmu: add brine test values", "user": {"login": "a"}, "updated_at": "2026-10-23", "head": {"sha": "c93fb06"}, "html_url": "x", "draft": False},
         {"number": 701, "title": "Add Protherm Ray", "user": {"login": "b"}, "updated_at": "2026-10-18", "head": {"sha": "2bad517"}, "html_url": "y", "draft": True},
@@ -232,6 +234,18 @@ class Fetching(unittest.TestCase):
         downloads = len([u for u in self.fetch.calls if "codeload" in u])
         self.sources.prefetch([702])   # cached at the same head: nothing to fetch
         self.assertEqual(len([u for u in self.fetch.calls if "codeload" in u]), downloads)
+
+    def test_changed_files_of_a_pull_request_are_fetched_once(self):
+        self.sources.add("660", background=False)
+        changes = self.sources.changes("pr/660")
+        self.assertEqual([f["path"] for f in changes["files"]], ["src/main.tsp", "src/vaillant/08.hmu.tsp", "README.md"])
+        self.assertFalse(changes["cached"])
+        calls = len(self.fetch.calls)
+        self.assertTrue(self.sources.changes("660")["cached"])
+        self.assertEqual(len(self.fetch.calls), calls)
+        self.assertTrue(Sources(self.tmp.name, self.settings, fetch=Fetcher({})).changes("pr/660")["cached"], "kept in the meta file")
+        with self.assertRaises(SourceError):
+            self.sources.changes("release")
 
     def test_suggested_pull_requests_are_cached(self):
         pulls = self.sources.suggest()

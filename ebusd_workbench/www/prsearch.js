@@ -57,14 +57,14 @@ export class PrSearch {
         if (token !== this.token) return;
         i++;
         const pull = list.find((p) => `pr/${p.number}` === s.id) || {};
-        const result = { number: pull.number, title: s.title || pull.title || "", url: s.url || pull.url, author: s.author || pull.author, updated: s.updated_at || pull.updated_at, decodes: [], error: null };
+        const result = { number: pull.number, title: s.title || pull.title || "", url: s.url || pull.url, author: s.author || pull.author, updated: s.updated_at || pull.updated_at, decodes: [], error: null, partial: false };
         if (s.state !== "ready") { result.error = s.error || "not fetched"; st.skipped++; st.results.push(result); continue; }
         st.progress = `${s.label}: compiling and decoding (${i} of ${summaries.length})…`;
         changed();
         try {
           const data = await api.get(`api/sources/files?id=${encodeURIComponent(s.id)}`);
           let files = data.files;
-          if (data.kind === "tsp") files = (await app.builder.compile({ id: s.id, label: s.label }, `${s.id}@${s.head || s.fetched_at || ""}@${s.digest || ""}@r2`, data.files)).outputs;
+          if (data.kind === "tsp") { const compiled = await app.builder.compile({ id: s.id, label: s.label }, `${s.id}@${s.head || s.fetched_at || ""}@${s.digest || ""}@r2`, data.files); files = compiled.outputs; result.partial = !!compiled.partial; }
           const run = await decoder.run({ files, filesId: `search|${s.id}|${s.head || s.fetched_at}`, args: ["--candidates"], stdin, worker: "search" });
           const found = new Map();
           const scanOut = (run.results.find((r) => r.scan) || {}).scan || {};
@@ -119,6 +119,7 @@ export class PrSearch {
     for (const r of hits) {
       append(box, h("div", { class: "hit" },
         h("div", { class: "row" }, h("a", { href: r.url || "#", target: "_blank", rel: "noopener", class: "mono" }, `#${r.number}`), h("span", { class: "title" }, r.title), h("span", { class: "muted" }, `${r.author || ""} · ${String(r.updated || "").slice(0, 10)}`),
+          r.partial ? h("span", { class: "tbadge warn", title: "an old base: only the files this pull request changes were compiled" }, "partial") : null,
           h("span", { style: "margin-left:auto" }), h("button", { class: "small primary", title: "add this pull request as a source: its definitions are decoded over the whole recording and show up as cards", onclick: () => app.views.sources?.add(String(r.number)) }, "+ add as a source")),
         r.decodes.map((f) => h("div", { class: "frow" },
           chip(f.circuit, f.name), h("span", { class: "badge kind" }, accessKind(f)), h("span", { class: "mono muted" }, f.file.replace(/^.*\//, "")),

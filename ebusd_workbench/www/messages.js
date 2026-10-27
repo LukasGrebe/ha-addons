@@ -21,6 +21,8 @@ const GROUP_MIN = 8;
 const hexByte = (n) => (n === null || n === undefined ? "--" : n.toString(16).padStart(2, "0"));
 const ROLE = { "10": "controller", "71": "remote control", "31": "ebusd", "03": "controller", "f1": "ebusd" };
 const chip = (circuit, name) => { const c = messageColors(circuit, name); return h("span", { class: "chip-msg", style: `color:${c.text};background:${c.background};border-color:${c.border}` }, `${circuit} ${name}`); };
+const remembered = (key, fallback) => { try { const v = localStorage.getItem(key); return v === null ? fallback : v === "1"; } catch { return fallback; } };
+const remember = (key, value) => { try { localStorage.setItem(key, value ? "1" : "0"); } catch { /* ignore */ } };
 const srcBadge = (source, label) => h("span", { class: `tbadge ${source === MINE ? "custom" : source === "release" ? "" : "src"}` }, source === MINE ? "mine" : label || source);
 
 export class MessagesView {
@@ -30,6 +32,7 @@ export class MessagesView {
     this.filter = "attention";
     this.query = "";
     this.device = null;          // zz to show, or null for all
+    this.devicesOpen = remembered("workbench.devicesOpen", true);   // the devices with their numbers, or one line
     this.openGroups = new Set(); // zz+pbsb of the commands unfolded in the list
     this.selected = null;
     this.preview = null;         // {key, defKey} while a card is hovered: the row shows that decoding
@@ -225,19 +228,24 @@ export class MessagesView {
     const { list, masters } = this.devices || { list: [], masters: [] };
     if (!list.length) return;
     const primaryLabel = app.decoder?.source(app.decoder.primary)?.label || "ebusd";
+    const open = this.devicesOpen;
+    el.classList.toggle("folded", !open);
+    el.appendChild(h("button", { class: "fold small", title: open ? "fold the devices into one line" : "show every device with its numbers", onclick: () => { this.devicesOpen = !open; remember("workbench.devicesOpen", this.devicesOpen); this.render(); } }, open ? "▾" : "▸"));
     for (const dev of list) {
       const id = dev.ident;
-      const title = dev.broadcast ? "broadcasts: telegrams to every device" : id ? `${id.manufacturer} ${id.ident} (SW ${id.sw}, HW ${id.hw})\n${dev.file ? `${primaryLabel} loads ${dev.file}` : `${primaryLabel} loads no file for this identification`}` : "no identification recorded (scan telegram 0704 missing: is --scanconfig on?)";
-      const name = dev.broadcast ? "broadcast" : id ? `${id.manufacturer} ${id.ident.replace(/0{1,2}$/, "")}${id.hw ? ` HW${id.hw}` : ""}` : "unidentified device";   // ebusd drops up to two trailing zeros of an identification (HMU00 -> HMU, 70000 -> 700)
       const share = dev.n ? Math.round((dev.knownN / dev.n) * 100) : 0;
-      el.appendChild(h("button", { class: `device ${this.device === dev.zz ? "active" : ""} ${!dev.broadcast && id && !dev.file ? "nofile" : ""}`, title, onclick: () => { this.device = this.device === dev.zz ? null : dev.zz; if (this.device && this.filter === "attention" && !this.allRows.some((r) => r.zz === dev.zz && r.attention)) this.filter = "all"; this.render(); } },
-        h("span", { class: "mono addr" }, dev.zz), h("b", {}, name),
-        !dev.broadcast && id && !dev.file ? h("span", { class: "err", title: `${primaryLabel} loads no file for ${id.ident} (${id.manufacturer}): ebusd decodes nothing of this device unless a source adds a file for it` }, "no file") : dev.file ? h("span", { class: "mono muted" }, dev.file.replace(/^.*\//, "")) : null,
-        h("span", { class: "muted", title: "understood by ebusd today or by what you put into your setup" }, `${dev.messages} messages · ${share} % of the traffic understood`),
-        dev.newOnly ? h("span", { class: "accent", title: `${dev.newOnly} messages only ${[...dev.newIn].map((s) => app.decoder.source(s)?.label || s).join(", ")} understand` }, `+${dev.newOnly} with other sources`) : null,
-        dev.unknown ? h("span", { class: "warn" }, `${dev.unknown} unknown`) : null));
+      const stats = `${dev.messages} messages · ${share} % of the traffic understood${dev.newOnly ? ` · ${dev.newOnly} only other sources understand` : ""}${dev.unknown ? ` · ${dev.unknown} unknown` : ""}`;
+      const title = (dev.broadcast ? "broadcasts: telegrams to every device" : id ? `${id.manufacturer} ${id.ident} (SW ${id.sw}, HW ${id.hw})\n${dev.file ? `${primaryLabel} loads ${dev.file}` : `${primaryLabel} loads no file for this identification`}` : "no identification recorded (scan telegram 0704 missing: is --scanconfig on?)") + (open ? "" : `\n${stats}`);
+      const name = dev.broadcast ? "broadcast" : id ? `${id.manufacturer} ${id.ident.replace(/0{1,2}$/, "")}${id.hw ? ` HW${id.hw}` : ""}` : "unidentified device";   // ebusd drops up to two trailing zeros of an identification (HMU00 -> HMU, 70000 -> 700)
+      const nofile = !dev.broadcast && id && !dev.file;
+      el.appendChild(h("button", { class: `device ${this.device === dev.zz ? "active" : ""} ${nofile ? "nofile" : ""}`, title, onclick: () => { this.device = this.device === dev.zz ? null : dev.zz; if (this.device && this.filter === "attention" && !this.allRows.some((r) => r.zz === dev.zz && r.attention)) this.filter = "all"; this.render(); } },
+        h("span", { class: "mono addr" }, dev.zz), h("b", {}, open ? name : name.replace(/^Vaillant /, "")),
+        nofile ? h("span", { class: "err", title: `${primaryLabel} loads no file for ${id.ident} (${id.manufacturer}): ebusd decodes nothing of this device unless a source adds a file for it` }, "no file") : open && dev.file ? h("span", { class: "mono muted" }, dev.file.replace(/^.*\//, "")) : null,
+        open ? h("span", { class: "muted", title: "understood by ebusd today or by what you put into your setup" }, `${dev.messages} messages · ${share} % of the traffic understood`) : null,
+        open && dev.newOnly ? h("span", { class: "accent", title: `${dev.newOnly} messages only ${[...dev.newIn].map((s) => app.decoder.source(s)?.label || s).join(", ")} understand` }, `+${dev.newOnly} with other sources`) : null,
+        open && dev.unknown ? h("span", { class: "warn" }, `${dev.unknown} unknown`) : !open && dev.unknown ? h("span", { class: "warn", title: `${dev.unknown} messages unknown` }, `${dev.unknown}`) : null));
     }
-    if (masters.length) el.appendChild(h("span", { class: "masters muted", title: "addresses that only send: the controller, remote controls, ebusd itself" }, "asking: ", masters.map((m) => h("span", { class: "mono" }, `${m.qq} (${m.role})`)).flatMap((x, i) => (i ? [", ", x] : [x]))));
+    if (masters.length && open) el.appendChild(h("span", { class: "masters muted", title: "addresses that only send: the controller, remote controls, ebusd itself" }, "asking: ", masters.map((m) => h("span", { class: "mono" }, `${m.qq} (${m.role})`)).flatMap((x, i) => (i ? [", ", x] : [x]))));
   }
 
   groupRow(g) {

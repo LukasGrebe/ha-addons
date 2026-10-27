@@ -352,3 +352,16 @@ table.msgs td input[type=checkbox] { margin: 0; }
 .prsearch .ex { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .src .spinner { width: 9px; height: 9px; }
 .sources { line-height: 22px; }
+
+/* folded strips: the sources as one line with a combined bar, the devices as one line */
+button.fold { width: 20px; padding: 0; color: var(--muted); border-color: transparent; background: none; }
+button.fold:hover { border-color: var(--line); }
+.src-row.folded { flex-wrap: nowrap; overflow: hidden; }
+.src.mini { padding: 1px 7px; gap: 4px; }
+.src.mini .spinner { width: 9px; height: 9px; }
+.combined { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--muted); }
+.combined.busy { color: var(--accent); }
+.combined .progress { display: inline-block; width: 120px; height: 6px; border-radius: 3px; background: var(--accent-soft); overflow: hidden; vertical-align: middle; }
+.combined .progress .fill { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.devices.folded { padding: 3px 12px; }
+.devices.folded .device { padding: 1px 7px; }

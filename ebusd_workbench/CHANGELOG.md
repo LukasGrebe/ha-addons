@@ -38,6 +38,10 @@ your devices.
   ebusd-configuration is fetched once, compiled once per commit and tried on the recorded
   telegrams of the selected message; the ones that decode it are listed with the name they give
   it and can be added as a source with one click
+* The sources strip and the devices line fold to one line each (remembered per browser); folded,
+  the sources show one combined bar for fetching and decoding
+* A pull request on an old base that today's TypeSpec library rejects is compiled partially: only
+  the files it changes (marked *partial*), instead of failing
 * A message whose definition is in your setup counts as handled: it leaves "needs a look" and
   the device chips count it as understood
 * New option **language** (en, de): the language of the definitions, as the eBUSd app's

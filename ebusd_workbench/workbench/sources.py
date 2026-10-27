@@ -461,6 +461,39 @@ class Sources:
         except OSError:
             pass
 
+    def changes(self, source_id):
+        """The files a pull request changes (from the GitHub API, once; kept in its meta).
+
+        For a pull request whose whole tree no longer compiles with today's TypeSpec library (an old
+        base), the browser compiles only these files and what they import.
+        """
+        ref = parse_ref(source_id)
+        if ref["kind"] != "pr":
+            raise SourceError("only a pull request has a list of changed files")
+        meta = self.meta(ref["id"])
+        if not meta:
+            raise SourceError(f"{ref['id']} is not fetched")
+        if "changed" in meta:
+            return {"id": ref["id"], "files": meta["changed"], "cached": True}
+        files = []
+        page = 1
+        while page <= 5:
+            data = self._api(f"{API.format(repo=ref['repo'])}/pulls/{ref['number']}/files?per_page=100&page={page}")
+            if not isinstance(data, list):
+                raise SourceError("the list of changed files is not available (GitHub API, rate limit?)")
+            files += [{"path": f.get("filename"), "status": f.get("status")} for f in data if isinstance(f, dict) and f.get("filename")]
+            if len(data) < 100:
+                break
+            page += 1
+        meta["changed"] = files
+        try:
+            with open(os.path.join(self.folder(ref["id"]), "files.json"), "r", encoding="utf-8") as f:
+                tree = json.load(f)
+            self._save(meta, tree)
+        except (OSError, ValueError) as err:
+            log.warning("unable to keep the changed files of %s: %s", ref["id"], err)
+        return {"id": ref["id"], "files": files, "cached": False}
+
     # -- state for the UI ---------------------------------------------------------------------
 
     def summary(self, source_id, configured=None):
