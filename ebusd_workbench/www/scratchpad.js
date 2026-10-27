@@ -7,13 +7,14 @@
 // recording as soon as it is saved. Without a selection the scratchpad lists your own lines.
 import { api, app, append, bus, fmt, h, toast } from "./app.js";
 import { drawChart, nearestPoint, seriesFields, seriesValues } from "./chart.js";
-import { KIND_HELP, accessKind, describeConditions, describeDifference, differingFields, groupCandidates, rowTelegrams, structureOf, whyNot } from "./compare.js";
+import { accessKind, groupCandidates, rowTelegrams, whyNot } from "./compare.js";
 import { idLength, messageColors } from "./colors.js";
 import { csvEditor } from "./definition-edit.js";
 import { defineEditor } from "./define-ui.js";
 import { MINE, setup } from "./setup.js";
 import { mineLines, removeMine, upsertMine } from "./mine.js";
 import { prSearch } from "./prsearch.js";
+import { inspector } from "./inspector.js";
 
 const PAGE = 120;
 const STATUS_HELP = {
@@ -35,7 +36,6 @@ export class Scratchpad {
     this.view = view;              // the view of the bus the selection came from: the list of messages or the timeline
     this.state = null;
     this.model = null;
-    this.expanded = new Set();     // definition keys of the unfolded cards (a group is unfolded when one of its members is)
     this.editors = new Map();      // editor elements by row and definition: they keep their draft while the panel is redrawn
     this.previews = new Map();     // live preview of a draft by definition key
     this.dirty = new Set();
@@ -56,13 +56,14 @@ export class Scratchpad {
   /** Show a row, optionally at a clicked run of values. */
   open(row, run = null, { tab = null, field = null } = {}) {
     const same = this.state?.row.key === row.key;
-    if (!same) { this.editors.clear(); this.previews.clear(); this.dirty.clear(); this.expanded.clear(); }
-    this.state = { row, run, compareWith: same ? this.state.compareWith : null, focusMs: run ? (run.t0 + run.t1) / 2 : null, offset: 0, every: same ? this.state.every : false, field: same ? this.state.field : {}, wantedField: field, newOpen: tab === "new" || (same && this.state.newOpen), failingOpen: same && this.state.failingOpen };
+    if (!same) { this.editors.clear(); this.previews.clear(); this.dirty.clear(); }
+    this.state = { row, run, focusMs: run ? (run.t0 + run.t1) / 2 : null, offset: 0, every: same ? this.state.every : false, field: same ? this.state.field : {}, wantedField: field, newOpen: tab === "new" || (same && this.state.newOpen), failingOpen: same && this.state.failingOpen,
+      tIndex: same ? this.state.tIndex : 0, sel: same ? this.state.sel : null };
     this.scroll = null;
     this.view.select(row, run);
     if (row.kind !== "event") {
       this.refreshModel();
-      if (!same && this.model.current) for (const m of this.model.current.members) this.expanded.add(m.def.key);
+      if (run?.line) { const idx = this.telegramsNewestFirst().findIndex((t) => t.line === run.line); if (idx >= 0) this.state.tIndex = idx; }
     }
     this.render();
     this.root.scrollTop = 0;
@@ -125,13 +126,6 @@ export class Scratchpad {
     const order = Object.fromEntries(app.decoder.sources().map((s, i) => [s.id, i]));
     return g.members.find((m) => m.def.key === row.defKey) || g.members.find((m) => m.def.key === this.model.usedKey)
       || g.members.slice().sort((a, b) => (order[a.def.source] ?? 99) - (order[b.def.source] ?? 99))[0];
-  }
-
-  isExpanded(g) { return g.members.some((m) => this.expanded.has(m.def.key)); }
-
-  toggleGroup(g, open = !this.isExpanded(g)) {
-    for (const m of g.members) if (open) this.expanded.add(m.def.key); else this.expanded.delete(m.def.key);
-    this.render(true);
   }
 
   // -- drawing -------------------------------------------------------------------------------------------------
@@ -254,11 +248,39 @@ export class Scratchpad {
         timeline ? h("button", { class: "small", title: "split or combine this row's messages like the definitions identify them", onclick: () => this.view.splitLikeDefinitions(m.telegrams) }, "rows like the definitions") : null,
         h("button", { class: "small", onclick: () => this.close() }, "✕")),
       this.notes(),
+      this.inspectorSection(),
+      this.selectedHistory(),
       h("div", { class: "cards" },
-        m.shown.map((g) => this.card(g)),
         m.hidden.length ? this.failingCard() : null,
         this.newCard()),
       prSearch.section(row, m.telegrams, () => { if (this.state?.row.key === row.key && !this.dirty.size) this.render(true); }));
+  }
+
+  telegramsNewestFirst() { return this.model.telegrams.slice().sort((a, b) => (b.last_ms || 0) - (a.last_ms || 0)); }
+
+  /** The inspector: the telegram byte by byte, every fitting definition as a row, with the values and sparklines. */
+  inspectorSection() {
+    const st = this.state, m = this.model;
+    const entries = app.decoder.entries;
+    const included = new Set(setup.includedKeys(entries));
+    const defs = m.shown.map((g) => ({ def: this.preferred(g).def, group: g }));
+    const usedDef = m.candidates.find((c) => c.def.key === m.usedKey)?.def || null;
+    return inspector({
+      row: st.row, telegrams: m.telegrams, defs, decoder: app.decoder, view: this.view, telegramIndex: st.tIndex, selected: st.sel,
+      included, otherKeys: m.candidates.map((c) => c.def.key), usedKey: m.usedKey, usedDef,
+      onTelegram: (i) => { st.tIndex = i; this.render(true); },
+      onSelect: (defKey, field) => { st.sel = { defKey, field }; st.field[defKey] = field; this.render(true); },
+      onChange: () => this.refresh(),
+    });
+  }
+
+  /** The chart and the values of the selected field (the first field of the row's definition until one is clicked). */
+  selectedHistory() {
+    const st = this.state, m = this.model;
+    let def = st.sel ? app.decoder.def(st.sel.defKey) : null;
+    if (!def && m.current) def = this.preferred(m.current).def;
+    if (!def) return null;
+    return this.historySection(def);
   }
 
   notes() {
@@ -273,176 +295,20 @@ export class Scratchpad {
     return out.length ? h("div", {}, out) : null;
   }
 
-  /** How a card's definition relates to the row's own: the same values or not, and what differs as a definition. */
-  relation(g) {
-    const cur = this.model.current;
-    if (!cur || g === cur) return null;
-    const a = this.preferred(g).def, b = this.preferred(cur).def;
-    const sameValues = g.coverage.signature === cur.coverage.signature;
-    return { sameValues, structure: describeDifference(a, b), fields: sameValues ? [] : differingFields(g.coverage, cur.coverage) };
-  }
-
-  relationHint(g) {
-    const rel = this.relation(g);
-    if (!rel) return g === this.model.current ? "the row's definition" : "";
-    const list = (names) => `${names.slice(0, 3).join(", ")}${names.length > 3 ? ` +${names.length - 3}` : ""}`;
-    if (rel.sameValues) return rel.structure.length ? "same values, defined differently" : "same values";
-    const fails = g.coverage.errors ? ` · fails on ${g.coverage.errors}` : "";
-    return `${rel.fields.length ? `differs in ${list(rel.fields)}` : "different values"}${fails}`;
-  }
-
   // -- a card: one definition (or a group of identical ones) --------------------------------------------------
-
-  card(g) {
-    const st = this.state;
-    const { row } = st;
-    const pref = this.preferred(g);
-    const def = pref.def;
-    const open = this.isExpanded(g);
-    const rel = this.relation(g);
-    const hint = this.relationHint(g);
-    const entries = app.decoder.entries;
-    const otherKeys = this.model.candidates.map((c) => c.def.key);
-    const sources = [...new Map(g.members.map((m) => [m.def.source, m.def])).values()];
-    const cov = g.coverage;
-    const head = h("div", { class: "card-head", title: `${def.circuit} ${def.name} · ${accessKind(def)} · ${STATUS_HELP[def.status] || def.status}`,
-      onmouseenter: () => this.view.setPreview(row, def.key), onmouseleave: () => this.view.setPreview(row, null),
-      onclick: (e) => { if (e.target.closest("button, input, a, select")) return; this.toggleGroup(g); } },
-      h("span", { class: "fold" }, open ? "▾" : "▸"),
-      h("button", { class: `pick ${g.hasChosen ? "on" : ""}`, title: g.hasChosen ? "used for this row and part of your setup" : "use this definition for this row (it joins your setup, the row's other definitions leave it)", onclick: () => setup.choose(row.key, def.key, otherKeys, entries) }, g.hasChosen ? "●" : "○"),
-      chip(def.circuit, def.name),
-      setup.exportName(def) !== def.name ? h("span", { class: "export", title: "its name in your config" }, `→ ${setup.exportName(def)}`) : null,
-      h("span", { class: "tmeta" }, accessKind(def)),
-      sources.map((d) => sourceBadge(d)),
-      g.members.length > sources.length ? h("span", { class: "tmeta", title: `the same definition in ${g.members.length} files` }, `×${g.members.length}`) : null,
-      g.hasUsed ? h("span", { class: "tbadge active", title: "what ebusd uses with its own definitions" }, "ebusd's choice") : null,
-      cov.errors ? h("span", { class: "warn", title: `fails to decode ${cov.errors} of ${cov.distinct} recorded variants` }, `⚠ ${fmt.count(cov.ok)} of ${fmt.count(cov.distinct)} decode`) : h("span", { class: "ok", title: `decodes every recorded variant of this row (${fmt.count(cov.occurrences)} telegrams)` }, `✓ all ${fmt.count(cov.ok)} decode`),
-      hint ? h("span", { class: `t2 ${rel ? (rel.sameValues ? "same" : "differs") : ""}` }, hint) : null,
-      cov.latest ? h("span", { class: "mono muted ex", title: cov.latest.text }, cov.latest.text.slice(0, 90)) : null,
-      h("span", { style: "margin-left:auto" }),
-      h("button", { class: "small", title: "copy this definition into your scratchpad to change it", onclick: () => this.copyToMine(def) }, "copy"));
-    const body = open ? this.body(g, pref) : null;
-    return h("div", { class: `card ${open ? "open" : ""} ${g.hasChosen ? "chosen" : ""}` }, head, body);
-  }
-
-  body(g, pref) {
-    return h("div", { class: "card-body dtl-body" },
-      h("div", { class: "dcol" }, this.sourceSection(g, pref)),
-      h("div", { class: "dcol" }, this.compareSection(g, pref)),
-      h("div", { class: "dcol" }, this.historySection(pref.def)),
-      h("div", { class: "dcol edit" }, this.editSection(g, pref)));
-  }
 
   async copyToMine(def) {
     try {
       const key = await upsertMine(def.csv);
       toast(`${def.circuit} ${def.name} copied to your scratchpad: edit the copy (kind mine)`);
-      this.expanded.add(key);
+      this.state.sel = { defKey: key, field: null };
       this.refresh();
     } catch (err) { toast(err.message, "err"); }
   }
 
   // -- source: where it comes from, why ebusd (does not) use it, its names in Home Assistant ------------------
 
-  sourceSection(g, pref) {
-    const { row } = this.state;
-    const def = pref.def;
-    const entries = app.decoder.entries;
-    const included = new Set(setup.includedKeys(entries));
-    const otherKeys = this.model.candidates.map((c) => c.def.key);
-    const cond = describeConditions(def);
-    const scan = app.decoder.scan?.[def.source] || {};
-    const usedDef = this.model.candidates.find((c) => c.def.key === this.model.usedKey)?.def || null;
-    const sec = h("section", { class: "dsec" }, h("h4", {}, "Source and use"));
-    append(sec,
-      h("div", { class: "row" },
-        h("button", { class: `pick ${g.hasChosen ? "on" : ""}`, title: g.hasChosen ? "used for this row and part of your setup" : "use this definition for this row (it joins your setup, the row's other definitions leave it)", onclick: () => setup.choose(row.key, def.key, otherKeys, entries) }, g.hasChosen ? "● used for this row" : "○ use for this row"),
-        h("label", { class: "muted", title: "part of the setup of this installation" }, h("input", { type: "checkbox", checked: included.has(def.key), onchange: (e) => setup.include(def.key, e.target.checked, entries) }), " in my setup"),
-        def.source === MINE ? h("button", { class: "small", title: "remove this line from your definitions", onclick: async () => { if (confirm(`Remove ${def.circuit} ${def.name} from your definitions?`)) await removeMine(def.key); } }, "remove from mine") : null),
-      h("dl", { class: "kv" },
-        h("dt", {}, "kind"), h("dd", {}, h("span", { class: `badge kind ${def.write ? "write" : ""}` }, accessKind(def)), ` ${KIND_HELP[accessKind(def)]}`),
-        h("dt", {}, "comes from"), h("dd", {}, g.members.map((x) => h("div", { class: "frow" },
-          h("button", { class: `pick ${x.def.key === row.defKey ? "on" : ""}`, title: "use exactly this one", onclick: () => setup.choose(row.key, x.def.key, otherKeys, entries) }, x.def.key === row.defKey ? "●" : "○"),
-          sourceBadge(x.def), h("span", { class: "mono", title: x.def.file }, base(x.def.file)), h("span", { class: `badge ${x.def.status}`, title: STATUS_HELP[x.def.status] }, x.def.status),
-          g.members.length > 1 ? h("label", { class: "muted" }, h("input", { type: "checkbox", checked: included.has(x.def.key), onchange: (e) => setup.include(x.def.key, e.target.checked, entries) }), " in setup") : null))),
-        h("dt", {}, "applies"), h("dd", {}, cond ? `only when ${cond}` : "always (for the right device)"),
-        h("dt", {}, "ebusd"), h("dd", {},
-          def.source === app.decoder.primary ? (pref.def.key === this.model.usedKey ? "uses this definition today." : whyNot(def, scan, null, usedDef))
-            : [h("div", {}, usedDef ? `Today ebusd uses ${usedDef.circuit} ${usedDef.name} for this message.` : "Today ebusd understands this message with none of its own definitions."),
-              h("div", {}, `With ${def.sourceLabel || def.source}: ${def.source === MINE ? "never ebusd's choice: pick it here." : whyNot(def, scan, null, usedDef).replace(/^ebusd uses this definition\.$/, "ebusd would use this definition.")}`)])),
-      this.namesForm(def, g.coverage.latest?.fields || null));
-    return sec;
-  }
-
-  /** The names a message and its fields get in your config: MQTT topics, JSON fields, Home Assistant entities. */
-  namesForm(def, values) {
-    const nameInput = h("input", { type: "text", value: setup.exportName(def), size: 24, onchange: () => setup.rename(def, nameInput.value) });
-    const map = setup.fieldMap(def);
-    const circuit = setup.circuitOf(def);
-    const rows = (def.fields || []).map((field) => {
-      const input = h("input", { type: "text", value: map[field], title: `entity: ${circuit} ${setup.exportName(def)} ${map[field]}`, onchange: () => setup.renameField(def, field, input.value) });
-      return h("tr", {}, h("td", { class: "mono muted", title: field }, field), h("td", {}, input), h("td", { class: "mono muted latest" }, values && field in values ? String(values[field]) : ""));
-    });
-    return h("div", { class: "names" },
-      h("div", { class: "kv-row" }, h("b", {}, "In Home Assistant"), h("span", { class: "muted" }, "topic "), h("span", { class: "mono" }, `ebusd/${circuit}/`), nameInput, setup.exportName(def) !== def.name ? h("span", { class: "muted" }, `(upstream ${def.name})`) : null),
-      rows.length ? h("table", { class: "fieldnames" }, h("colgroup", {}, h("col", { style: "width:34%" }), h("col", { style: "width:36%" }), h("col", { style: "width:30%" })), h("thead", {}, h("tr", {}, h("th", {}, "field"), h("th", {}, "name in my config"), h("th", {}, values ? "latest" : ""))), h("tbody", {}, rows)) : h("div", { class: "muted" }, "This message has no named fields."),
-      h("div", { class: "hint" }, `Entities are named "${circuit} ${setup.exportName(def)} <field>" by ebusd's MQTT discovery; the names end up in the exported CSV, the MQTT topics and the JSON fields, the upstream names stay in the file's comments. Letters, digits, _ . - only.`));
-  }
-
   // -- comparison -------------------------------------------------------------------------------------------------
-
-  compareSection(g, pref) {
-    const m = this.model;
-    const st = this.state;
-    const sec = h("section", { class: "dsec" }, h("h4", {}, "Compared with another definition"));
-    const others = m.shown.filter((x) => x !== g);
-    if (!others.length) return append(sec, h("div", { class: "muted" }, "No other definition decodes this row: nothing to compare with."), this.sameFiles(g));
-    const other = others.find((x) => x.key === st.compareWith) || (m.current && m.current !== g ? m.current : others[0]);
-    const label = (x) => { const p = this.preferred(x).def; return `${x === m.current ? "● " : ""}${p.circuit} ${p.name} · ${accessKind(p)} · ${p.sourceLabel || p.source}${x.members.length > 1 ? ` ×${x.members.length}` : ""}`; };
-    const pick = h("select", { onchange: () => { st.compareWith = pick.value; this.render(true); } }, others.map((x) => h("option", { value: x.key, selected: x === other }, label(x))));
-    const a = pref.def, b = this.preferred(other).def;
-    const sameValues = g.coverage.signature === other.coverage.signature;
-    const diff = describeDifference(a, b);
-    const sx = structureOf(a.csv), sy = structureOf(b.csv);
-    const fmtField = (f) => f ? `${f.name || "?"} · ${f.part === "m" ? "request" : "answer"} ${f.type}${f.divisor ? ` ${f.divisor}` : ""}${f.unit ? ` ${f.unit}` : ""}` : "—";
-    const sameField = (f, g2) => f && g2 && f.part === g2.part && f.type === g2.type && f.divisor === g2.divisor && f.unit === g2.unit;
-    const rows = [];
-    const row = (what, x, y, differs, mono = false) => rows.push(h("tr", { class: differs ? "diff" : "" }, h("td", {}, what), h("td", { class: mono ? "mono" : "" }, x), h("td", { class: mono ? "mono" : "" }, y)));
-    row("source", a.sourceLabel || a.source, b.sourceLabel || b.source, a.source !== b.source);
-    row("kind", accessKind(a), accessKind(b), accessKind(a) !== accessKind(b));
-    row("message ID", `${sx.pbsb} ${sx.id}`, `${sy.pbsb} ${sy.id}`, sx.pbsb !== sy.pbsb || sx.id !== sy.id, true);
-    if (sx.qq !== sy.qq || sx.zz !== sy.zz) row("from → to", `${sx.qq || "any"} → ${sx.zz || "any"}`, `${sy.qq || "any"} → ${sy.zz || "any"}`, true, true);
-    for (let i = 0; i < Math.max(sx.fields.length, sy.fields.length); i++) {
-      const f = sx.fields[i], f2 = sy.fields[i];
-      rows.push(h("tr", { class: sameField(f, f2) ? (f?.name === f2?.name ? "" : "names") : "diff" }, h("td", {}, `field ${i + 1}`), h("td", { class: "mono" }, fmtField(f)), h("td", { class: "mono" }, fmtField(f2))));
-    }
-    const la = g.coverage.latest?.fields || {}, lb = other.coverage.latest?.fields || {};
-    const diffNames = new Set(differingFields(g.coverage, other.coverage));
-    for (const name of new Set([...Object.keys(la), ...Object.keys(lb)])) rows.push(h("tr", { class: diffNames.has(name) ? "diff" : "" }, h("td", {}, `latest ${name}`), h("td", { class: "mono" }, name in la ? String(la[name]) : "—"), h("td", { class: "mono" }, name in lb ? String(lb[name]) : "—")));
-    if (st.run && !st.run.mixed) {
-      const line = st.run.line;
-      const clicked = (x) => { const d = line ? app.decoder.decodesOf(line)?.get(this.preferred(x).def.key) : null; return d ? (d.result === "ok" ? d.text || "(empty)" : `✗ ${d.result}`) : "—"; };
-      rows.unshift(h("tr", {}, h("td", {}, "the value you clicked"), h("td", { class: "mono" }, clicked(g)), h("td", { class: "mono" }, clicked(other))));
-    }
-    const cov = (x) => x.coverage.errors ? `${fmt.count(x.coverage.ok)} of ${fmt.count(x.coverage.distinct)} variants decode` : `all ${fmt.count(x.coverage.ok)} variants decode`;
-    rows.push(h("tr", { class: g.coverage.errors !== other.coverage.errors ? "diff" : "" }, h("td", {}, "decodes"), h("td", {}, cov(g)), h("td", {}, cov(other))));
-    rows.push(h("tr", {}, h("td", {}, "in files"), h("td", { class: "mono" }, g.members.map((x) => base(x.def.file)).join(", ")), h("td", { class: "mono" }, other.members.map((x) => base(x.def.file)).join(", "))));
-    append(sec,
-      h("div", { class: "row" }, h("label", { class: "muted" }, "this card against"), pick),
-      h("div", { class: sameValues ? "ok verdict" : "warn verdict" }, sameValues
-        ? (diff.length ? "Decodes the same values over the whole history, but is defined differently." : "Identical: the same definition, decoding the same values.")
-        : `Decodes different values${diffNames.size ? ` (${[...diffNames].join(", ")})` : ""}${diff.length ? " and is defined differently" : ""}.`),
-      h("table", { class: "cmp" }, h("thead", {}, h("tr", {}, h("th", {}), h("th", {}, `${a.circuit} ${a.name} (this card)`), h("th", {}, `${b.circuit} ${b.name}`))), h("tbody", {}, rows)),
-      h("div", { class: "muted" }, "Highlighted rows differ; rows in italics only differ in a name. Same values with different names: pick the naming you prefer, or rename above."),
-      this.sameFiles(g));
-    return sec;
-  }
-
-  /** Where else the very same definition (structure and values) is: copies in other files, circuits and sources. */
-  sameFiles(g) {
-    if (g.members.length < 2) return null;
-    return h("div", { class: "muted" }, `Identical copies of this definition: ${g.members.map((x) => `${x.def.circuit} ${x.def.name} in ${base(x.def.file)} (${x.def.sourceLabel || x.def.source})`).join("; ")}.`);
-  }
 
   // -- history ------------------------------------------------------------------------------------------------------
 
@@ -522,25 +388,6 @@ export class Scratchpad {
 
   // -- editing --------------------------------------------------------------------------------------------------------
 
-  editSection(g, pref) {
-    const { row } = this.state;
-    const def = pref.def;
-    const key = `edit|${row.key}|${def.key}`;
-    const mine = def.source === MINE;
-    const sec = h("section", { class: "dsec" }, h("h4", {}, mine ? "Edit my definition" : "Tune it: a copy of your own"));
-    if (!this.editors.has(key)) {
-      const editor = csvEditor({
-        def, telegrams: this.model.telegrams, decoder: app.decoder, own: app.settings?.own_address || "31",
-        onDirty: (dirty) => { dirty ? this.dirty.add(key) : this.dirty.delete(key); },
-        onPreview: (preview) => { if (preview) this.previews.set(def.key, preview); else this.previews.delete(def.key); const body = this.histories.get(def.key); if (body) this.fillHistory(def, body); },
-        onSave: (csv) => this.saveVersion(csv, def, key),
-      });
-      this.editors.set(key, editor.el);
-    }
-    append(sec, this.editors.get(key));
-    return sec;
-  }
-
   newCard() {
     const { row } = this.state;
     const open = !!this.state.newOpen;
@@ -591,7 +438,7 @@ export class Scratchpad {
       if (!decoder.def(key)) { toast("saved to your definitions; it decodes none of this row's telegrams yet (check the line, or wait for the decoding)", "info", 7000); this.state.newOpen = false; this.refresh(); return; }
       setup.choose(row.key, key, this.model.candidates.map((c) => c.def.key), decoder.entries);
       toast(`${header ? `${header.circuit} ${header.name}` : "your version"} saved and chosen for this row`);
-      this.expanded.add(key);
+      this.state.sel = { defKey: key, field: null };
       this.state.newOpen = false;
       this.refreshModel();
       this.render(true);

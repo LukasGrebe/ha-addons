@@ -196,39 +196,26 @@ Click a message in the list (or a row of the timeline): the scratchpad shows eve
 it. The head says the message, how many recorded variants and telegrams it has and who asked for
 it (in the timeline view also the **ID bytes** of its command and **rows like the definitions**).
 
-Then one **card per definition that fits** the message, compared **over every recorded telegram
-of the message, not only the visible window**. Definitions that decode the same values (a copy
-in another file, circuit or source) are one card (`×4`). Each card says in one line: ● when it is
-used for this row, the message, its kind (active read, passive write, …), its sources, `ebusd's
-choice` for what ebusd uses today, ✓ when it decodes every recorded variant or ⚠ with the
-count when it fails on some, how it relates to the row's definition (*same values*, *same values,
-defined differently*, *differs in temp, flow*) and the latest decoded value. Hovering a card
-previews its decoding in the bus row. **copy** puts the definition into your scratchpad (see
-below). Click the line and the card folds open with four columns:
+Then the **inspector**: a table with the telegram laid out byte by byte (request data after the
+ID, then the answer; a byte some definition reads as bits is eight bit columns) and one block per
+definition that fits the message:
 
-- **Source and use**: *use for this row* (it joins your setup, the row's other definitions
-  leave it), *in my setup*, the kind in words, every copy with its source, file and status, when
-  it applies (conditions in words), why ebusd does not use it, and **In Home Assistant**: the
-  message name and every field with the name it gets in your config and the entity ebusd's
-  MQTT discovery makes of it, next to the latest value. Rename here (`Z1RoomTemp → Zone1RoomTemperature`,
-  `temp → temperature`): the bus, the exported CSV files and the Home Assistant entities use the
-  new names, the upstream names stay in the file's comments. Names are limited to
-  `A–Z a–z 0–9 _ . -` (they become MQTT topics and JSON keys).
-- **Compared with another definition**: this card beside the row's definition (or any other
-  card): a verdict (identical, same values but defined differently, different values and in
-  which fields), then source, kind, message ID, every field with its type, divisor and unit, the
-  latest values, how many variants decode and the files. Differences are highlighted; rows that
-  differ only in a name are in italics. Two definitions with the same values and different names
-  or comments: pick the one you prefer, or rename.
-- **History over the recording**: a chart of the definition's values by the timestamp of every
-  telegram (hover for a value, click to move the bus there; the blue band is the window) and the
-  values as a list of runs of the same value, newest first, the clicked run highlighted.
-- **Tune it**: the definition as a form (kind, circuit, name, comment, every field with where it
-  is, its type in plain words, divisor or value names, unit) and as raw CSV, both ways. While you
-  type, ebusd's own decoder reads the draft against every recorded variant (how many decode, the
-  latest text, the errors), and the chart and list show the **draft**. **Save as my version**
-  never changes the source: it adds your own version to your scratchpad, decodes the whole
-  recording with it and picks it for the row.
+- the definition's fields over the bytes they read, each with its type, divisor and unit; the row
+  label has ● to **use it for this message** (it joins your setup, the others leave it), its source,
+  kind and how many recorded variants it decodes, *in setup* and **copy** (a copy of your own);
+- what it **decodes** from the telegram shown;
+- a **sparkline** per field over the whole recording.
+
+Cells where a definition reads the same bytes differently from the row's definition are
+highlighted, so two definitions of one message are compared by eye. The **telegram** row shows one
+recorded telegram (newest first; the one you clicked in the timeline) with **◀ older** and
+**newer ▶** to step through the recording. Click any field, value or sparkline for the **chart**
+of that field below the table (hover for a value, click to move the timeline there) and its values
+as a list. A definition of the setup gets a row with the **names in your config** per field.
+
+A definition of your own (kind *mine*) is edited in the table: name, type (as in the CSV: `UCH`,
+`D2C`, `BI0:1`, `BCD:2`), divisor or value names and unit per field, or its whole line as text;
+every change is saved and decoded over the recording at once.
 
 Statuses of a definition:
 

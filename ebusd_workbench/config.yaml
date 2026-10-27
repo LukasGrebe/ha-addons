@@ -1,5 +1,5 @@
 name: ebusd Config Workbench
-version: "0.5.0"
+version: "0.5.1"
 slug: ebusd_workbench
 description: >
   Find the ebusd message definitions that fit your eBUS devices: the telegrams the eBUSd app

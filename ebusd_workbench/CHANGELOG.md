@@ -1,4 +1,19 @@
-# 0.5.0 (unreleased)
+# 0.5.1 (unreleased)
+
+## Features
+* **The inspector**: the selected message laid out byte by byte, every definition that fits it as
+  a row that carves the bytes into fields (bit fields in bit columns), the bytes of one recorded
+  telegram with buttons to step through the recording, what every definition decodes from it, a
+  sparkline per field over the whole recording, and the chart of the clicked field below. Cells
+  where a definition reads the same bytes differently are highlighted; a definition of your own is
+  edited in place (name, type, divisor, unit per field, or its line). It replaces the source,
+  comparison, history and editor columns and the names table of a card
+* The sources strip and the devices line fold to one line each (remembered per browser); folded,
+  the sources show one combined bar for fetching and decoding
+* A pull request on an old base that today's TypeSpec library rejects is compiled partially: only
+  the files it changes (marked *partial*), instead of failing
+
+# 0.5.0
 
 One page, no modes, no git: the Workbench is a scratchpad for finding the definitions that fit
 your devices.
@@ -38,10 +53,6 @@ your devices.
   ebusd-configuration is fetched once, compiled once per commit and tried on the recorded
   telegrams of the selected message; the ones that decode it are listed with the name they give
   it and can be added as a source with one click
-* The sources strip and the devices line fold to one line each (remembered per browser); folded,
-  the sources show one combined bar for fetching and decoding
-* A pull request on an old base that today's TypeSpec library rejects is compiled partially: only
-  the files it changes (marked *partial*), instead of failing
 * A message whose definition is in your setup counts as handled: it leaves "needs a look" and
   the device chips count it as understood
 * New option **language** (en, de): the language of the definitions, as the eBUSd app's

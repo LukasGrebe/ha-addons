@@ -365,3 +365,42 @@ button.fold:hover { border-color: var(--line); }
 .combined .progress .fill { display: block; height: 100%; background: var(--accent); transition: width .3s; }
 .devices.folded { padding: 3px 12px; }
 .devices.folded .device { padding: 1px 7px; }
+
+/* the inspector: the telegram byte by byte, every definition as a row */
+.inspector-wrap { overflow-x: auto; padding: 6px 8px; }
+table.inspector { border-collapse: collapse; font-size: 12px; min-width: 100%; }
+table.inspector th, table.inspector td { border: 1px solid #eef1f4; padding: 2px 6px; vertical-align: top; white-space: nowrap; }
+table.inspector th { background: var(--bg); color: var(--muted); font-weight: 500; text-align: left; position: sticky; top: 0; z-index: 1; }
+table.inspector th.byte { text-align: center; }
+table.inspector th.byte.m { background: #fff8e1; } table.inspector th.byte.s { background: #e8f5e9; }
+table.inspector .fixed { background: #fafbfc; }
+table.inspector td.label { min-width: 260px; max-width: 340px; white-space: normal; }
+table.inspector .deflabel { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+table.inspector .defmeta, table.inspector .defacts { margin-top: 2px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 11px; }
+table.inspector tr.telegram td { background: #fffdf6; font-weight: 600; }
+table.inspector td.hex { text-align: center; }
+table.inspector td.hex.bit { padding: 2px 3px; color: var(--muted); min-width: 16px; }
+table.inspector td.hex.bit.on { color: var(--accent); font-weight: 700; }
+table.inspector .stepper { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-weight: 400; margin-top: 2px; }
+table.inspector tr.def td.field { background: var(--panel); cursor: pointer; }
+table.inspector tr.def td.field.diff { background: #fff8e1; }
+table.inspector tr.def td.field.sel, table.inspector td.value.sel, table.inspector td.spark.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+table.inspector tr.def.chosen td.label { border-left: 3px solid var(--accent); }
+table.inspector .fname { font-weight: 600; }
+table.inspector .ftype { font-size: 11px; }
+table.inspector td.field.mine input { font-family: var(--mono); font-size: 11px; width: 100%; box-sizing: border-box; padding: 0 3px; margin-bottom: 1px; }
+table.inspector td.field.mine .ftype { display: flex; gap: 2px; }
+table.inspector td.field.mine .ftypein { width: 46%; } table.inspector td.field.mine .fdiv { width: 34%; } table.inspector td.field.mine .funit { width: 20%; }
+table.inspector td.value { text-align: left; cursor: pointer; }
+table.inspector td.spark { padding: 1px 3px; cursor: pointer; }
+table.inspector canvas.spark { display: block; }
+table.inspector td.gap { background: #f7f9fb; }
+table.inspector td.rowname { color: var(--muted); font-size: 11px; text-align: right; }
+table.inspector tr.mynames input { font-family: var(--mono); font-size: 11px; width: 100%; box-sizing: border-box; padding: 0 3px; }
+table.inspector tr.raw textarea { width: 100%; min-width: 600px; font-family: var(--mono); font-size: 11px; }
+table.inspector tr.sparks td { border-bottom: 2px solid var(--line); }
+table.inspector td.field { white-space: normal; max-width: 200px; overflow-wrap: anywhere; }
+table.inspector td.field.bitfield { max-width: 76px; min-width: 56px; font-size: 11px; }
+table.inspector td.field.bitfield .fname { font-weight: 500; }
+table.inspector td.value { white-space: normal; overflow-wrap: anywhere; max-width: 200px; }
+table.inspector td.field.mine { min-width: 150px; }
