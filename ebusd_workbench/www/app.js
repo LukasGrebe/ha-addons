@@ -100,6 +100,7 @@ export const bus = {
 };
 
 export const app = { status: null, settings: null, views: {} };
+window.workbench = app;  // for debugging and tests
 
 function updateStatusBar() {
   const s = app.status;

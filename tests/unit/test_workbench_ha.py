@@ -161,7 +161,7 @@ class Logger(unittest.TestCase):
                 time.sleep(0.05)
             client.stop()
             client.join(5)
-            logged = sorted(db.events(0, 4_000_000_000_000), key=lambda e: e["id"])  # in order of arrival
+            logged = sorted(db.states(0, 4_000_000_000_000), key=lambda e: e["id"])  # in order of arrival
             self.assertEqual([(e["source"], e["entity"], e["state"], e["previous"]) for e in logged], [
                 ("ha-initial", "switch.pump", "off", None),
                 ("ha", "switch.pump", "on", "off"),

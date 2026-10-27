@@ -23,7 +23,7 @@ telegram on the bus is now stored, also unknown and broken ones.
 
 | Option | Meaning |
 |---|---|
-| **Telegram database** | The same path as `sqlite_db` of the eBUSd app, default `/share/ebusd/telegrams.db`. The Workbench stores entity changes in this file as well (table `event`) and creates it if the eBUSd app has not yet. |
+| **Telegram database** | The same path as `sqlite_db` of the eBUSd app, default `/share/ebusd/telegrams.db`. Both layouts of the telegram log are read (schema version 2 of eBUSd 26.1.11 and later, and version 1). The Workbench adds its own table `ha_state` for entity changes and shows the notes of the eBUSd terminal's `log` command (table `event`); it creates the file if the eBUSd app has not yet. |
 | **Deploy folder for compiled CSV files** | Where the compiled definitions are written, default `/share/ebusd/config`. |
 | **Git repository of the message definitions** | HTTPS URL of your fork of [ebusd-configuration](https://github.com/john30/ebusd-configuration), cloned into the app config folder (`/addon_configs/…_ebusd_workbench/repo`) at start when it is not there yet. Can also be done from the UI. |
 | **Git user name / email** | Author of the commits made in the Workbench. |
@@ -57,10 +57,11 @@ slave are the **value**.
 - A single telegram is a **tick**.
 - Rows are sorted by address; use *most changes* to find what varied, *only changed* to hide
   constant rows, and the filter for addresses, commands or names.
-- **ID bytes** sets the default message ID length; per command lengths are set from the
-  details panel or in *Settings*. Rows that seem to change with every telegram (a date/time
-  broadcast for example) do so because the whole payload is the value; rows mixing several
-  registers need more ID bytes.
+- **ID bytes** sets the default message ID length; per command (or device and command)
+  lengths are set from the details panel or in *Settings*, and **ID lengths from
+  definitions** applies the lengths of the decoded definitions after a decode run. Rows that
+  seem to change with every telegram (a date/time broadcast for example) do so because the
+  whole payload is the value; rows mixing several registers need more ID bytes.
 - Wheel zooms, dragging pans, `+`/`-`/`←`/`→` work as well, `N` returns to **live** mode in
   which the right edge follows the current time. The strip at the top shows the whole recording
   (red: telegrams with errors); click or drag in it to jump.
@@ -74,27 +75,32 @@ The window is cut when it contains more than 300 000 telegrams (a note appears);
 
 In *Settings* pick the entities whose state changes you want to see (the circulation pump,
 a thermostat, a window sensor, …). The Workbench subscribes to them through the Home
-Assistant API and stores every change in the table `event` of the telegram database, with
+Assistant API and stores every change in the table `ha_state` of the telegram database, with
 the previous state and the attributes. They appear as rows at the top of the timeline. Only
 state changes are stored, attribute-only changes are ignored.
 
-**+ marker** adds a vertical line with a note at the current time, e.g. "opened the hot
-water tap", so that you can find the telegrams that followed.
+### Notes and markers
 
-### Table `event`
+Notes made with the `log` command in the eBUSd app's terminal ("set hot water to 50 °C",
+with the time it happened and how exact that time is) are drawn as orange markers with the
+uncertainty as a band. **+ marker** in the timeline adds such a note at the current time.
+Both live in the table `event` of the telegram database, in the layout of the eBUSd app.
 
-| Column | Content |
+### Tables
+
+| Table | Content |
 |---|---|
-| `ts` | time in ns since 1970-01-01 UTC, like `telegram.ts` |
-| `source` | `ha` state change, `ha-initial` state when the subscription started, `marker` manual |
-| `entity`, `state`, `previous`, `attributes` | entity id, new and previous state, attributes as JSON |
-| `note` | text of a marker |
+| `event` (eBUSd app) | `ts`, `ts_min`, `ts_max` (ns since 1970-01-01 UTC), `message`, `logged` |
+| `ha_state` (Workbench) | `ts`, `entity`, `state`, `previous`, `attributes` (JSON), `source` (`ha` change, `ha-initial` state when the subscription started) |
 
 ---
 
 ## Definitions
 
-The left column is the git repository, the middle the editor, the right the build steps.
+The left column is the git repository, the middle the workspace (editor, decoded telegrams,
+setup, export, evidence), the right the build steps.
+
+### Repository
 
 1. **Clone** your fork of ebusd-configuration (or *Start empty*). The tree shows the
    `.tsp` sources; symlinked files (ebusd-configuration shares definitions between devices
@@ -102,26 +108,109 @@ The left column is the git repository, the middle the editor, the right the buil
 2. **Edit** a file and **Save** (Ctrl+S). Changed files are marked in the tree and listed with
    *diff* and *discard*; enter a message and **Commit** the selected ones. **Pull** is
    fast-forward only, **Push** needs the access token.
-3. **Compile**: pick the entry (`src/main.tsp` compiles everything, a single file only that
-   file and what it imports) and optionally a translation file (`src/de.yaml`). Errors link
-   to the line in the editor. Unsaved changes of the open file are compiled as they are.
-4. **Test**: **from timeline window** fetches the distinct telegrams of the window shown in
-   the timeline (most frequent first), or paste telegrams as `QQZZPBSBNNDD/NNDD` (as in
-   `ebusctl grab` or the telegram log's `master`/`slave` columns). **Decode** loads the ticked
-   compiled files into ebusd's message library and decodes every telegram. The result shows
-   the matched message (circuit and name) and the decoded fields, *unknown* for telegrams
-   without a definition and the error for ones that do not fit the definition. The timeline
-   rows get the names of the decoded messages.
-   Untick files to simulate what ebusd would load for your devices: with every file of a
-   manufacturer loaded, a telegram may match a definition of another device type.
-   Conditional definitions (`[Ehp_heatpumptype=3]…` in the CSV, `@condition` in TypeSpec) only
-   match once the telegram that sets the condition (a register read, the scan identification)
-   has been decoded, so the telegrams are decoded in the order of their first appearance.
-5. **Deploy** writes the compiled `.csv` and `.inc` files to the deploy folder (optionally
-   into a subfolder). *Remove other files there* deletes stale definitions. Then restart the
-   eBUSd app with `--configpath` pointing there.
 
-The compiler and the decoder are loaded into the browser on first use (about 1.7 MB).
+### Community layers
+
+Definitions for a heating system often sit in open pull requests of
+[ebusd-configuration](https://github.com/john30/ebusd-configuration/pulls) for a long time
+(for a Vaillant aroTHERM with HMU HW5103 and VWZIO, for example, #660, #598 and #604 add a lot).
+Instead of merging them into your fork, add them as **layers**: enter the pull request number
+(or a branch such as `upstream/master`) and the Workbench fetches its head from the upstream
+repository (`https://github.com/john30/ebusd-configuration.git`, changeable in the settings
+file) into `refs/workbench/`, without touching your checkout. Compiling then applies the
+files each enabled layer changes on top of your sources, in the listed order; a file changed
+by several layers is merged three-way like git does, and conflicts show up as compile errors
+with git's markers. Every decoded definition is attributed to the layer that added it, and the
+setup files record it (`# from layer pr/660`). ↻ re-fetches a layer when the pull request was
+updated, ✕ removes it.
+
+### Compile
+
+Pick the entry (`src/main.tsp` compiles everything, a single file only that file and what it
+imports) and optionally a translation file (`src/de.yaml`). Errors link to the line in the
+editor. Unsaved changes of the open file are compiled as they are.
+
+### Decode
+
+**from timeline window** fetches the distinct telegrams of the window shown in the timeline
+(in the order of their first appearance), or paste telegrams as `QQZZPBSBNNDD/NNDD` (as in
+`ebusctl grab` or the telegram log's `master`/`slave` columns). **Decode** loads the compiled
+files into ebusd's message library and, with *all candidates* ticked, lists for every telegram
+every definition that fits it: the one ebusd itself would use (file chosen by the scan
+identification of the device, condition met, longest ID) and the others. The **Decoded** tab
+shows them per telegram, coloured as in the timeline; the timeline rows get the names of the
+decoded messages and offer the ID lengths of the definitions.
+
+Conditional definitions (`[Ehp_heatpumptype=3]…` in the CSV, `@condition` in TypeSpec) only
+count as used once the telegram that sets the condition has been decoded, which is why the
+telegrams are decoded in the order of their first appearance.
+
+### Setup: the definitions of this installation
+
+Upstream hides many definitions from an installation: a file is loaded only for the device
+identification it is named after (`08.hmu.HW5103.csv` but not `08.hmu.csv`), conditions
+refer to register values the controller may never request, and some pull requests are not
+merged. The **Setup** tab lists every definition that matched a recorded telegram, grouped by
+device with its identification and the file ebusd loads for it, with a status:
+
+| Status | Meaning |
+|---|---|
+| active | ebusd uses it for this installation |
+| variant | from a file of another device variant; ebusd would not load it, but it decodes the recorded telegrams |
+| conditional | its condition was not met by the recorded telegrams, but it decodes them |
+| hidden | in the file ebusd loads, but another definition takes precedence |
+| error | matches the telegram but does not decode it (wrong length or values) |
+| companion | not seen on the bus: the counterpart of a seen definition, usually the write definition |
+
+Tick the definitions for your setup: **include what ebusd uses** is the safe baseline,
+**+ plausible hidden ones** adds every hidden definition that decoded all its telegrams
+without error, **+ counterparts of included** adds the write definitions belonging to included
+ones. The example column shows decoded values, so you can judge whether a hidden definition
+fits (a temperature of 21.5 °C is plausible, 6553.5 °C is not). Write definitions are marked
+red: writing to a device with a definition of another variant can be harmful, so include only
+what you are sure about, and test reading first. The selection is stored in the app's data
+folder.
+
+### Export
+
+- **Definitions of this installation**: one CSV file per circuit with the included
+  definitions, conditions removed, with comments naming the source file and layer of each
+  definition. Circuit names can be changed first (`vwz → vwzio` if your entities use that
+  topic). **Deploy setup** writes them to the deploy folder (optionally a subfolder, removing
+  other definition files there if ticked); ebusd then needs `--configpath` pointing there and
+  loads them at startup without scan-based file selection (remove `--scanconfig`, or keep it
+  with no `vaillant/` folder present). **Download** saves the files locally.
+- **All compiled files**: the complete tree as ebusd's scan expects it.
+- **Home Assistant climate and water heater**: `mqtt:` YAML for `configuration.yaml` with a
+  `climate` per zone (`Z1RoomTemp`, `Z1DayTemp`, `Z1OpMode`, `RoomHumidity`; the action from
+  `RunDataStatuscode` when present) and a `water_heater` (`HwcTempDesired`, `HwcOpMode`, the
+  storage temperature from `HwcStorageTemp` or a message with the field `hwcstoragetemp`),
+  built from the setup's messages and their field names. ebusd's own `mqtt-hassio.cfg` creates
+  a sensor, number or select per field; these composite entities it cannot. A note at the top
+  lists what is missing (usually the write definitions). Next to it, the eBUSd app options for
+  the setup: `--configpath` and `--mqttvar=filter-name=…` so that MQTT discovery publishes the
+  setup's messages, including writable ones.
+- **ebusd raw log for ebus-evidence**: the recorded telegrams of a time range as ebusd
+  message-mode raw log (`--lograwdata`), the input of
+  [ebus-evidence](https://github.com/MarcelT87/ebus-evidence). Telegrams sent by ebusd itself
+  (own address, default 31) are written with the direction changes ebusd logs. Run
+  `ebus-evidence doctor --raw FILE --profile hw5103-open-evidence`, `import --raw FILE` and
+  `export` on another computer to get a verified `evidence.zip` for cross-installation
+  research (see
+  [ebusd-configuration#690](https://github.com/john30/ebusd-configuration/issues/690)).
+
+### Evidence
+
+Paste an ebus-evidence profile (YAML) or load the bundled example
+(`hw5103-open-evidence`, MIT License, MarcelT87) and **Run checks on the timeline window**:
+for every check the matching telegrams of the window are counted, the first and last
+occurrence shown and the value the check describes decoded (u8, u16le, float32le, …). This
+shows what your bus carries for what the research is looking at; **Download summary** saves
+it as JSON for discussion. The verified bundle must come from ebus-evidence itself, from the
+exported raw log. Checks naming `source=f1` refer to ebusd's own address in the profile
+author's installation.
+
+The compiler and the decoder are loaded into the browser on first use (about 1.8 MB).
 
 ---
 
@@ -131,15 +220,16 @@ The compiler and the decoder are loaded into the browser on first use (about 1.7
 |---|---|---|
 | `/share/ebusd/telegrams.db` | `/share/ebusd/telegrams.db` | telegram database (eBUSd app and Workbench) |
 | `/share/ebusd/config` | `/share/ebusd/config` | deployed CSV files for the eBUSd app |
-| `/config/repo` | `/addon_configs/…_ebusd_workbench/repo` | git repository (in backups) |
-| `/data/settings.json` | – | Workbench settings (entities, ID lengths, …; in backups) |
+| `/config/repo` | `/addon_configs/…_ebusd_workbench/repo` | git repository with `refs/workbench/*` for the layers (in backups) |
+| `/data/settings.json` | – | Workbench settings (entities, ID lengths, layers, setup, …; in backups) |
 
 ---
 
 ## Limitations of this first version
 
 - The editor is a plain text area (no syntax highlighting or completion).
-- Telegrams are grouped by address and ID bytes, not by the message definitions.
+- Telegrams are grouped by address and ID bytes; the ID lengths of the decoded definitions can
+  be applied with one click, but rows are not merged by message definition yet.
 - Compiling and decoding happen on the main thread of the browser; the full
   ebusd-configuration takes about two seconds.
 - Only HTTPS remotes with a token are supported for push.

@@ -70,6 +70,7 @@ await build({
 
 await build({
   entryPoints: [join(here, "..", "wasm", "loader.js")],
+  nodePaths: [join(here, "node_modules")],
   bundle: true,
   format: "esm",
   platform: "browser",

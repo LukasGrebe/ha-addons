@@ -1,11 +1,17 @@
 """The git repository with the message definitions (TypeSpec sources) and safe file access to it."""
 
+import io
 import os
+import re
 import shutil
 import subprocess
+import tarfile
+import tempfile
 
 GIT_TIMEOUT = 60
 CLONE_TIMEOUT = 600
+UPSTREAM_URL = "https://github.com/john30/ebusd-configuration.git"
+LAYER_REF = re.compile(r"^(pr/[0-9]{1,6}|upstream/[A-Za-z0-9._/-]{1,100}|origin/[A-Za-z0-9._/-]{1,100})$")
 SOURCE_SUFFIXES = (".tsp", ".yaml", ".yml", ".json", ".csv", ".md")
 SKIP_DIRS = {".git", "node_modules"}
 MAX_TREE_ENTRIES = 5000
@@ -188,6 +194,161 @@ class Repo:
         args.append(branch)
         self.run(*args)
         return self.status()
+
+    # -- layers: pull requests and branches compiled on top of the checkout -------------
+
+    @staticmethod
+    def layer_ref(spec):
+        """Normalise a layer given as "660", "#660", "pr/660", "upstream/master" or "origin/next"."""
+        spec = str(spec or "").strip()
+        if re.fullmatch(r"#?[0-9]{1,6}", spec):
+            spec = "pr/" + spec.lstrip("#")
+        if not LAYER_REF.match(spec) or ".." in spec or spec.endswith("/") or spec.endswith(".lock"):
+            raise RepoError("a layer is a pull request number (660) or a branch (upstream/master, origin/next)")
+        return spec
+
+    def ensure_upstream(self, url=None):
+        """Make sure the remote `upstream` (the repository the pull requests belong to) exists."""
+        url = url or UPSTREAM_URL
+        origin = self.run("remote", "get-url", "origin", check=False)
+        if origin.returncode == 0 and origin.stdout.strip().rstrip("/") == url.rstrip("/"):
+            return "origin"
+        current = self.run("remote", "get-url", "upstream", check=False)
+        if current.returncode != 0:
+            self.run("remote", "add", "upstream", url)
+        elif current.stdout.strip() != url:
+            self.run("remote", "set-url", "upstream", url)
+        return "upstream"
+
+    def fetch_layer(self, spec, upstream_url=None):
+        """Fetch a pull request head or branch into refs/workbench/<layer> and describe it."""
+        ref = self.layer_ref(spec)
+        kind, _, rest = ref.partition("/")
+        if kind == "pr":
+            remote = self.ensure_upstream(upstream_url)
+            source = f"refs/pull/{rest}/head"
+        elif kind == "upstream":
+            remote = self.ensure_upstream(upstream_url)
+            source = f"refs/heads/{rest}"
+        else:
+            remote, source = "origin", f"refs/heads/{rest}"
+        self.run("fetch", "--quiet", "--force", remote, f"{source}:refs/workbench/{ref}", timeout=CLONE_TIMEOUT)
+        return self.layer_info(ref)
+
+    def layer_info(self, ref, subdir=""):
+        """Head commit and the files a layer changes against the checkout's history."""
+        ref = self.layer_ref(ref)
+        full = f"refs/workbench/{ref}"
+        head = self.run("log", "-1", "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s", full, check=False)
+        if head.returncode != 0:
+            return {"ref": ref, "fetched": False}
+        base = self.run("merge-base", "HEAD", full, check=False)
+        base_rev = base.stdout.strip() if base.returncode == 0 and base.stdout.strip() else "HEAD"
+        args = ["diff", "--name-status", "--no-renames", base_rev, full]
+        if subdir:
+            args += ["--", safe_relative(subdir)]
+        changes = []
+        for line in self.run(*args).stdout.splitlines():
+            status, _, path = line.partition("\t")
+            if path:
+                changes.append({"status": status[:1], "path": path})
+        return {"ref": ref, "fetched": True, "head": self._parse_log_line(head.stdout.strip()), "changes": changes,
+                "common_history": base_rev != "HEAD"}
+
+    def remove_layer(self, ref):
+        ref = self.layer_ref(ref)
+        self.run("update-ref", "-d", f"refs/workbench/{ref}", check=False)
+
+    def layer_files(self, ref, subdir=""):
+        """The TypeSpec sources below subdir in a layer, as {relative path: content}."""
+        ref = self.layer_ref(ref)
+        args = ["archive", "--format=tar", f"refs/workbench/{ref}"]
+        if subdir:
+            args.append(safe_relative(subdir))
+        proc = self.run(*args, timeout=CLONE_TIMEOUT)  # text=True decodes; redo as bytes
+        raw = subprocess.run(["git", *args], cwd=self.dir, capture_output=True, timeout=CLONE_TIMEOUT).stdout
+        if proc.returncode != 0 or not raw:
+            raise RepoError(f"unable to read layer {ref}")
+        prefix = (safe_relative(subdir) + "/") if subdir else ""
+        result = {}
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as tar:
+            for member in tar:
+                if not member.isfile() or not member.name.endswith((".tsp", ".yaml", ".yml")):
+                    continue
+                name = member.name
+                if prefix and name.startswith(prefix):
+                    name = name[len(prefix):]
+                handle = tar.extractfile(member)
+                if handle is not None:
+                    result[name] = handle.read().decode("utf-8", errors="replace")
+        return result
+
+    def show(self, rev, path):
+        """The content of a file at a revision, or None if it does not exist there."""
+        proc = self.run("show", f"{rev}:{path}", check=False)
+        return proc.stdout if proc.returncode == 0 else None
+
+    def merge_file(self, ours, base, theirs, label):
+        """Three-way merge of file contents like git does; returns (content, conflicted)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for name, content in (("ours", ours), ("base", base), ("theirs", theirs)):
+                path = os.path.join(tmp, name)
+                with open(path, "w", encoding="utf-8", newline="") as f:
+                    f.write(content or "")
+                paths.append(path)
+            proc = self.run("merge-file", "-p", "-L", "checkout", "-L", "base", "-L", label, *paths, check=False)
+            # exit status: number of conflicts, or negative on error
+            if proc.returncode < 0:
+                raise RepoError(f"merging {label} failed: {proc.stderr.strip()}")
+            return proc.stdout, proc.returncode > 0
+
+    def sources_with_layers(self, subdir, layers):
+        """The sources of the checkout with the changes of the layers merged in order.
+
+        A file changed by one layer is taken from that layer; a file changed by several layers is
+        merged three-way (checkout, the layer's merge base, the layer) like git would, conflict
+        markers included. Returns {files, origins, conflicts, layers}: origins maps a file to the
+        layers that changed it, conflicts lists files with conflict markers.
+        """
+        files = self.sources(subdir)
+        origins = {}
+        conflicts = []
+        info = []
+        rel = safe_relative(subdir) if subdir else ""
+        for spec in layers:
+            layer = self.layer_info(spec, subdir)
+            info.append(layer)
+            if not layer.get("fetched"):
+                continue
+            contents = None
+            full = f"refs/workbench/{layer['ref']}"
+            base_rev = self.run("merge-base", "HEAD", full, check=False).stdout.strip() if layer.get("common_history") else "HEAD"
+            for change in layer["changes"]:
+                path = change["path"]
+                if rel:
+                    if not path.startswith(rel + "/"):
+                        continue
+                    path = path[len(rel) + 1:]
+                if not path.endswith((".tsp", ".yaml", ".yml")):
+                    continue
+                if change["status"] == "D":
+                    files.pop(path, None)
+                else:
+                    if contents is None:
+                        contents = self.layer_files(layer["ref"], subdir)
+                    if path not in contents:
+                        continue
+                    if path in origins and path in files:
+                        merged, conflicted = self.merge_file(files[path], self.show(base_rev, change["path"]), contents[path], layer["ref"])
+                        files[path] = merged
+                        if conflicted:
+                            conflicts.append({"path": path, "layers": origins[path] + [layer["ref"]]})
+                    else:
+                        files[path] = contents[path]
+                origins.setdefault(path, []).append(layer["ref"])
+        return {"files": files, "origins": {p: l[-1] for p, l in origins.items()}, "origin_layers": origins,
+                "conflicts": conflicts, "layers": info}
 
     # -- files ------------------------------------------------------------------
 

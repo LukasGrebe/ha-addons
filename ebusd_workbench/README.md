@@ -15,6 +15,11 @@ A companion of the [eBUSd app](../ebusd) for everyone who works on eBUS message 
 - **Test against real telegrams in the browser**: ebusd's own message library, compiled to
   WebAssembly, loads the compiled CSV files and decodes the recorded telegrams, like
   `ebusd --checkconfig --inject` does.
+- **A setup for your installation**: see every definition that fits your recorded telegrams,
+  also the ones ebusd hides behind device variants and conditions, and the ones in open
+  community pull requests (compiled as layers on top of your checkout); pick the plausible
+  ones and export them as CSV files for the eBUSd app, as Home Assistant climate and water
+  heater entities, and as an ebusd raw log for [ebus-evidence](https://github.com/MarcelT87/ebus-evidence).
 - **git**: clone, edit, diff, commit, pull and push from the UI; **deploy** the compiled files
   to the share folder for the eBUSd app.
 

@@ -1,0 +1,61 @@
+# Example evidence profile of the ebus-evidence project (https://github.com/MarcelT87/ebus-evidence),
+# profiles/hw5103-open-evidence.yaml, MIT License, Copyright (c) 2026 MarcelT87.
+# Vaillant-family passive discriminator set for current HW5103/HMU/VWZIO research paths.
+name: hw5103-open-evidence
+version: 2
+description: Vaillant-family passive discriminator set for current HW5103/HMU/VWZIO research paths.
+
+checks:
+  - id: hmu_a80e_nonzero
+    description: HMU B509 /a80e decoded value
+    match:
+      source: "f1"
+      target: "08"
+      pbsb: "b509"
+      request: "05540200a80e"
+    value:
+      from: response
+      type: float32le
+      offset: 5
+    context:
+      when:
+        value_nonzero: true
+      before_seconds: 120
+      after_seconds: 180
+
+  - id: hmu_ba08_variants
+    description: HMU B509 /ba08 response values
+    match:
+      source: "f1"
+      target: "08"
+      pbsb: "b509"
+      request: "05540200ba08"
+    value:
+      from: response
+      type: u8
+      offset: 5
+    context:
+      when:
+        value_nonzero: true
+      before_seconds: 120
+      after_seconds: 180
+
+  - id: vwzio_3538_variants
+    description: VWZIO B51A /3538 typed response variants
+    match:
+      source: "f1"
+      target: "76"
+      pbsb: "b51a"
+      request: "0405ff3538"
+
+  - id: vwzio_b512_states
+    description: VWZIO B512 /0613 observed raw state values
+    match:
+      source: "03"
+      target: "76"
+      pbsb: "b512"
+      request_prefix: "0613"
+    value:
+      from: request
+      type: u8
+      offset: 6

@@ -2,6 +2,10 @@
 import * as compiler from "@typespec/compiler";
 import { libs } from "../gen/libs.js";
 import { createVirtualHost, ROOT } from "./host.js";
+import jsYaml from "js-yaml";
+
+/** YAML parser (js-yaml, a dependency of the eBUS TypeSpec library), e.g. for ebus-evidence profiles. */
+export const yaml = { load: (text) => jsYaml.load(text), dump: (obj) => jsYaml.dump(obj, { lineWidth: 120 }) };
 
 export const versions = Object.fromEntries(Object.entries(libs).map(([n, l]) => [n, l.version]));
 

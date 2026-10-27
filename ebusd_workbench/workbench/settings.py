@@ -7,10 +7,14 @@ import threading
 DEFAULTS = {
     "entities": [],               # Home Assistant entities whose state changes are logged
     "id_bytes": 1,                # message ID length (data bytes after PBSB) used to group telegrams
-    "id_overrides": {"b509": 3},  # per PBSB: Vaillant register read/write carries a 3-byte ID
+    "id_overrides": {"b509": 3, "b524": 6},  # per PBSB or ZZ+PBSB: Vaillant register access carries a longer ID
     "compile": {"entry": "src/main.tsp", "translations": ""},
     "deploy_subdir": "",
     "test_files": [],             # compiled files to load when testing; empty: all
+    "setup": {},                  # the definitions chosen for this installation (definitions tab)
+    "layers": [],                 # pull requests / branches compiled on top of the checkout: [{ref}]
+    "upstream_url": "https://github.com/john30/ebusd-configuration.git",  # where the pull requests live
+    "evidence_profile": "",       # ebus-evidence profile YAML last imported
     "ui": {},
 }
 
@@ -75,8 +79,8 @@ class Settings:
                 result = {}
                 for pbsb, length in value.items():
                     pbsb = str(pbsb).lower()
-                    if len(pbsb) != 4 or any(c not in "0123456789abcdef" for c in pbsb):
-                        raise ValueError(f"invalid command {pbsb}")
+                    if len(pbsb) not in (4, 6) or any(c not in "0123456789abcdef" for c in pbsb):
+                        raise ValueError(f"invalid command {pbsb} (PBSB or ZZPBSB in hex)")
                     result[pbsb] = max(0, min(8, int(length)))
                 base[key] = result
             elif key == "compile":
@@ -90,6 +94,29 @@ class Settings:
                 if not isinstance(value, list):
                     raise ValueError("test_files must be a list")
                 base[key] = [str(v)[:500] for v in value][:1000]
+            elif key == "setup":
+                if not isinstance(value, dict):
+                    raise ValueError("setup must be an object")
+                if len(json.dumps(value)) > 2_000_000:
+                    raise ValueError("setup too large")
+                base[key] = value
+            elif key == "evidence_profile":
+                base[key] = str(value)[:200_000]
+            elif key == "layers":
+                if not isinstance(value, list):
+                    raise ValueError("layers must be a list")
+                result, seen = [], set()
+                for item in value[:50]:
+                    ref = str(item.get("ref") if isinstance(item, dict) else item).strip()[:120]
+                    if ref and ref not in seen:
+                        seen.add(ref)
+                        result.append({"ref": ref})
+                base[key] = result
+            elif key == "upstream_url":
+                url = str(value).strip()[:500]
+                if url and not url.startswith(("https://", "http://", "git@", "ssh://")):
+                    raise ValueError("upstream_url must be a git URL")
+                base[key] = url
             elif key == "ui":
                 if not isinstance(value, dict):
                     raise ValueError("ui must be an object")

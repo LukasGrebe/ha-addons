@@ -5,6 +5,7 @@
 // repetitions and the typical interval. Entity state changes are rows of the same kind, manual
 // markers are vertical lines. Wheel zooms, dragging pans, clicking a run shows the telegrams.
 import { api, app, append, bus, fmt, h, toast } from "./app.js";
+import { idLength, messageColors, telegramRowKey, valueColors } from "./colors.js";
 
 const ROW = 24;
 const MIN_SPAN = 10_000;
@@ -13,18 +14,6 @@ const EVENT_LOOKBACK = 7 * 86400_000;
 const PRESETS = [["15 min", 15 * 60e3], ["1 h", 3600e3], ["6 h", 6 * 3600e3], ["24 h", 86400e3], ["3 d", 3 * 86400e3], ["10 d", 10 * 86400e3]];
 const TICK_STEPS = [1e3, 2e3, 5e3, 10e3, 15e3, 30e3, 60e3, 2 * 60e3, 5 * 60e3, 10 * 60e3, 15 * 60e3, 30 * 60e3, 3600e3, 2 * 3600e3,
   3 * 3600e3, 6 * 3600e3, 12 * 3600e3, 86400e3, 2 * 86400e3, 7 * 86400e3, 14 * 86400e3];
-
-function hashColor(str, sat = 55, light = 82) {
-  let hash = 2166136261;
-  for (let i = 0; i < str.length; i++) { hash ^= str.charCodeAt(i); hash = Math.imul(hash, 16777619); }
-  return `hsl(${(hash >>> 0) % 360} ${sat}% ${light}%)`;
-}
-
-function idLength(pb, sb, settings) {
-  const key = fmt.hex(pb) + fmt.hex(sb);
-  const overrides = settings?.id_overrides || {};
-  return key in overrides ? overrides[key] : (settings?.id_bytes ?? 1);
-}
 
 export class Timeline {
   constructor(root) {
@@ -35,7 +24,9 @@ export class Timeline {
     this.t0 = this.t1 - this.span;
     this.follow = true;
     this.data = null;
-    this.events = [];
+    this.states = [];
+    this.markers = [];
+    this.idLengths = null;
     this.histogram = null;
     this.rows = [];
     this.markers = [];
@@ -48,6 +39,7 @@ export class Timeline {
     this.loadToken = 0;
     this.build();
     bus.on("names", (names) => { this.names = names; this.buildRows(); this.render(); });
+    bus.on("idlengths", (lengths) => { this.idLengths = lengths; this.updateIdButton(); });
     bus.on("settings-changed", () => { this.syncSettings(); this.load(true); });
     bus.on("status", () => this.updateInfo());
     window.addEventListener("resize", () => this.render());
@@ -73,11 +65,12 @@ export class Timeline {
     el.onlyChanges = h("input", { type: "checkbox", onchange: () => { this.onlyChanges = el.onlyChanges.checked; this.buildRows(); this.render(); } });
     el.sort = h("select", { onchange: () => { this.sort = el.sort.value; this.buildRows(); this.render(); } },
       h("option", { value: "address" }, "by address"), h("option", { value: "activity" }, "most telegrams"), h("option", { value: "changes" }, "most changes"));
+    el.applyIds = h("button", { class: "small", style: "display:none", title: "set the message ID lengths per device and command as the decoded definitions define them", onclick: () => this.applyIdLengths() }, "ID lengths from definitions");
     el.info = h("span", { class: "hint" });
     el.toolbar = h("div", { class: "toolbar" },
       el.presets,
       h("span", { class: "group" }, h("button", { title: "zoom out (-)", onclick: () => this.zoom(2) }, "−"), h("button", { title: "zoom in (+)", onclick: () => this.zoom(0.5) }, "+"), el.follow),
-      h("span", { class: "group" }, h("label", {}, "ID bytes"), el.idBytes),
+      h("span", { class: "group" }, h("label", {}, "ID bytes"), el.idBytes, el.applyIds),
       h("span", { class: "group" }, el.filter),
       h("label", { class: "group" }, el.onlyChanges, " only changed"),
       h("span", { class: "group" }, el.sort),
@@ -103,6 +96,31 @@ export class Timeline {
     this.el.idBytes.value = String(this.settings.id_bytes ?? 1);
     const overrides = Object.entries(this.settings.id_overrides || {}).map(([k, v]) => `${k}: ${v}`).join(", ");
     this.el.idBytes.title = `Data bytes after PBSB that identify a message (the rest is the value)${overrides ? `; overrides: ${overrides}` : ""}`;
+  }
+
+  updateIdButton() {
+    const pending = this.pendingIdLengths();
+    this.el.applyIds.style.display = pending.length ? "" : "none";
+    this.el.applyIds.textContent = `ID lengths from definitions (${pending.length})`;
+  }
+
+  /** Overrides the decoded definitions suggest that differ from the current settings. */
+  pendingIdLengths() {
+    if (!this.idLengths) return [];
+    const overrides = this.settings.id_overrides || {};
+    return Object.entries(this.idLengths).filter(([key, len]) => (key in overrides ? overrides[key] : (key.slice(2, 6) in overrides ? overrides[key.slice(2, 6)] : this.settings.id_bytes)) !== len);
+  }
+
+  async applyIdLengths() {
+    const overrides = { ...(this.settings.id_overrides || {}) };
+    for (const [key, len] of this.pendingIdLengths()) overrides[key] = len;
+    try {
+      app.settings = await api.put("api/settings", { id_overrides: overrides });
+      this.syncSettings();
+      this.updateIdButton();
+      bus.emit("settings-changed");
+      this.load(true);
+    } catch (err) { toast(err.message, "err"); }
   }
 
   async changeIdBytes() {
@@ -180,7 +198,8 @@ export class Timeline {
       ]);
       if (token !== this.loadToken) return;
       this.data = runs;
-      this.events = events.events;
+      this.states = events.states;
+      this.markers = events.markers;
       this.buildRows();
       this.updateInfo();
       this.render();
@@ -203,9 +222,7 @@ export class Timeline {
   buildRows() {
     const rows = [];
     const byEntity = new Map();
-    this.markers = [];
-    for (const ev of this.events) {
-      if (ev.source === "marker") { this.markers.push(ev); continue; }
+    for (const ev of this.states) {
       if (!ev.entity) continue;
       if (!byEntity.has(ev.entity)) byEntity.set(ev.entity, []);
       byEntity.get(ev.entity).push(ev);
@@ -252,9 +269,7 @@ export class Timeline {
   nameIndex() {
     const index = new Map();
     for (const [master, name] of this.names) {
-      const pb = parseInt(master.slice(4, 6), 16), sb = parseInt(master.slice(6, 8), 16);
-      const len = idLength(pb, sb, this.settings);
-      const key = master.slice(0, 8) + master.slice(10, 10 + len * 2);
+      const key = telegramRowKey(master, this.settings);
       const existing = index.get(key);
       if (!existing) index.set(key, name);
       else if (!existing.split(", ").includes(name)) index.set(key, `${existing}, ${name}`);
@@ -269,7 +284,7 @@ export class Timeline {
       const el = h("div", { class: `tl-label ${row.kind}`, title: row.name ? `${row.label}\n${row.name}` : row.label, "data-row": i,
         onclick: () => this.showDetails(row, null) },
         h("span", { class: "key" }, row.label),
-        row.name ? h("span", { class: "name" }, row.name) : null,
+        row.name ? h("span", { class: "name", style: row.kind === "telegram" ? `color:${messageColors(row.name.split(" ")[0], row.name.split(" ").slice(1).join(" ")).text}` : "" }, row.name) : null,
         h("span", { class: "n" }, `${fmt.count(row.n)}${row.runs.length > 1 ? ` · ${row.runs.length - 1}Δ` : ""}`));
       labels.appendChild(el);
     }
@@ -349,7 +364,7 @@ export class Timeline {
       const x = this.xOf(marker.ms);
       ctx.fillStyle = "#ef6c00";
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 6, 5); ctx.lineTo(x, 10); ctx.closePath(); ctx.fill();
-      ctx.fillText(marker.note || "", x + 8, 9);
+      ctx.fillText((marker.message || "(time only)").slice(0, 60), x + 8, 9);
       ctx.fillStyle = "#6b7a8a";
     }
   }
@@ -373,14 +388,15 @@ export class Timeline {
       ctx.strokeStyle = "#eef1f4"; ctx.beginPath(); ctx.moveTo(0, y + ROW - 0.5); ctx.lineTo(this.width, y + ROW - 0.5); ctx.stroke();
       this.drawRuns(ctx, row, y);
     }
-    ctx.setLineDash([4, 3]);
-    ctx.strokeStyle = "#ef6c00";
     for (const marker of this.markers) {
-      if (marker.ms < this.t0 || marker.ms > this.t1) continue;
+      if ((marker.ms_max ?? marker.ms) < this.t0 || (marker.ms_min ?? marker.ms) > this.t1) continue;
+      const x0 = this.xOf(marker.ms_min ?? marker.ms), x1 = this.xOf(marker.ms_max ?? marker.ms);
+      if (x1 - x0 > 1.5) { ctx.fillStyle = "rgba(239,108,0,.12)"; ctx.fillRect(x0, 0, x1 - x0, height); }
       const x = Math.round(this.xOf(marker.ms)) + 0.5;
+      ctx.setLineDash([4, 3]); ctx.strokeStyle = "#ef6c00";
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+      ctx.setLineDash([]);
     }
-    ctx.setLineDash([]);
     const now = Date.now();
     if (now >= this.t0 && now <= this.t1) {
       const x = Math.round(this.xOf(now)) + 0.5;
@@ -397,9 +413,7 @@ export class Timeline {
     for (const [j, run] of row.runs.entries()) {
       if (run.t1 < this.t0 || run.t0 > this.t1) continue;
       const x0 = this.xOf(run.t0), x1 = this.xOf(run.t1);
-      const bad = run.status && run.status !== "ok";
-      const fill = bad ? "rgba(198,40,40,.22)" : hashColor(run.value, row.kind === "event" ? 65 : 55, row.kind === "event" ? 78 : 82);
-      const stroke = bad ? "#c62828" : hashColor(run.value, 45, 50);
+      const { fill, stroke } = valueColors(run.value, run.status);
       const next = row.runs[j + 1];
       if (next && row.kind === "telegram") {
         // the value holds until the next (different) telegram
@@ -551,7 +565,10 @@ export class Timeline {
     const tip = this.el.tooltip;
     const t = this.tOf(e.offsetX);
     let text = fmt.dateTime(t, this.span < 60e3);
-    if (row && run) {
+    const marker = this.markers.find((m) => Math.abs(this.xOf(m.ms) - e.offsetX) < 4 || ((m.ms_min ?? m.ms) <= t && t <= (m.ms_max ?? m.ms) && m.ms_max - m.ms_min > 1000));
+    if (marker) {
+      text = `${marker.message || "(time only)"}\n${fmt.dateTime(marker.ms)}` + (marker.ms_max > marker.ms_min ? ` (between ${fmt.time(marker.ms_min)} and ${fmt.time(marker.ms_max)})` : "");
+    } else if (row && run) {
       if (row.kind === "telegram") {
         text = `${row.label}${row.name ? `  ${row.name}` : ""}\n${run.label}${run.status !== "ok" ? `  [${run.status}]` : ""}\n`
           + (run.n === 1 ? `once at ${fmt.time(run.t0, true)}` : `${fmt.count(run.n)}× from ${fmt.time(run.t0)} to ${fmt.time(run.t1)} (${fmt.duration(run.t1 - run.t0)})`

@@ -39,7 +39,7 @@ export class SettingsView {
     const settings = app.settings || { entities: [] };
     const ha = app.status?.ha || {};
     box.replaceChildren(h("h2", {}, "Home Assistant entities"),
-      h("div", { class: "hint" }, "State changes of these entities are stored in the telegram database (table event) and shown in the timeline, e.g. the circulation pump switch or a thermostat."),
+      h("div", { class: "hint" }, "State changes of these entities are stored in the telegram database (table ha_state) and shown in the timeline, e.g. the circulation pump switch or a thermostat. Notes made with the log command of the eBUSd terminal (table event) are shown as markers."),
       !ha.configured ? h("div", { class: "warn" }, `Home Assistant API not available: ${ha.last_error || "not running as app"}`) : ha.connected ? h("div", { class: "ok" }, `connected, ${ha.events_logged || 0} changes logged since start`) : h("div", { class: "err" }, `not connected: ${ha.last_error || "connecting…"}`));
     const list = h("div", { class: "entity-list" });
     for (const entity of settings.entities) {
@@ -84,15 +84,15 @@ export class SettingsView {
         h("button", { class: "small", onclick: () => { delete overrides[pbsb]; this.saveSettings({ id_overrides: overrides }); } }, "remove"))));
     };
     renderRows();
-    const pbsb = h("input", { type: "text", placeholder: "pbsb, e.g. b509", size: 8, maxlength: 4 });
+    const pbsb = h("input", { type: "text", placeholder: "pbsb or zzpbsb, e.g. b509 or 08b509", size: 10, maxlength: 6 });
     const len = h("input", { type: "number", min: 0, max: 8, value: 3 });
     box.replaceChildren(h("h2", {}, "Telegram grouping"),
-      h("div", { class: "hint" }, "A timeline row is one source, destination, command (PBSB) and message ID. The ID is the first data bytes of the master part; the remaining bytes and the answer are the value. Rows whose value seems to change with every telegram usually need more ID bytes, rows mixing several registers fewer."),
+      h("div", { class: "hint" }, "A timeline row is one source, destination, command (PBSB) and message ID. The ID is the first data bytes of the master part; the remaining bytes and the answer are the value. Rows whose value seems to change with every telegram usually need more ID bytes, rows mixing several registers fewer. Per command (PBSB) or per device and command (ZZPBSB); the timeline offers the lengths of the decoded definitions after a decode run."),
       h("div", { class: "row", style: "margin:8px 0" }, h("label", {}, "default ID length: "), select),
       h("h3", {}, "per command"), rows,
       h("div", { class: "ov" }, pbsb, len, h("button", { class: "small", onclick: () => {
         const key = pbsb.value.trim().toLowerCase();
-        if (!/^[0-9a-f]{4}$/.test(key)) return toast("command must be 4 hex digits (PB SB)", "err");
+        if (!/^([0-9a-f]{4}|[0-9a-f]{6})$/.test(key)) return toast("command must be PBSB or ZZPBSB in hex", "err");
         overrides[key] = Number(len.value);
         this.saveSettings({ id_overrides: overrides });
       } }, "add")));

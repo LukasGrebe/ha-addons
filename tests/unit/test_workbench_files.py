@@ -168,14 +168,14 @@ class SettingsFile(unittest.TestCase):
             path = os.path.join(tmp, "data", "settings.json")
             settings = Settings(path)
             self.assertEqual(settings.entities, [])
-            self.assertEqual(settings.as_dict()["id_overrides"], {"b509": 3})
+            self.assertEqual(settings.as_dict()["id_overrides"], {"b509": 3, "b524": 6})
             changed = settings.update({"entities": ["switch.pump ", "bad entity", "light.x"], "id_bytes": 99,
-                                       "id_overrides": {"B504": "2"}, "unknown": 1, "deploy_subdir": "/en/"})
+                                       "id_overrides": {"B504": "2", "08b509": 5}, "unknown": 1, "deploy_subdir": "/en/"})
             self.assertTrue(changed)
             self.assertEqual(settings.entities, ["light.x", "switch.pump"])
             self.assertFalse(settings.update({"entities": ["light.x", "switch.pump"]}))
             data = Settings(path).as_dict()
-            self.assertEqual((data["id_bytes"], data["id_overrides"], data["deploy_subdir"]), (8, {"b504": 2}, "en"))
+            self.assertEqual((data["id_bytes"], data["id_overrides"], data["deploy_subdir"]), (8, {"b504": 2, "08b509": 5}, "en"))
             self.assertEqual(data["compile"]["entry"], "src/main.tsp")
             for bad in ({"entities": "x"}, {"id_overrides": {"zz": 1}}, {"id_overrides": {"b509": "x"}}, [], {"compile": 1}):
                 with self.assertRaises((ValueError, TypeError)):
@@ -185,3 +185,101 @@ class SettingsFile(unittest.TestCase):
 if __name__ == "__main__":
     import unittest.mock  # noqa: F401
     unittest.main()
+
+
+class Layers(unittest.TestCase):
+    """Pull requests of the upstream repository compiled on top of the checkout."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.upstream = os.path.join(self.tmp.name, "upstream.git")
+        git("init", "--bare", "-q", "--initial-branch=master", self.upstream, cwd=self.tmp.name)
+        work = os.path.join(self.tmp.name, "work")
+        git("clone", "-q", self.upstream, work, cwd=self.tmp.name)
+        os.makedirs(os.path.join(work, "src", "vaillant"))
+        self.padding = "".join(f"// line {i}\n" for i in range(8))  # keeps the changes of the pull requests apart
+        with open(os.path.join(work, "src", "vaillant", "08.hmu.tsp"), "w") as f:
+            f.write("model Hmu {}\n" + self.padding)
+        with open(os.path.join(work, "src", "vaillant", "76.vwz.tsp"), "w") as f:
+            f.write("model Vwz {}\n")
+        git("add", "-A", cwd=work)
+        git("commit", "-q", "-m", "base", cwd=work)
+        git("push", "-q", "origin", "HEAD:master", cwd=work)
+        # a pull request: changes one file, adds one, deletes one
+        git("checkout", "-q", "-b", "pr", cwd=work)
+        with open(os.path.join(work, "src", "vaillant", "08.hmu.tsp"), "w") as f:
+            f.write("model Hmu { a: UCH }\n" + self.padding)
+        with open(os.path.join(work, "src", "vaillant", "b531_inc.tsp"), "w") as f:
+            f.write("model Inc {}\n")
+        os.remove(os.path.join(work, "src", "vaillant", "76.vwz.tsp"))
+        git("add", "-A", cwd=work)
+        git("commit", "-q", "-m", "pr 660", cwd=work)
+        git("push", "-q", "origin", "HEAD:refs/pull/660/head", cwd=work)
+        # the user's fork: a clone of upstream with a local change
+        self.fork = os.path.join(self.tmp.name, "fork.git")
+        git("clone", "-q", "--bare", self.upstream, self.fork, cwd=self.tmp.name)
+        self.patch = unittest.mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
+                                                           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"})
+        self.patch.start()
+        self.repo = Repo(os.path.join(self.tmp.name, "checkout"))
+        self.repo.clone(self.fork)
+
+    def tearDown(self):
+        self.patch.stop()
+        self.tmp.cleanup()
+
+    def test_refs(self):
+        self.assertEqual(Repo.layer_ref("660"), "pr/660")
+        self.assertEqual(Repo.layer_ref("#660"), "pr/660")
+        self.assertEqual(Repo.layer_ref("upstream/master"), "upstream/master")
+        for bad in ("", "../x", "pr/x", "refs/heads/x", "origin/a..b", "foo"):
+            with self.assertRaises(RepoError):
+                Repo.layer_ref(bad)
+
+    def test_fetch_and_apply(self):
+        self.assertEqual(self.repo.layer_info("660"), {"ref": "pr/660", "fetched": False})
+        layer = self.repo.fetch_layer("660", self.upstream)
+        self.assertTrue(layer["fetched"] and layer["common_history"])
+        self.assertEqual(layer["head"]["subject"], "pr 660")
+        self.assertEqual(sorted((c["status"], c["path"]) for c in layer["changes"]),
+                         [("A", "src/vaillant/b531_inc.tsp"), ("D", "src/vaillant/76.vwz.tsp"), ("M", "src/vaillant/08.hmu.tsp")])
+        self.assertEqual(self.repo.run("remote", "get-url", "upstream").stdout.strip(), self.upstream)
+        merged = self.repo.sources_with_layers("src", ["pr/660"])
+        self.assertEqual(merged["files"], {"vaillant/08.hmu.tsp": "model Hmu { a: UCH }\n" + self.padding, "vaillant/b531_inc.tsp": "model Inc {}\n"})
+        self.assertEqual(merged["origins"], {"vaillant/08.hmu.tsp": "pr/660", "vaillant/b531_inc.tsp": "pr/660", "vaillant/76.vwz.tsp": "pr/660"})
+        self.assertEqual(merged["conflicts"], [])
+        # the checkout itself is untouched
+        self.assertEqual(self.repo.status()["changes"], [])
+        self.assertEqual(self.repo.read_file("src/vaillant/08.hmu.tsp"), "model Hmu {}\n" + self.padding)
+        # a layer that is not fetched is skipped; the same change twice merges without conflict
+        merged = self.repo.sources_with_layers("src", ["pr/660", "pr/661", "pr/660"])
+        self.assertEqual([l["fetched"] for l in merged["layers"]], [True, False, True])
+        self.assertEqual(merged["conflicts"], [])
+        self.assertEqual(merged["origin_layers"]["vaillant/08.hmu.tsp"], ["pr/660", "pr/660"])
+        self.assertEqual(merged["files"]["vaillant/08.hmu.tsp"], "model Hmu { a: UCH }\n" + self.padding)
+        self.repo.remove_layer("pr/660")
+        self.assertFalse(self.repo.layer_info("pr/660")["fetched"])
+
+    def test_three_way_merge_of_two_layers(self):
+        # a second pull request changing another part of the same file as pr 660
+        work = os.path.join(self.tmp.name, "work")
+        git("checkout", "-q", "master", cwd=work)
+        with open(os.path.join(work, "src", "vaillant", "08.hmu.tsp"), "w") as f:
+            f.write("model Hmu {}\n" + self.padding + "model Second { b: UCH }\n")
+        git("commit", "-q", "-am", "pr 661", cwd=work)
+        git("push", "-q", "origin", "HEAD:refs/pull/661/head", cwd=work)
+        self.repo.fetch_layer("660", self.upstream)
+        self.repo.fetch_layer("661", self.upstream)
+        merged = self.repo.sources_with_layers("src", ["pr/660", "pr/661"])
+        self.assertEqual(merged["files"]["vaillant/08.hmu.tsp"], "model Hmu { a: UCH }\n" + self.padding + "model Second { b: UCH }\n")
+        self.assertEqual(merged["conflicts"], [])
+        self.assertEqual(merged["origins"]["vaillant/08.hmu.tsp"], "pr/661")
+        # a conflicting change leaves git's conflict markers for the compiler to report
+        with open(os.path.join(work, "src", "vaillant", "08.hmu.tsp"), "w") as f:
+            f.write("model Hmu { c: UCH }\n" + self.padding)
+        git("commit", "-q", "-am", "pr 662", cwd=work)
+        git("push", "-q", "origin", "HEAD:refs/pull/662/head", cwd=work)
+        self.repo.fetch_layer("662", self.upstream)
+        merged = self.repo.sources_with_layers("src", ["pr/660", "pr/662"])
+        self.assertIn("<<<<<<<", merged["files"]["vaillant/08.hmu.tsp"])
+        self.assertEqual(merged["conflicts"], [{"path": "vaillant/08.hmu.tsp", "layers": ["pr/660", "pr/662"]}])

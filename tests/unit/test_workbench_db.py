@@ -34,7 +34,7 @@ class TelegramQueries(unittest.TestCase):
         info = self.db.info()
         self.assertTrue(info["exists"] and info["has_telegram_table"])
         self.assertGreater(info["telegrams"], 1000)
-        self.assertEqual(info["events"], len(self.pump) + 1)
+        self.assertEqual((info["events"], info["states"], info["schema_version"]), (1, len(self.pump), 2))
         self.assertLess(info["last_ms"], self.end_ns // 1_000_000)
 
     def test_histogram(self):
@@ -100,20 +100,42 @@ class TelegramQueries(unittest.TestCase):
         broadcast = next(d for d in distinct if d["master"].startswith("10feb5160301"))
         self.assertIsNone(broadcast["slave"])
 
-    def test_events(self):
+    def test_markers_and_states(self):
         from_ms, to_ms = self.window(6)
-        events = self.db.events(from_ms, to_ms)
-        self.assertTrue(events)
-        marker = next(e for e in events if e["source"] == "marker")
-        self.assertEqual(marker["note"], "opened hot water tap")
-        self.assertEqual(marker["ms"], self.pump[-1][0] - 60_000)
-        pump = [e for e in events if e["entity"] == "switch.circulation_pump"]
+        markers = self.db.markers(from_ms, to_ms)
+        self.assertEqual(len(markers), 1)
+        self.assertEqual(markers[0]["message"], "opened hot water tap")
+        self.assertEqual(markers[0]["ms"], self.pump[-1][0] - 60_000)
+        self.assertEqual((markers[0]["ms_min"], markers[0]["ms_max"]), (markers[0]["ms"] - 500, markers[0]["ms"] + 500))
+        states = self.db.states(from_ms, to_ms)
+        self.assertTrue(states)
+        pump = [e for e in states if e["entity"] == "switch.circulation_pump"]
         self.assertEqual(pump[0]["attributes"], {"friendly_name": "Circulation pump"})
         self.assertEqual(self.db.last_states(["switch.circulation_pump", "x.y"]), {"switch.circulation_pump": pump[-1]["state"]})
-        event_id = self.db.add_event("marker", note="test")
-        self.assertTrue(self.db.delete_event(event_id))
-        self.assertFalse(self.db.delete_event(event_id))
-        self.assertEqual(self.db.event_entities(), [{"entity": "switch.circulation_pump", "n": len(self.pump)}])
+        marker_id = self.db.add_marker("test", uncertainty_ns=0)
+        self.assertTrue(self.db.delete_marker(marker_id))
+        self.assertFalse(self.db.delete_marker(marker_id))
+        self.assertEqual(self.db.state_entities(), [{"entity": "switch.circulation_pump", "n": len(self.pump)}])
+        # the eBUSd app's log command finds the same table
+        import ebus_sqlite
+        conn = ebus_sqlite.open_db(self.path)
+        self.assertEqual(conn.execute("SELECT message FROM event_local ORDER BY id").fetchone()[0], "opened hot water tap")
+        conn.close()
+
+    def test_rawlog(self):
+        from_ms, to_ms = self.window(1)
+        lines = list(self.db.rawlog(from_ms, to_ms, own_address=0x31))
+        self.assertGreater(len(lines), 100)
+        self.assertRegex(lines[0], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [<>][0-9a-f]+")
+        own = next(l for l in lines if ">3108b509030d0f00" in l)
+        self.assertRegex(own.split(" ", 2)[2].strip(), r"^>3108b509030d0f00[0-9a-f]{2}<00[0-9a-f]{8}[0-9a-f]{2}>00$")
+        passive = next(l for l in lines if "<1008b5110101" in l)
+        self.assertRegex(passive.split(" ", 2)[2].strip(), r"^<1008b5110101[0-9a-f]{2}0009[0-9a-f]{18}[0-9a-f]{2}00$")
+        broadcast = next(l for l in lines if "<10feb51608" in l)
+        self.assertEqual(len(broadcast.split(" ", 2)[2].strip()), 1 + 2 * (5 + 8 + 1))
+        self.assertFalse(any("crc" in l for l in lines))
+        with_broken = list(self.db.rawlog(from_ms, to_ms, include_broken=True))
+        self.assertGreater(len(with_broken), len(lines))
 
 
 class WithoutTelegramTable(unittest.TestCase):
@@ -127,7 +149,7 @@ class WithoutTelegramTable(unittest.TestCase):
             self.assertEqual(db.runs(0, 10_000)["rows"], [])
             self.assertEqual(db.histogram(0, 10_000, 60), [])
             self.assertEqual(db.telegrams(0, 10_000), [])
-            db.add_event("marker", note="hello")
+            db.add_marker("hello")
             self.assertEqual(db.info()["events"], 1)
             # the eBUSd app can still create its table afterwards
             import ebus_sqlite

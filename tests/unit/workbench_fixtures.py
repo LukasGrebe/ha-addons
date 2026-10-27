@@ -20,38 +20,34 @@ def crc_hex(hexstr):
 
 
 class Writer:
+    """Writes telegrams the way the eBUSd app's logger does (schema version 2)."""
+
     def __init__(self, path):
         self.db = ebus_sqlite.open_db(path)
         self.rows = []
 
     def add(self, ts_ns, qq, zz, pb, sb, dd, s_dd=None, status="ok"):
-        """Append a telegram given as data hex strings; CRCs and raw bytes are derived."""
-        master = "%02x%02x%02x%02x%02x%s" % (qq, zz, pb, sb, len(dd) // 2, dd)
-        row = {"ts": ts_ns, "qq": qq, "zz": zz, "pb": pb, "sb": sb, "nn": len(dd) // 2, "dd": dd,
-               "crc": int(crc_hex(master), 16), "status": status}
-        raw = master + crc_hex(master)
-        if zz == 0xFE:
-            row["type"] = "BC"
-        elif ebus_sqlite.is_master(zz):
-            row["type"] = "MM"
+        """Append a telegram given as data hex strings; CRCs and the wire bytes are derived."""
+        dd = bytes.fromhex(dd)
+        master = bytes([qq, zz, pb, sb, len(dd)]) + dd
+        crc = ebus_sqlite.crc8(master)
+        row = {"ts": ts_ns, "qq": qq, "zz": zz, "pb": pb, "sb": sb, "nn": len(dd), "dd": dd, "crc": crc, "status": status}
+        if zz != 0xFE:
             row["ack"] = 0
-            raw += "00"
-        else:
-            row["type"] = "MS"
-            row["ack"] = 0
-            raw += "00"
-            if s_dd is not None and status != "timeout":
-                slave = "%02x%s" % (len(s_dd) // 2, s_dd)
-                row.update(s_nn=len(s_dd) // 2, s_dd=s_dd, s_crc=int(crc_hex(slave), 16), s_ack=0)
-                raw += slave + crc_hex(slave) + "00"
+            if not ebus_sqlite.is_master(zz) and s_dd is not None and status != "timeout":
+                s_dd = bytes.fromhex(s_dd)
+                answer = bytes([len(s_dd)]) + s_dd
+                row.update(s_nn=len(s_dd), s_dd=s_dd, s_crc=ebus_sqlite.crc8(answer), s_ack=0)
+        raw = None
         if status == "crc":
             row["crc"] ^= 0xFF
+            raw = master + bytes([row["crc"]])
         row["raw"] = raw
         self.rows.append(tuple(row.get(c) for c in ebus_sqlite.COLUMNS))
 
     def commit(self):
         with self.db:
-            self.db.executemany(ebus_sqlite.INSERT, self.rows)
+            ebus_sqlite.insert(self.db, self.rows)
         self.rows.clear()
 
     def close(self):
@@ -136,17 +132,17 @@ def generate(path, days=2.0, end_ns=None, seed=1):
 
 
 def add_events(db_path, pump_changes):
-    """Store the pump switching as Home Assistant events like the Workbench does."""
+    """Store the pump switching as Home Assistant state changes and one note, like the Workbench does."""
     from workbench.db import Database  # noqa: WPS433 (available when the Workbench package is importable)
 
     db = Database(db_path)
     db.ensure_schema()
     for index, (ts_ms, on) in enumerate(pump_changes):
-        db.add_event("ha" if index else "ha-initial", entity="switch.circulation_pump", state="on" if on else "off",
+        db.add_state("ha" if index else "ha-initial", "switch.circulation_pump", state="on" if on else "off",
                      previous=None if index == 0 else ("off" if on else "on"),
                      attributes={"friendly_name": "Circulation pump"}, ts_ns=ts_ms * 1_000_000)
     if pump_changes:
-        db.add_event("marker", note="opened hot water tap", ts_ns=(pump_changes[-1][0] - 60_000) * 1_000_000)
+        db.add_marker("opened hot water tap", ts_ns=(pump_changes[-1][0] - 60_000) * 1_000_000)
 
 
 if __name__ == "__main__":

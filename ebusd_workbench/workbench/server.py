@@ -148,25 +148,42 @@ def api_distinct(ctx, req):
 @route("GET", "/api/events")
 def api_events(ctx, req):
     from_ms, to_ms = window(req.query)
-    return {"events": ctx.db.events(from_ms, to_ms), "entities": ctx.db.event_entities()}
+    return {"markers": ctx.db.markers(from_ms, to_ms), "states": ctx.db.states(from_ms, to_ms),
+            "entities": ctx.db.state_entities()}
 
 
 @route("POST", "/api/events")
 def api_events_post(ctx, req):
     body = req.json()
-    note = str(body.get("note") or "").strip()[:500]
-    if not note:
-        raise ApiError("a note is required")
+    message = str(body.get("message") or body.get("note") or "").strip()[:500]
+    if not message:
+        raise ApiError("a message is required")
     ts_ms = body.get("ms")
-    event_id = ctx.db.add_event("marker", note=note, ts_ns=int(ts_ms) * 1_000_000 if ts_ms else None)
+    uncertainty = max(0, min(86400_000, int(body.get("uncertainty_ms", 500))))
+    event_id = ctx.db.add_marker(message, ts_ns=int(ts_ms) * 1_000_000 if ts_ms else None,
+                                 uncertainty_ns=uncertainty * 1_000_000)
     return {"id": event_id}
 
 
 @route("DELETE", "/api/events/(?P<id>[0-9]+)")
 def api_events_delete(ctx, req):
-    if not ctx.db.delete_event(int(req.params["id"])):
+    if not ctx.db.delete_marker(int(req.params["id"])):
         raise ApiError("no such event", HTTPStatus.NOT_FOUND)
     return {"ok": True}
+
+
+@route("GET", "/api/export/rawlog")
+def api_export_rawlog(ctx, req):
+    """The telegrams of a window as ebusd message-mode raw log (the input of ebus-evidence)."""
+    from_ms, to_ms = window(req.query, 86400_000)
+    if to_ms - from_ms > 31 * 86400_000:
+        raise ApiError("at most 31 days at once")
+    own = int(req.query.get("own", "31"), 16)
+    name = "ebusd-%s-%s.raw" % (time.strftime("%Y%m%d-%H%M", time.localtime(from_ms / 1000)),
+                                time.strftime("%Y%m%d-%H%M", time.localtime(to_ms / 1000)))
+    req.handler.send_stream(ctx.db.rawlog(from_ms, to_ms, own_address=own, include_broken=req.query.get("all") == "1"),
+                            "text/plain; charset=utf-8", name)
+    return None
 
 
 @route("GET", "/api/ha/entities")
@@ -264,7 +281,43 @@ def api_repo_file_delete(ctx, req):
 
 @route("GET", "/api/repo/sources")
 def api_repo_sources(ctx, req):
-    return {"files": ctx.repo.sources(req.query.get("dir", ""))}
+    layers = [l for l in (req.query.get("layers") or "").split(",") if l]
+    if not layers:
+        return {"files": ctx.repo.sources(req.query.get("dir", "")), "origins": {}, "conflicts": [], "layers": []}
+    return ctx.repo.sources_with_layers(req.query.get("dir", ""), layers)
+
+
+@route("GET", "/api/repo/layers")
+def api_repo_layers(ctx, req):
+    settings = ctx.settings.as_dict()
+    layers = [ctx.repo.layer_info(l["ref"], req.query.get("dir", "")) for l in settings.get("layers", [])] if ctx.repo.exists() else []
+    return {"upstream": settings.get("upstream_url"), "layers": layers}
+
+
+@route("GET", "/api/repo/layers/files")
+def api_repo_layer_files(ctx, req):
+    """The sources of one layer (to tell which definitions it adds)."""
+    return {"files": ctx.repo.layer_files(req.query.get("ref", ""), req.query.get("dir", ""))}
+
+
+@route("POST", "/api/repo/layers")
+def api_repo_layers_post(ctx, req):
+    body = req.json()
+    settings = ctx.settings.as_dict()
+    layer = ctx.repo.fetch_layer(body.get("ref", ""), settings.get("upstream_url") or None)
+    refs = [l["ref"] for l in settings.get("layers", [])]
+    if layer["ref"] not in refs:
+        ctx.settings.update({"layers": settings.get("layers", []) + [{"ref": layer["ref"]}]})
+    return layer
+
+
+@route("DELETE", "/api/repo/layers/(?P<ref>.+)")
+def api_repo_layers_delete(ctx, req):
+    ref = ctx.repo.layer_ref(req.params["ref"])
+    ctx.repo.remove_layer(ref)
+    settings = ctx.settings.as_dict()
+    ctx.settings.update({"layers": [l for l in settings.get("layers", []) if l["ref"] != ref]})
+    return {"ok": True}
 
 
 @route("GET", "/api/deploy")
@@ -352,7 +405,8 @@ class Handler(BaseHTTPRequestHandler):
                     if match and route_method == method:
                         request = Request(self, path, query, match.groupdict())
                         result = func(self.ctx, request)
-                        self.send_json(result)
+                        if result is not None:
+                            self.send_json(result)
                         return
                 if any(pattern.match(path) for _, pattern, _ in ROUTES):
                     raise ApiError("method not allowed", HTTPStatus.METHOD_NOT_ALLOWED)
@@ -381,6 +435,31 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(data)
+
+    def send_stream(self, lines, content_type, filename):
+        """Send an iterable of text lines as a download with chunked transfer encoding."""
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Transfer-Encoding", "chunked")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        buffer = []
+        size = 0
+
+        def flush():
+            nonlocal buffer, size
+            if size:
+                data = "".join(buffer).encode()
+                self.wfile.write(b"%x\r\n" % len(data) + data + b"\r\n")
+                buffer, size = [], 0
+        for line in lines:
+            buffer.append(line)
+            size += len(line)
+            if size >= 65536:
+                flush()
+        flush()
+        self.wfile.write(b"0\r\n\r\n")
 
     def send_static(self, path, head=False):
         www = self.ctx.www_dir

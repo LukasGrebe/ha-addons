@@ -364,7 +364,7 @@ class HAClient(threading.Thread):
                 continue
             if last.get(entity) == state.get("state"):
                 continue
-            self.db.add_event("ha-initial", entity=entity, state=state.get("state"), previous=last.get(entity),
+            self.db.add_state("ha-initial", entity, state=state.get("state"), previous=last.get(entity),
                               attributes=state.get("attributes"))
             self.events_logged += 1
 
@@ -378,7 +378,6 @@ class HAClient(threading.Thread):
         if new == old and from_state:
             return  # attribute-only change
         ts = parse_iso(to_state.get("last_changed"))
-        self.db.add_event("ha", entity=entity, state=new, previous=old, attributes=to_state.get("attributes"),
-                          ts_ns=ts)
+        self.db.add_state("ha", entity, state=new, previous=old, attributes=to_state.get("attributes"), ts_ns=ts)
         self.events_logged += 1
         self.last_event_ms = (ts or time.time_ns()) // 1_000_000

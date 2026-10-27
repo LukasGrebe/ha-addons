@@ -10,6 +10,7 @@
     "@bjorn3/browser_wasi_shim": "0.4.2",
     "@ebusd/ebus-typespec": "0.31.0",
     "@typespec/compiler": "1.17.0",
-    "esbuild": "0.25.5"
+    "esbuild": "0.25.5",
+    "js-yaml": "4.1.0"
   }
 }
