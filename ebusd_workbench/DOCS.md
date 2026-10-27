@@ -98,14 +98,19 @@ result in place:
   the plain kind (active read, passive write, …), `ebusd` for ebusd's choice, `mine` for your
   own, `differs` when it decodes different values than the row's definition, and ⚠ when it fails
   on some recorded telegram. Hovering a tab previews its decoding in the row's bars. The last
-  tabs are **＋ new definition** and, when some fail, **N failing**. Below the tabs:
+  tabs are **＋ new definition** and, when some fail, **N failing**. Every tab says in a second
+  line how it relates to the row's definition (*same values*, *same values, defined differently*,
+  *differs in temp, flow*), and its tooltip lists the differences. The panel keeps its tab,
+  scroll positions and drafts while new telegrams arrive. Below the tabs:
   - **Source**: *use for this row* (it joins the setup of this installation, the row's other
     definitions leave it), *in setup*, *rename*, the TypeSpec source at its line, what kind it is,
     where it comes from, when it applies (conditions in words), why ebusd does not use it, and the
     files it is in.
-  - **Compared with the other definitions**: this tab beside the row's definition: the value you
-    clicked, the latest value, how many recorded variants decode, telegrams and period, kind,
-    files and how they differ as definitions.
+  - **Compared with another definition**: this tab beside the row's definition (or any other tab
+    you choose): a verdict (identical, same values but defined differently, different values and in
+    which fields), then kind, message ID, every field with its type, divisor and unit, the latest
+    values, how many variants decode and the files. Differences are highlighted; rows that differ
+    only in a name are in italics. Identical copies in other files are listed.
   - **History**: a chart of the definition's values over the whole recording by the timestamp of
     every telegram (hover for a value, click to move the timeline there; the blue band is the
     window), and the values as a list of runs of the same value, newest first, the clicked run
@@ -115,6 +120,14 @@ result in place:
     the errors), and the chart and list show the **draft**. **Save as my version** never changes
     the source: it adds your own version (kind `mine`) to your own definitions, decodes the whole
     recording with it and picks it for the row. Editing your own definition updates it.
+- **Pivot over the fields**: a row that is one whole message of a definition with several fields
+  (like `hmu SetMode`: `hcmode`, `flowtempdesired`, `hwctempdesired`, …) has a **+** that shows
+  the **values as rows of their own** below it, one per field, each with its value over time;
+  **−** folds them away. Clicking a field's value opens the details of the message with that field
+  charted. It is only a view: ebusd uses one definition per message ID (a second definition with
+  the same ID is shadowed), so the definition itself stays one CSV line, and the Home Assistant
+  entities are made per field anyway. Rows whose definition identifies the message by more ID
+  bytes than the row shows still split at the next ID byte with **+**.
 - **Pivot**: the **+** and **−** buttons next to a row split it at its next message ID byte or
   combine it with the rows that share all but its last byte (all rows of the command when no
   ID byte is left), like expanding and collapsing a pivot table. Only the telegrams that start

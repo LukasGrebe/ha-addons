@@ -67,6 +67,18 @@ export function describeDifference(a, b) {
   return out;
 }
 
+/** The fields whose decoded values differ between two coverages (a field only one of them has counts), over the whole recording. */
+export function differingFields(a, b) {
+  const out = [];
+  for (const name of new Set([...a.fields.keys(), ...b.fields.keys()])) {
+    const x = a.fields.get(name), y = b.fields.get(name);
+    if (!x || !y) { out.push(name); continue; }
+    const xs = [...x.values.keys()].sort().join("\u0001"), ys = [...y.values.keys()].sort().join("\u0001");
+    if (xs !== ys) out.push(name);
+  }
+  return out;
+}
+
 /** Names that distinguish definitions with the same structure: circuit, name and field names. */
 export function fieldNames(csv) {
   const cells = splitCsv(csv || "");

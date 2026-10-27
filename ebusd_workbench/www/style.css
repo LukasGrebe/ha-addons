@@ -69,7 +69,7 @@ main { flex: 1; min-height: 0; display: flex; }
 .tl-plot canvas { display: block; }
 .tl-tooltip { position: fixed; pointer-events: none; background: var(--text); color: #fff; padding: 6px 9px; border-radius: 5px; font-size: 12px; max-width: 460px; z-index: 40; box-shadow: 0 4px 14px rgba(0,0,0,.25); white-space: pre-wrap; display: none; }
 .tl-tooltip .mono { color: #cde; }
-.tl-details { flex: none; height: var(--details-h, 38%); min-height: 120px; max-height: calc(100% - 200px); overflow: auto; border-top: 1px solid var(--line); background: var(--panel); display: none; font-size: 12px; }
+.tl-details { flex: none; height: var(--details-h, 46%); min-height: 120px; max-height: calc(100% - 200px); overflow: auto; border-top: 1px solid var(--line); background: var(--panel); display: none; font-size: 12px; }
 .tl-details.open { display: flex; flex-direction: column; }
 .tl-details-handle { flex: none; height: 6px; margin-top: -3px; cursor: ns-resize; position: relative; z-index: 5; background: transparent; }
 .tl-details-handle:hover, .tl-details-handle:active { background: var(--accent-soft); }
@@ -84,8 +84,12 @@ main { flex: 1; min-height: 0; display: flex; }
 .dtl-head .key { font-weight: 600; }
 .dtl-run { max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dtabs { flex: none; display: flex; gap: 2px; padding: 4px 8px 0; border-bottom: 1px solid var(--line); overflow-x: auto; background: #f7f9fb; }
-.dtab { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 4px 9px; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; background: none; cursor: pointer; font-size: 12px; color: var(--text); white-space: nowrap; }
+.dtab { display: inline-flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px; flex: none; padding: 4px 9px; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; background: none; cursor: pointer; font-size: 12px; color: var(--text); white-space: nowrap; }
 .dtab:hover { background: #fff; border-color: var(--line); }
+.dtab.single { flex-direction: row; align-items: center; }
+.dtab .t1 { display: flex; align-items: center; gap: 5px; }
+.dtab .t2 { font-size: 10px; font-weight: 400; color: var(--muted); max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.dtab .t2.same { color: var(--ok); } .dtab .t2.differs { color: var(--warn); }
 .dtab.on { background: var(--panel); border-color: var(--line); margin-bottom: -1px; padding-bottom: 5px; font-weight: 600; }
 .dtab.muted { color: var(--muted); } .dtab.new { color: var(--accent); }
 .dtab .dot { color: var(--muted); } .dtab .dot.on { color: var(--accent); }
@@ -95,7 +99,7 @@ main { flex: 1; min-height: 0; display: flex; }
 .dtab .tbadge.warn { background: #fff3e0; color: var(--warn); } .dtab .tbadge.variant { background: #fff8e1; color: #6d4c00; }
 .tl-details .note-box { flex: none; margin: 6px 10px 0; padding: 5px 8px; background: #fff8e1; border: 1px solid #ffe082; border-radius: 4px; color: #6d4c00; }
 .tl-details.docked { overflow: hidden; }
-.dtl-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(280px, 1fr) minmax(300px, 1.1fr) minmax(460px, 1.7fr); grid-template-rows: minmax(0, 1fr); overflow-x: auto; overflow-y: hidden; }
+.dtl-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(260px, .8fr) minmax(360px, 1.2fr) minmax(320px, 1fr) minmax(440px, 1.5fr); grid-template-rows: minmax(0, 1fr); overflow-x: auto; overflow-y: hidden; }
 .dtl-body.single { display: block; overflow: auto; padding: 0; }
 .dcol { min-width: 0; overflow: auto; border-right: 1px solid #eef1f4; }
 .dcol:last-child { border-right: none; }
@@ -367,3 +371,10 @@ main { flex: 1; min-height: 0; display: flex; }
 .definer table.segs select.wide { max-width: 340px; text-overflow: ellipsis; }
 
 .tl-details .pad, .tl-details .definer { padding: 0; }
+.dsec table.cmp tr.diff td { background: #fff8e1; }
+.dsec table.cmp tr.names td { font-style: italic; color: var(--muted); }
+.dsec .verdict { margin: 4px 0; font-weight: 600; }
+.dsec .row select { max-width: 100%; }
+.dsec table.cmp { table-layout: fixed; width: 100%; }
+.dsec table.cmp col.what, .dsec table.cmp th:first-child { width: 22%; }
+.dsec table.cmp td, .dsec table.cmp th { white-space: normal; word-break: break-word; overflow-wrap: anywhere; }

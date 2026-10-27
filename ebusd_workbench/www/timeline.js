@@ -18,6 +18,7 @@ import { generateEbusdOptions, generateHaYaml } from "./hayaml.js";
 import { DetailPanel } from "./detail.js";
 import { PRESETS as LOG_PRESETS, durationText, eventRange, fromMs, logCommand, timeText, toMs } from "./log.js";
 import { seriesQuery } from "./chart.js";
+import { structureOf } from "./compare.js";
 
 const ROW = 24;
 const STATUS_ORDER = { active: 0, custom: 1, hidden: 2, conditional: 3, variant: 4, error: 5, companion: 6 };
@@ -59,6 +60,7 @@ export class Timeline {
     this.selected = null;
     this.preview = null;        // {rowKey, defKey} while hovering a candidate: the row shows its decoding
     this.drawerOpen = false;
+    this.expanded = new Set();  // keys of the rows shown as one row per field of their definition
     this.remembered = null;     // the time range whose runs were stored as occurrences
     this.loadToken = 0;
     this.loading = null;        // {from, to} while the runs of a window are being fetched
@@ -440,6 +442,13 @@ export class Timeline {
       candidates: (a, b) => b.candidates.size - a.candidates.size || b.n - a.n,
     };
     telegramRows.sort(sorters[this.sort] || sorters.address);
+    for (let i = 0; i < telegramRows.length; i++) {
+      const row = telegramRows[i];
+      if (!this.expanded.has(row.key)) continue;
+      const fieldRows = this.fieldRows(row);
+      telegramRows.splice(i + 1, 0, ...fieldRows);
+      i += fieldRows.length;
+    }
     this.rows = rows.concat(telegramRows);
     if (this.selected) {
       const same = this.rows.find((r) => r.key === this.selected.row.key);
@@ -481,6 +490,42 @@ export class Timeline {
     return this.filter.split(/\s+/).every((word) => haystack.includes(word) || haystack.replace(/[→ ]/g, "").includes(word));
   }
 
+  // -- pivot over the fields: a message with a definition shown as one row per value -------------------
+
+  /** The fields a row's definition decodes, when the row is one whole message (the + then shows the values instead of splitting the ID). */
+  fieldsOf(row) {
+    if (row.kind !== "telegram" || !row.def || !row.defKey) return [];
+    const names = new Set();
+    for (const run of row.runs) { const d = app.decoder.decodesOf(run.line)?.get(row.defKey); if (d?.result === "ok") for (const f of Object.keys(d.fields || {})) names.add(f); }
+    return [...names];
+  }
+
+  canExpand(row) { return this.fieldsOf(row).length >= 2 && (row.def.idlen || 0) <= row.row.id.length / 2; }
+
+  toggleExpanded(row) {
+    if (this.expanded.has(row.key)) this.expanded.delete(row.key); else this.expanded.add(row.key);
+    this.buildRows();
+    this.render();
+  }
+
+  /** One row per field: the runs of the decoded values over time (consecutive telegrams with the same value are one run). */
+  fieldRows(row) {
+    const units = Object.fromEntries(structureOf(row.def.csv).fields.map((f) => [f.name, f.unit]));
+    return this.fieldsOf(row).map((field) => {
+      const runs = [];
+      for (const run of row.runs) {
+        const d = app.decoder.decodesOf(run.line)?.get(row.defKey);
+        const ok = d?.result === "ok" && d.fields && field in d.fields;
+        const value = ok ? d.fields[field] : null;
+        const label = !d ? "…" : !ok ? `✗ ${d.result}` : value === null ? "-" : String(value);
+        const status = ok ? "ok" : "error";
+        const last = runs[runs.length - 1];
+        if (last && last.label === label && last.status === status) { last.t1 = run.t1; last.n += run.n; } else runs.push({ t0: run.t0, t1: run.t1, n: run.n, value: label, status, label, line: run.line, unit: ok && value !== null ? units[field] || "" : "" });
+      }
+      return { kind: "field", key: `${row.key}#${field}`, label: `   ↳ ${field}`, name: setup.fieldMap(row.def)[field] || field, parent: row, field, def: row.def, defKey: row.defKey, candidates: new Map(), n: row.n, runs, row: row.row };
+    });
+  }
+
   renderLabels() {
     const labels = this.el.labels;
     labels.replaceChildren();
@@ -499,8 +544,11 @@ export class Timeline {
           else this.showDetails(row, null);
         } },
         row.kind === "telegram" ? h("span", { class: "pivot" },
-          h("button", { title: row.row.id ? (row.row.id.length > 2 ? `combine with the rows that share the first ${row.row.id.length / 2 - 1} byte${row.row.id.length / 2 === 2 ? "" : "s"} of the message ID (−)` : "combine all rows of this command into one (−)") : "nothing to combine: no ID byte", disabled: !row.row.id, onclick: (e) => { e.stopPropagation(); this.combineRow(row); } }, "−"),
-          h("button", { title: `split by the next byte after ${row.row.id || "the command"} (+)`, disabled: !row.runs.some((r) => r.payload), onclick: (e) => { e.stopPropagation(); this.splitRow(row); } }, "+")) : null,
+          h("button", { title: this.expanded.has(row.key) ? "show the message as one row again (−)" : row.row.id ? (row.row.id.length > 2 ? `combine with the rows that share the first ${row.row.id.length / 2 - 1} byte${row.row.id.length / 2 === 2 ? "" : "s"} of the message ID (−)` : "combine all rows of this command into one (−)") : "nothing to combine: no ID byte", disabled: !this.expanded.has(row.key) && !row.row.id, onclick: (e) => { e.stopPropagation(); if (this.expanded.has(row.key)) this.toggleExpanded(row); else this.combineRow(row); } }, "−"),
+          this.canExpand(row)
+            ? h("button", { title: this.expanded.has(row.key) ? "the values of the definition are shown as rows below" : `show the values of the definition as rows of their own: ${this.fieldsOf(row).slice(0, 6).join(", ")}${this.fieldsOf(row).length > 6 ? ", …" : ""} (+)`, disabled: this.expanded.has(row.key), onclick: (e) => { e.stopPropagation(); this.toggleExpanded(row); } }, "+")
+            : h("button", { title: `split by the next byte after ${row.row.id || "the command"} (+)`, disabled: !row.runs.some((r) => r.payload), onclick: (e) => { e.stopPropagation(); this.splitRow(row); } }, "+")) : null,
+        row.kind === "field" ? h("span", { class: "pivot" }, h("button", { title: "show the message as one row again (−)", onclick: (e) => { e.stopPropagation(); this.toggleExpanded(row.parent); } }, "−"), h("button", { disabled: true }, "+")) : null,
         h("span", { class: "key" }, row.label),
         row.name ? h("span", { class: `name ${renamed ? "renamed" : ""}`, style: row.def ? `color:${messageColors(row.def.circuit, row.def.name).text}` : "" }, row.name) : null,
         badge,
@@ -677,7 +725,7 @@ export class Timeline {
       const x0 = this.xOf(run.t0), x1 = this.xOf(run.t1);
       const { fill, stroke } = valueColors(run.value, run.status);
       const next = row.runs[j + 1];
-      if (next && row.kind === "telegram") {
+      if (next && row.kind !== "event") {
         // the value holds until the next (different) telegram
         const nx = this.xOf(next.t0);
         ctx.strokeStyle = stroke; ctx.setLineDash([2, 3]);
@@ -685,7 +733,7 @@ export class Timeline {
         ctx.setLineDash([]);
       }
       const picked = this.selected?.row === row && this.selected.run && this.selected.run.t0 === run.t0;   // the run shown in the details
-      if (run.n === 1 && row.kind === "telegram") {
+      if (run.n === 1 && row.kind !== "event") {
         ctx.fillStyle = picked ? "#0b3d6b" : stroke;
         ctx.fillRect(Math.round(x0) - (picked ? 2 : 1), picked ? top - 2 : top, picked ? 4 : 2, picked ? barHeight + 4 : barHeight);
         if (x1 - x0 < 1 && this.span / this.width < 1000) {
@@ -703,7 +751,7 @@ export class Timeline {
         ctx.save(); ctx.beginPath(); ctx.rect(left + 2, top, width - 4, barHeight); ctx.clip();
         ctx.fillStyle = "#1f2d3d";
         let text = this.runLabel(row, run);
-        if (row.kind === "telegram") {
+        if (row.kind !== "event") {
           const extra = `×${run.n}${run.mean && width > 110 ? ` every ${fmt.duration(run.mean)}` : ""}`;
           text = width > 60 ? `${text}  ${extra}` : extra;
         } else if (run.event && width > 90) {
@@ -912,7 +960,7 @@ export class Timeline {
       if (row.runs[mid].t0 <= t + tolerance) { found = row.runs[mid]; lo = mid + 1; } else hi = mid - 1;
     }
     if (!found) return null;
-    const end = row.kind === "telegram" && found.n === 1 ? found.t0 : found.t1;
+    const end = row.kind !== "event" && found.n === 1 ? found.t0 : found.t1;
     if (t <= end + tolerance) return found;
     return null;
   }
@@ -936,6 +984,9 @@ export class Timeline {
           + (run.n === 1 ? `once at ${fmt.time(run.t0, true)}` : `${fmt.count(run.n)}× from ${fmt.time(run.t0)} to ${fmt.time(run.t1)} (${fmt.duration(run.t1 - run.t0)})`
           + (run.mean ? `\nevery ${fmt.duration(run.mean)} (shortest ${fmt.duration(run.min)})` : ""))
           + (others.length ? `\n\nother candidates:${others.map((c) => { const od = app.decoder.decodesOf(run.line)?.get(c.def.key); return `\n  ${c.def.circuit} ${c.def.name} (${c.def.status}): ${od ? (od.result === "ok" ? od.text : `✗ ${od.result}`) : "—"}`; }).join("")}${row.candidates.size > 5 ? `\n  … ${row.candidates.size - 5} more` : ""}` : "");
+      } else if (row.kind === "field") {
+        text = `${row.parent.label}  ${row.name}\n${row.field} = ${run.label}${run.unit ? ` ${run.unit}` : ""}\n`
+          + (run.n === 1 ? `once at ${fmt.time(run.t0, true)}` : `${fmt.count(run.n)}× from ${fmt.time(run.t0)} to ${fmt.time(run.t1)} (${fmt.duration(run.t1 - run.t0)})`);
       } else {
         text = `${row.label}${row.name ? `  ${row.name}` : ""}\n${run.label} since ${fmt.dateTime(run.t0)}${run.event.previous !== null && run.event.previous !== undefined ? ` (was ${run.event.previous})` : ""}`;
       }
@@ -964,6 +1015,11 @@ export class Timeline {
   /** Telegram rows open the detail panel; the notes and state changes of an event row are a small table in the same place. */
   showDetails(row, run) {
     if (row.kind === "telegram") { this.detail.open(row, run); return; }
+    if (row.kind === "field") {   // the values of one field: the details of the message, with the chart of that field
+      const parentRun = run && (row.parent.runs.find((r) => r.t1 >= run.t0 && r.t0 <= run.t1) || row.parent.runs.find((r) => r.t1 >= run.t0)) || null;
+      this.detail.open(row.parent, parentRun, { field: row.field });
+      return;
+    }
     this.detail.close();
     this.selected = { row, run };
     this.showDock(true);

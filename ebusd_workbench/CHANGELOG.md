@@ -1,4 +1,19 @@
-# 0.4.0 (unreleased)
+# 0.4.1 (unreleased)
+
+## Features
+* **+** on a message with a definition of several fields shows one row per field (hcmode,
+  flowtempdesired, …) with its value over time; **−** folds them away; a click opens the details
+  with that field charted
+* The tabs of the details tell how each definition relates to the row's: same values, same
+  values but defined differently, or different (and in which fields); the comparison is a table
+  against any other tab with the differences highlighted, and identical copies are listed
+
+## Fixes
+* The details no longer reset when telegrams arrive: a tab is followed by its definitions (its
+  name changed with every new value), scroll positions and the history stay, and nothing is
+  redrawn while you type in the editor
+
+# 0.4.0
 
 Everything about a message in one place: the details below the timeline.
 

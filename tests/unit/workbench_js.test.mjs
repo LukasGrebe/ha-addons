@@ -21,7 +21,7 @@ const { app } = await import("../../ebusd_workbench/www/app.js");
 const { seriesFields, seriesValues, nearestPoint, seriesQuery } = await import("../../ebusd_workbench/www/chart.js");
 const log = await import("../../ebusd_workbench/www/log.js");
 const define = await import("../../ebusd_workbench/www/define.js");
-const { structuralSignature, rowTelegrams, coverage, groupCandidates, summarizeFields, whyNot, describeDifference, accessKind, locateSource, KIND_CODES, KIND_HELP, describeConditions, kindSuffix } = await import("../../ebusd_workbench/www/compare.js");
+const { differingFields, structuralSignature, rowTelegrams, coverage, groupCandidates, summarizeFields, whyNot, describeDifference, accessKind, locateSource, KIND_CODES, KIND_HELP, describeConditions, kindSuffix } = await import("../../ebusd_workbench/www/compare.js");
 
 const roomTemp = { key: "vaillant/15.700.csv|700|Z1RoomTemp|", circuit: "700", name: "Z1RoomTemp", write: false, passive: false, status: "active", source: "base", file: "vaillant/15.700.csv",
   fields: ["temp"], csv: "r,700,Z1RoomTemp,Room temperature,,15,b524,020000000700,temp,s,D2C,,°C,room temperature" };
@@ -351,4 +351,11 @@ test("a definition line is split into header and fields and put together again",
   assert.deepEqual(splitType("HEX:4"), { code: "HEX", length: "4" });
   assert.deepEqual(splitType("d2c"), { code: "D2C", length: "" });
   assert.deepEqual(splitType("1 bad"), { code: "", length: "" });
+});
+
+test("fields whose decoded values differ between two definitions", () => {
+  const cov = (fields) => ({ fields: new Map(Object.entries(fields).map(([name, values]) => [name, { name, values: new Map(values.map((v) => [String(v), 1])) }])) });
+  assert.deepEqual(differingFields(cov({ a: [1, 2], b: ["x"] }), cov({ a: [2, 1], b: ["x"] })), [], "the same values, whatever the order");
+  assert.deepEqual(differingFields(cov({ a: [1, 2], b: ["x"] }), cov({ a: [1, 2], b: ["y"] })), ["b"]);
+  assert.deepEqual(differingFields(cov({ a: [1], b: [2] }), cov({ a: [1] })), ["b"], "a field only one of them decodes");
 });

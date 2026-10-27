@@ -5,7 +5,7 @@
 // never changes the source: it makes your own version.
 import { api, app, append, bus, fmt, h, toast } from "./app.js";
 import { drawChart, nearestPoint, seriesFields, seriesValues } from "./chart.js";
-import { KIND_HELP, accessKind, coverage, describeConditions, describeDifference, groupCandidates, rowTelegrams, whyNot } from "./compare.js";
+import { KIND_HELP, accessKind, describeConditions, describeDifference, differingFields, groupCandidates, rowTelegrams, structureOf, whyNot } from "./compare.js";
 import { idLength, messageColors } from "./colors.js";
 import { csvEditor } from "./definition-edit.js";
 import { customKey, defineEditor } from "./define-ui.js";
@@ -41,10 +41,11 @@ export class DetailPanel {
   // -- open / close ------------------------------------------------------------------------------------
 
   /** Show a row, optionally at a clicked run of values. */
-  open(row, run = null, { tab = null } = {}) {
+  open(row, run = null, { tab = null, field = null } = {}) {
     const same = this.state?.row.key === row.key;
     if (!same) { this.editors.clear(); this.previews.clear(); this.dirty.clear(); }
-    this.state = { row, run, tab: tab ?? (same ? this.state.tab : null), focusMs: run ? (run.t0 + run.t1) / 2 : null, offset: 0, every: false, field: {}, reveal: new Set() };
+    this.state = { row, run, tab: tab ?? (same ? this.state.tab : null), tabMembers: same ? this.state.tabMembers : null, compareWith: same ? this.state.compareWith : null, focusMs: run ? (run.t0 + run.t1) / 2 : null, offset: 0, every: false, field: same ? this.state.field : {}, wantedField: field, reveal: new Set() };
+    this.scroll = null;
     this.tl.selected = { row, run };
     this.tl.showDock(true);
     this.refreshModel();
@@ -67,14 +68,29 @@ export class DetailPanel {
   /** The timeline rebuilt its rows or the decodings changed: follow, unless a draft is being edited. */
   relink(row) { if (this.state && this.state.row.key === row.key) this.state.row = row; }
 
+  /**
+   * The timeline rebuilt its rows or the decodings changed (new telegrams arrive all the time): follow, without
+   * disturbing the reader: not while something in the panel is being edited, scroll positions and the tab stay.
+   */
   refresh() {
+    if (!this.state) return;
+    clearTimeout(this.refreshTimer);
+    this.refreshTimer = setTimeout(() => this.refreshNow(), 600);
+  }
+
+  refreshNow() {
     if (!this.state) return;
     const row = this.tl.rows.find((r) => r.key === this.state.row.key);
     if (row) this.state.row = row;   // a row that left the window keeps its panel: it stays put
     if (this.dirty.size) return;
+    const active = document.activeElement;
+    if (active && this.el.contains(active) && active.matches("input, textarea, select")) {   // typing: catch up when the field is left
+      if (!this.waiting) { this.waiting = true; active.addEventListener("blur", () => { this.waiting = false; this.refresh(); }, { once: true }); }
+      return;
+    }
     this.refreshModel();
     this.ensureTab();
-    this.render();
+    this.render(true);
   }
 
   // -- the definitions of the row ----------------------------------------------------------------------------
@@ -97,6 +113,11 @@ export class DetailPanel {
   ensureTab() {
     const { shown, hidden, groups } = this.model;
     const keys = new Set([...shown.map((g) => g.key), "new", ...(hidden.length ? ["failing"] : [])]);
+    // a group is named by what it decodes, so its key changes when telegrams with new values arrive: follow its members
+    if (this.state.tab && !keys.has(this.state.tab) && this.state.tabMembers) {
+      const g = shown.find((x) => x.members.some((m) => this.state.tabMembers.has(m.def.key)));
+      if (g) this.state.tab = g.key;
+    }
     if (this.pendingKey) {
       const g = groups.find((x) => x.members.some((m) => m.def.key === this.pendingKey));
       if (g) { this.state.tab = g.key; this.pendingKey = null; }
@@ -108,6 +129,8 @@ export class DetailPanel {
     this.state.tab = g && shown.includes(g) ? g.key : shown.length ? shown[0].key : "new";
   }
 
+  membersOf(key) { return new Set(this.model.groups.find((g) => g.key === key)?.members.map((m) => m.def.key) || []); }
+
   preferred(g) {
     const { row } = this.state;
     return g.members.find((m) => m.def.key === row.defKey) || g.members.find((m) => m.def.key === this.model.usedKey) || g.members.find((m) => !m.def.write) || g.members[0];
@@ -115,11 +138,16 @@ export class DetailPanel {
 
   // -- drawing -------------------------------------------------------------------------------------------------
 
-  render() {
+  /** @param keep whether the scroll positions of the panel stay (a refresh) or start again (another tab or row) */
+  render(keep = false) {
     const st = this.state;
     if (!st) return;
     const el = this.el;
     const { row } = st;
+    const scroll = keep ? this.captureScroll() : null;
+    this.scroll = scroll;
+    // the history stays on screen while it is read again
+    this.prevHistory = keep && this.historyBody && this.historyBody.childNodes.length > 1 ? { key: this.historyKey, nodes: [...this.historyBody.childNodes] } : null;
     this.historyBody = null;
     el.replaceChildren();
     el.classList.add("docked");
@@ -138,6 +166,25 @@ export class DetailPanel {
       this.tabs(),
       this.notes(),
       this.body(runDecode));
+    if (scroll) this.restoreScroll(scroll);
+  }
+
+  captureScroll() {
+    const el = this.el;
+    return {
+      cols: [...el.querySelectorAll(".dcol")].map((c) => c.scrollTop),
+      body: [...el.querySelectorAll(".dtl-body")].map((b) => [b.scrollLeft, b.scrollTop]),
+      tabs: el.querySelector(".dtabs")?.scrollLeft || 0,
+      vlist: el.querySelector(".vlist")?.scrollTop ?? null,
+    };
+  }
+
+  restoreScroll(s) {
+    const el = this.el;
+    el.querySelectorAll(".dcol").forEach((c, i) => { c.scrollTop = s.cols[i] || 0; });
+    el.querySelectorAll(".dtl-body").forEach((b, i) => { if (s.body[i]) { b.scrollLeft = s.body[i][0]; b.scrollTop = s.body[i][1]; } });
+    const tabs = el.querySelector(".dtabs");
+    if (tabs) tabs.scrollLeft = s.tabs;
   }
 
   notes() {
@@ -151,31 +198,51 @@ export class DetailPanel {
     return out.length ? h("div", {}, out) : null;
   }
 
+  /** How a tab's definition relates to the row's own: the same values or not, and what differs as a definition. */
+  relation(g) {
+    const cur = this.model.current;
+    if (!cur || g === cur) return null;
+    const a = this.preferred(g).def, b = this.preferred(cur).def;
+    const sameValues = g.coverage.signature === cur.coverage.signature;
+    return { sameValues, structure: describeDifference(a, b), fields: sameValues ? [] : differingFields(g.coverage, cur.coverage) };
+  }
+
+  /** One short line for a tab: what sets it apart from the row's definition. */
+  relationHint(g) {
+    const rel = this.relation(g);
+    if (!rel) return g === this.model.current ? "the row's definition" : "";
+    const list = (names) => `${names.slice(0, 3).join(", ")}${names.length > 3 ? ` +${names.length - 3}` : ""}`;
+    if (rel.sameValues) return rel.structure.length ? "same values, defined differently" : "same values";
+    const fails = g.coverage.errors ? ` · fails on ${g.coverage.errors}` : "";
+    return `${rel.fields.length ? `differs in ${list(rel.fields)}` : "different values"}${fails}`;
+  }
+
   tabs() {
     const st = this.state;
     const m = this.model;
     const tab = (key, label, { title = "", cls = "", onhover = null } = {}) => h("button", { class: `dtab ${st.tab === key ? "on" : ""} ${cls}`, title,
-      onclick: () => { st.tab = key; st.offset = 0; this.render(); },
+      onclick: () => { st.tab = key; st.offset = 0; st.tabMembers = this.membersOf(key); this.render(); },
       onmouseenter: () => onhover && this.tl.setPreview(st.row, onhover), onmouseleave: () => onhover && this.tl.setPreview(st.row, null) }, label);
-    const cur = m.current;
     const tabs = m.shown.map((g) => {
       const pref = this.preferred(g);
       const def = pref.def;
-      const decodesAll = g.coverage.errors === 0;
-      const sameAsCur = cur && g !== cur ? cur.coverage.signature === g.coverage.signature : null;
+      const rel = this.relation(g);
+      const hint = this.relationHint(g);
+      const full = rel ? (rel.sameValues ? "Decodes the same values over the whole history as the row's definition." : `Decodes different values than the row's definition${rel.fields.length ? ` (${rel.fields.join(", ")})` : ""}.`) + (rel.structure.length ? ` As a definition it differs in: ${rel.structure.join("; ")}.` : " As a definition it has the same structure.") : "The definition of this row.";
       return tab(g.key, [
-        g.hasChosen ? h("span", { class: "dot on", title: "used for this row and part of your setup" }, "●") : h("span", { class: "dot" }, "○"),
-        h("span", { class: "tname" }, `${def.circuit} ${def.name}`),
-        h("span", { class: "tmeta" }, accessKind(def)),
-        g.members.length > 1 ? h("span", { class: "tmeta", title: `the same definition in ${g.members.length} files` }, `×${g.members.length}`) : null,
-        g.hasUsed ? h("span", { class: "tbadge active", title: "ebusd's choice" }, "ebusd") : null,
-        def.source === "custom" ? h("span", { class: "tbadge custom", title: "your own definition" }, "mine") : def.source !== "base" ? h("span", { class: "tbadge", title: `from ${def.source}` }, def.source) : null,
-        !decodesAll ? h("span", { class: "tbadge warn", title: "fails on some recorded telegram" }, "⚠") : null,
-        sameAsCur === false ? h("span", { class: "tbadge variant", title: "decodes different values than the row's definition" }, "differs") : null,
-      ], { title: `${def.circuit} ${def.name} · ${accessKind(def)} · ${STATUS_HELP[def.status] || def.status}`, onhover: def.key });
+        h("span", { class: "t1" },
+          g.hasChosen ? h("span", { class: "dot on", title: "used for this row and part of your setup" }, "●") : h("span", { class: "dot" }, "○"),
+          h("span", { class: "tname" }, `${def.circuit} ${def.name}`),
+          h("span", { class: "tmeta" }, accessKind(def)),
+          g.members.length > 1 ? h("span", { class: "tmeta", title: `the same definition in ${g.members.length} files` }, `×${g.members.length}`) : null,
+          g.hasUsed ? h("span", { class: "tbadge active", title: "ebusd's choice" }, "ebusd") : null,
+          def.source === "custom" ? h("span", { class: "tbadge custom", title: "your own definition" }, "mine") : def.source !== "base" ? h("span", { class: "tbadge", title: `from ${def.source}` }, def.source) : null,
+          g.coverage.errors ? h("span", { class: "tbadge warn", title: "fails on some recorded telegram" }, "⚠") : null),
+        h("span", { class: `t2 ${rel ? (rel.sameValues ? "same" : "differs") : ""}` }, hint),
+      ], { title: `${def.circuit} ${def.name} · ${accessKind(def)} · ${STATUS_HELP[def.status] || def.status}\n${full}`, onhover: def.key });
     });
-    if (m.hidden.length) tabs.push(tab("failing", `${m.hidden.reduce((n, g) => n + g.members.length, 0)} failing`, { title: "candidates that fail to decode some or all recorded telegrams", cls: "muted" }));
-    tabs.push(tab("new", "＋ new definition", { title: "write a definition of your own, prefilled from the recording", cls: "new" }));
+    if (m.hidden.length) tabs.push(tab("failing", `${m.hidden.reduce((n, g) => n + g.members.length, 0)} failing`, { title: "candidates that fail to decode some or all recorded telegrams", cls: "muted single" }));
+    tabs.push(tab("new", "＋ new definition", { title: "write a definition of your own, prefilled from the recording", cls: "new single" }));
     return h("div", { class: "dtabs" }, tabs);
   }
 
@@ -186,10 +253,12 @@ export class DetailPanel {
     if (st.tab === "failing") return this.failingBody();
     const g = m.groups.find((x) => x.key === st.tab);
     if (!g) return h("div", { class: "pad muted" }, "no definition");
+    st.tabMembers = new Set(g.members.map((x) => x.def.key));
     const pref = this.preferred(g);
     const history = this.historySection(pref.def);
     return h("div", { class: "dtl-body" },
-      h("div", { class: "dcol" }, this.sourceSection(g, pref), this.compareSection(g, pref, runDecode)),
+      h("div", { class: "dcol" }, this.sourceSection(g, pref)),
+      h("div", { class: "dcol" }, this.compareSection(g, pref)),
       h("div", { class: "dcol" }, history),
       h("div", { class: "dcol" }, this.editSection(g, pref)));
   }
@@ -232,52 +301,56 @@ export class DetailPanel {
 
   // -- comparison -------------------------------------------------------------------------------------------------
 
-  compareSection(g, pref, runDecode) {
+  compareSection(g, pref) {
     const m = this.model;
-    const cur = m.current;
-    const sec = h("section", { class: "dsec" }, h("h4", {}, "Compared with the other definitions"));
-    const decodeLine = (grp) => {
-      const line = this.state.run?.line;
-      const d = line ? app.decoder.decodesOf(line)?.get(this.preferred(grp).def.key) : null;
-      return d ? (d.result === "ok" ? d.text || "(empty)" : `✗ ${d.result}`) : null;
-    };
-    const rows = (grp) => {
-      const cov = grp.coverage;
-      return {
-        clicked: decodeLine(grp),
-        latest: cov.latest ? cov.latest.text : "decodes nothing of this row",
-        coverage: cov.errors ? `${fmt.count(cov.ok)} of ${fmt.count(cov.distinct)} recorded variants decode, ${fmt.count(cov.errors)} fail` : `all ${fmt.count(cov.ok)} recorded variants decode`,
-        telegrams: `${fmt.count(cov.okOccurrences)} telegrams${cov.first_ms ? `, ${fmt.date(cov.first_ms)} – ${fmt.date(cov.last_ms || cov.first_ms)}` : ""}`,
-        kind: [...new Set(grp.members.map((x) => accessKind(x.def)))].join(", "),
-        files: grp.members.map((x) => base(x.def.file)).join(", "),
-      };
-    };
-    if (!cur) return append(sec, h("div", { class: "muted" }, "nothing to compare with yet"));
+    const st = this.state;
+    const sec = h("section", { class: "dsec" }, h("h4", {}, "Compared with another definition"));
     const others = m.shown.filter((x) => x !== g);
-    if (g === cur) {
-      append(sec, h("div", { class: "muted" }, "This is the definition of the row. The others, compared with it:"),
-        others.length ? h("table", { class: "cmp" }, h("thead", {}, h("tr", {}, h("th", {}, "definition"), h("th", {}, "values over the history"), h("th", {}, "decodes"))),
-          h("tbody", {}, others.map((x) => { const p = this.preferred(x).def; return h("tr", { onclick: () => { this.state.tab = x.key; this.render(); }, class: "click" },
-            h("td", {}, chip(p.circuit, p.name), ` ${accessKind(p)}`), h("td", {}, x.coverage.signature === cur.coverage.signature ? h("span", { class: "ok" }, "the same") : h("span", { class: "warn" }, "different")),
-            h("td", {}, x.coverage.errors ? h("span", { class: "warn" }, `${x.coverage.errors} fail`) : h("span", { class: "ok" }, "all"))); }))) : h("div", { class: "muted" }, "no other definition decodes this row"));
-      return sec;
+    if (!others.length) return append(sec, h("div", { class: "muted" }, "No other definition decodes this row: nothing to compare with."), this.sameFiles(g));
+    const other = others.find((x) => x.key === st.compareWith) || (m.current && m.current !== g ? m.current : others[0]);
+    const label = (x) => { const p = this.preferred(x).def; return `${x === m.current ? "● " : ""}${p.circuit} ${p.name} · ${accessKind(p)}${x.members.length > 1 ? ` · ×${x.members.length} files` : ""}`; };
+    const pick = h("select", { onchange: () => { st.compareWith = pick.value; this.render(true); } }, others.map((x) => h("option", { value: x.key, selected: x === other }, label(x))));
+    const a = pref.def, b = this.preferred(other).def;
+    const sameValues = g.coverage.signature === other.coverage.signature;
+    const diff = describeDifference(a, b);
+    const sx = structureOf(a.csv), sy = structureOf(b.csv);
+    const fmtField = (f) => f ? `${f.name || "?"} · ${f.part === "m" ? "request" : "answer"} ${f.type}${f.divisor ? ` ${f.divisor}` : ""}${f.unit ? ` ${f.unit}` : ""}` : "—";
+    const sameField = (f, g2) => f && g2 && f.part === g2.part && f.type === g2.type && f.divisor === g2.divisor && f.unit === g2.unit;
+    const rows = [];
+    const row = (what, x, y, differs, mono = false) => rows.push(h("tr", { class: differs ? "diff" : "" }, h("td", {}, what), h("td", { class: mono ? "mono" : "" }, x), h("td", { class: mono ? "mono" : "" }, y)));
+    row("kind", accessKind(a), accessKind(b), accessKind(a) !== accessKind(b));
+    row("message ID", `${sx.pbsb} ${sx.id}`, `${sy.pbsb} ${sy.id}`, sx.pbsb !== sy.pbsb || sx.id !== sy.id, true);
+    if (sx.qq !== sy.qq || sx.zz !== sy.zz) row("from → to", `${sx.qq || "any"} → ${sx.zz || "any"}`, `${sy.qq || "any"} → ${sy.zz || "any"}`, true, true);
+    for (let i = 0; i < Math.max(sx.fields.length, sy.fields.length); i++) {
+      const f = sx.fields[i], f2 = sy.fields[i];
+      rows.push(h("tr", { class: sameField(f, f2) ? (f?.name === f2?.name ? "" : "names") : "diff" }, h("td", {}, `field ${i + 1}`), h("td", { class: "mono" }, fmtField(f)), h("td", { class: "mono" }, fmtField(f2))));
     }
-    const a = rows(cur), b = rows(g);
-    const same = cur.coverage.signature === g.coverage.signature;
-    const diff = describeDifference(this.preferred(g).def, this.preferred(cur).def);
-    const curDef = this.preferred(cur).def, thisDef = this.preferred(g).def;
+    const la = g.coverage.latest?.fields || {}, lb = other.coverage.latest?.fields || {};
+    const diffNames = new Set(differingFields(g.coverage, other.coverage));
+    for (const name of new Set([...Object.keys(la), ...Object.keys(lb)])) rows.push(h("tr", { class: diffNames.has(name) ? "diff" : "" }, h("td", {}, `latest ${name}`), h("td", { class: "mono" }, name in la ? String(la[name]) : "—"), h("td", { class: "mono" }, name in lb ? String(lb[name]) : "—")));
+    if (st.run) {
+      const line = st.run.line;
+      const clicked = (x) => { const d = line ? app.decoder.decodesOf(line)?.get(this.preferred(x).def.key) : null; return d ? (d.result === "ok" ? d.text || "(empty)" : `✗ ${d.result}`) : "—"; };
+      rows.unshift(h("tr", {}, h("td", {}, "the value you clicked"), h("td", { class: "mono" }, clicked(g)), h("td", { class: "mono" }, clicked(other))));
+    }
+    const cov = (x) => x.coverage.errors ? `${fmt.count(x.coverage.ok)} of ${fmt.count(x.coverage.distinct)} variants decode` : `all ${fmt.count(x.coverage.ok)} variants decode`;
+    rows.push(h("tr", { class: g.coverage.errors !== other.coverage.errors ? "diff" : "" }, h("td", {}, "decodes"), h("td", {}, cov(g)), h("td", {}, cov(other))));
+    rows.push(h("tr", {}, h("td", {}, "in files"), h("td", { class: "mono" }, g.members.map((x) => base(x.def.file)).join(", ")), h("td", { class: "mono" }, other.members.map((x) => base(x.def.file)).join(", "))));
     append(sec,
-      h("div", { class: same ? "ok" : "warn" }, same ? "Decodes the same values over the whole history as the row's definition." : "Decodes different values than the row's definition."),
-      h("table", { class: "cmp" }, h("thead", {}, h("tr", {}, h("th", {}), h("th", {}, h("span", { title: "the definition of the row" }, `${curDef.circuit} ${curDef.name}`)), h("th", {}, `${thisDef.circuit} ${thisDef.name} (this tab)`))),
-        h("tbody", {},
-          this.state.run ? h("tr", {}, h("td", {}, "the value you clicked"), h("td", { class: "mono" }, a.clicked ?? "–"), h("td", { class: "mono" }, b.clicked ?? "–")) : null,
-          h("tr", {}, h("td", {}, "latest value"), h("td", { class: "mono" }, a.latest), h("td", { class: "mono" }, b.latest)),
-          h("tr", {}, h("td", {}, "decodes"), h("td", {}, a.coverage), h("td", {}, b.coverage)),
-          h("tr", {}, h("td", {}, "telegrams"), h("td", {}, a.telegrams), h("td", {}, b.telegrams)),
-          h("tr", {}, h("td", {}, "kind"), h("td", {}, a.kind), h("td", {}, b.kind)),
-          h("tr", {}, h("td", {}, "files"), h("td", { class: "mono" }, a.files), h("td", { class: "mono" }, b.files)))),
-      diff.length ? h("div", { class: "muted" }, `As definitions they differ in: ${diff.join("; ")}.`) : h("div", { class: "muted" }, "As definitions they have the same structure (names, files or status differ)."));
+      h("div", { class: "row" }, h("label", { class: "muted" }, "this tab against"), pick),
+      h("div", { class: sameValues ? "ok verdict" : "warn verdict" }, sameValues
+        ? (diff.length ? "Decodes the same values over the whole history, but is defined differently." : "Identical: the same definition, decoding the same values.")
+        : `Decodes different values${diffNames.size ? ` (${[...diffNames].join(", ")})` : ""}${diff.length ? " and is defined differently" : ""}.`),
+      h("table", { class: "cmp" }, h("thead", {}, h("tr", {}, h("th", {}), h("th", {}, `${a.circuit} ${a.name} (this tab)`), h("th", {}, `${b.circuit} ${b.name}`))), h("tbody", {}, rows)),
+      h("div", { class: "muted" }, "Highlighted rows differ; rows in italics only differ in a name."),
+      this.sameFiles(g));
     return sec;
+  }
+
+  /** Where else the very same definition (structure and values) is: copies in other files and circuits. */
+  sameFiles(g) {
+    if (g.members.length < 2) return null;
+    return h("div", { class: "muted" }, `Identical copies of this definition: ${g.members.map((x) => `${x.def.circuit} ${x.def.name} in ${base(x.def.file)}`).join("; ")}.`);
   }
 
   // -- history ------------------------------------------------------------------------------------------------------
@@ -288,6 +361,9 @@ export class DetailPanel {
     append(sec, body);
     this.historyBody = body;
     this.historyDef = def;
+    this.historyKey = `${this.state.row.key}|${def.key}`;
+    if (this.prevHistory?.key === this.historyKey) body.append(...this.prevHistory.nodes);
+    this.prevHistory = null;
     this.fillHistory();
     return sec;
   }
@@ -297,7 +373,7 @@ export class DetailPanel {
     const def = this.historyDef;
     if (!body || !def) return;
     const row = this.state.row;
-    body.textContent = "loading history…";
+    if (!body.firstChild) body.textContent = "loading history…";
     let data;
     try { data = await this.tl.loadSeries(row); } catch (err) { body.textContent = `history failed: ${err.message}`; return; }
     if (this.historyBody !== body) return;
@@ -306,7 +382,7 @@ export class DetailPanel {
     const decodeFor = (line) => (preview ? preview.results.get(line) : app.decoder.decodesOf(line)?.get(def.key));
     const shim = { decodesOf: (line) => { const d = decodeFor(line); return d ? new Map([["k", d]]) : undefined; } };
     const fields = seriesFields(data, shim, "k");
-    let field = this.state.field[def.key];
+    let field = this.state.field[def.key] || this.state.wantedField;
     if (!field || !fields.includes(field)) field = fields.find((f) => seriesValues(data, shim, "k", f).numeric) || fields[0];
     const series = seriesValues(data, shim, "k", field);
     const db = app.status.db;
@@ -354,7 +430,7 @@ export class DetailPanel {
       list);
     paint(); summary();
     const hl = list.querySelector("tr.hl");
-    if (hl) list.scrollTop = Math.max(0, hl.offsetTop - list.clientHeight / 3);   // scroll the list only, not the panel
+    if (this.scroll && this.scroll.vlist !== null) { list.scrollTop = this.scroll.vlist; this.scroll = null; } else if (hl) list.scrollTop = Math.max(0, hl.offsetTop - list.clientHeight / 3);   // scroll the list only, not the panel
   }
 
   // -- editing --------------------------------------------------------------------------------------------------------
