@@ -15,6 +15,7 @@ import { idLength, messageColors, valueColors } from "./colors.js";
 import { lineOfRun } from "./decoder.js";
 import { setup } from "./setup.js";
 import { generateEbusdOptions, generateHaYaml } from "./hayaml.js";
+import { coverage, groupCandidates, rowTelegrams, summarizeFields, whyNot } from "./compare.js";
 
 const ROW = 24;
 const STATUS_ORDER = { active: 0, hidden: 1, conditional: 2, variant: 3, error: 4, companion: 5 };
@@ -58,6 +59,8 @@ export class Timeline {
     this.drawerOpen = false;
     this.remembered = null;     // the time range whose runs were stored as occurrences
     this.loadToken = 0;
+    this.loading = null;        // {from, to} while the runs of a window are being fetched
+    this.firstLoad = new Promise((resolve) => { this.markFirstLoad = resolve; });
     this.build();
     bus.on("decodes-changed", (reason) => { this.onDecodes(reason); });
     bus.on("setup-changed", () => { this.buildRows(); this.render(); this.renderPicker(); this.renderDrawer(); });
@@ -90,6 +93,9 @@ export class Timeline {
     el.applyIds = h("button", { class: "small", style: "display:none", title: "set the message ID lengths per device and command as the decoded definitions define them", onclick: () => this.applyIdLengths() }, "ID lengths from definitions");
     el.info = h("span", { class: "hint" });
     el.decodeState = h("button", { class: "small state", title: "the definitions decoding this timeline (click for the definitions tab)", onclick: () => bus.emit("show-tab", "definitions") }, "definitions…");
+    el.help = h("span", { class: "help", title: "Scroll: the rows\nCtrl/⌘ + scroll or pinch: zoom the time axis\nShift + scroll or sideways swipe: move in time\nDrag the chart: move in time; double click: zoom in\nOverview strip: drag the edges to resize the window, drag inside to move it, drag outside to select a new one\nKeys: ← → move, + − zoom, N live, Esc close" }, "?");
+    el.progress = h("div", { class: "tl-progress", style: "display:none" }, h("div"));
+    el.notice = h("div", { class: "tl-notice", style: "display:none" });
     el.setupButton = h("button", { class: "small", title: "the definitions chosen for this installation: names, config files, Home Assistant entities", onclick: () => this.toggleDrawer() }, "Setup");
     el.toolbar = h("div", { class: "toolbar" },
       el.presets,
@@ -99,7 +105,7 @@ export class Timeline {
       h("label", { class: "group" }, el.onlyChanges, " only changed"),
       h("span", { class: "group" }, el.sort),
       h("span", { class: "group" }, h("button", { onclick: () => this.addMarker() }, "+ marker")),
-      h("span", { class: "group", style: "margin-left:auto" }, el.decodeState, el.setupButton),
+      h("span", { class: "group", style: "margin-left:auto" }, el.decodeState, el.setupButton, el.help),
       el.info);
     el.overviewCanvas = h("canvas");
     el.overview = h("div", { class: "tl-overview", title: "all recorded telegrams; click or drag to move the window" }, el.overviewCanvas);
@@ -115,7 +121,7 @@ export class Timeline {
     el.stage = h("div", { class: "tl-stage" }, el.body, el.popover, el.drawer);
     el.tooltip = h("div", { class: "tl-tooltip" });
     el.details = h("div", { class: "tl-details" });
-    this.root.appendChild(h("div", { class: "tl" }, el.toolbar, el.overview, el.axis, el.stage, el.details, el.tooltip));
+    this.root.appendChild(h("div", { class: "tl" }, el.toolbar, el.progress, el.notice, el.overview, el.axis, el.stage, el.details, el.tooltip));
     this.bindMouse();
     document.addEventListener("mousedown", (e) => { if (this.picker && !el.popover.contains(e.target) && !e.target.closest(".tl-label")) this.closePicker(); });
     this.updateDecodeState();
@@ -134,25 +140,59 @@ export class Timeline {
     this.renderDrawer();
   }
 
+  /** What the app is busy with, in one place: loading, reading the recording, decoding, compiling, cloning. */
+  activity() {
+    const parts = [];
+    let fraction = null;
+    const repoBusy = app.status?.repo?.busy;
+    if (repoBusy) parts.push(`${repoBusy.what}… ${fmt.duration((Date.now() - repoBusy.since * 1000))}`);
+    if (this.compileState?.busy) parts.push(this.compileState.text);
+    const st = app.decoder?.status();
+    if (st?.progress) { parts.push(st.progress); fraction = st.fraction; }
+    if (this.loading) parts.push(`loading telegrams ${fmt.time(this.loading.from).slice(0, 5)}–${fmt.time(this.loading.to).slice(0, 5)}`);
+    return { parts, fraction, st };
+  }
+
   updateDecodeState() {
     const el = this.el.decodeState;
-    const d = app.decoder;
-    const st = d ? d.status() : null;
+    const { parts, fraction, st } = this.activity();
     let text, cls = "small state";
-    if (this.compileState?.busy) { text = this.compileState.text; cls += " busy"; }
-    else if (st?.progress) { text = st.progress; cls += " busy"; }
+    if (parts.length) { text = parts.join(" · "); cls += " busy"; }
     else if (st?.error) { text = st.error; cls += " err"; }
     else if (this.compileState?.error) { text = this.compileState.error; cls += " err"; }
-    else if (!st?.compile) { text = app.status?.repo?.exists ? "definitions not compiled yet" : "no definitions repository"; cls += " warn"; }
+    else if (!st?.compile) { text = app.status?.repo?.exists ? "definitions not compiled yet" : "no definitions"; cls += " warn"; }
     else text = `${fmt.count(st.definitions)} definitions · ${fmt.count(st.known)} of ${fmt.count(st.telegrams)} telegrams known to ebusd${st.compile.layers?.length ? ` · ${st.compile.layers.join(", ")}` : ""}`;
     el.textContent = text;
     el.className = cls;
-    el.title = st?.compile ? `${st.compile.summary || ""}
-compiled ${st.compile.at ? fmt.dateTime(new Date(st.compile.at).getTime()) : ""}; ${st.decoded} of ${st.telegrams} distinct telegrams decoded; store: ${st.store}
-click for the definitions tab` : "click for the definitions tab";
-    const n = setup.includedKeys(d?.entries).length;
+    el.title = st?.compile ? `${st.compile.summary || ""}\ncompiled ${st.compile.at ? fmt.dateTime(new Date(st.compile.at).getTime()) : ""}; ${st.decoded} of ${st.telegrams} distinct telegrams decoded; store: ${st.store}\nclick for the definitions tab` : "click for the definitions tab";
+    const bar = this.el.progress;
+    bar.style.display = parts.length ? "" : "none";
+    bar.classList.toggle("indeterminate", parts.length > 0 && (fraction === null || fraction === undefined));
+    bar.firstChild.style.width = fraction === null || fraction === undefined ? "" : `${Math.max(3, Math.round(fraction * 100))}%`;
+    const n = setup.includedKeys(app.decoder?.entries).length;
     this.el.setupButton.textContent = `Setup (${n})`;
     this.el.setupButton.classList.toggle("active", this.drawerOpen);
+    this.updateNotice(st);
+  }
+
+  /** A notice above the timeline while there is nothing to decode with. */
+  updateNotice(st) {
+    const el = this.el.notice;
+    const repo = app.status?.repo;
+    let content = null;
+    if (!repo) content = null;
+    else if (repo.busy && !repo.exists) content = [h("span", {}, `The definitions repository is being fetched (${repo.busy.what}). Until it is there nothing decodes the telegrams: rows show raw hex.`)];
+    else if (!repo.exists) content = [h("span", {}, "No definitions source set: there are no rules to decode with, so rows show raw hex. Clone your ebusd-configuration fork (or john30's) in the Definitions tab."),
+      h("button", { class: "small primary", onclick: () => bus.emit("show-tab", "definitions") }, "Set up definitions")];
+    else if (!st?.compile && this.compileState?.error) content = [h("span", { class: "err" }, `Compiling the definitions failed: ${this.compileState.error}`), h("button", { class: "small", onclick: () => bus.emit("show-tab", "definitions") }, "Open Definitions")];
+    else if (!st?.compile && !this.compileState?.busy) content = [h("span", {}, "The definitions are not compiled yet, so rows show raw hex."), h("button", { class: "small primary", onclick: () => app.views.definitions?.compile() }, "Compile")];
+    else if (this.pendingIdLengths().length && !this.activity().parts.length) {
+      const n = this.pendingIdLengths().length;
+      content = [h("span", {}, `${n} command${n > 1 ? "s are" : " is"} grouped by fewer ID bytes than the definitions use, so different messages (registers) share a row and appear as many "candidates" of one row.`),
+        h("button", { class: "small primary", onclick: () => this.applyIdLengths() }, "Split rows like the definitions")];
+    }
+    el.style.display = content ? "" : "none";
+    if (content) el.replaceChildren(...content);
   }
 
   syncSettings() {
@@ -182,6 +222,19 @@ click for the definitions tab` : "click for the definitions tab";
       app.settings = await api.put("api/settings", { id_overrides: overrides });
       this.syncSettings();
       this.updateIdButton();
+      bus.emit("settings-changed");
+      this.load(true);
+    } catch (err) { toast(err.message, "err"); }
+  }
+
+  /** Group the telegrams of one device and command by this many ID bytes from now on. */
+  async setIdLength(zz, pb, sb, len) {
+    const key = `${fmt.hex(zz)}${fmt.hex(pb)}${fmt.hex(sb)}`;
+    const overrides = { ...(this.settings.id_overrides || {}), [key]: len };
+    try {
+      app.settings = await api.put("api/settings", { id_overrides: overrides });
+      this.syncSettings();
+      this.closePicker();
       bus.emit("settings-changed");
       this.load(true);
     } catch (err) { toast(err.message, "err"); }
@@ -224,22 +277,23 @@ click for the definitions tab` : "click for the definitions tab";
     const span = Math.max(MIN_SPAN, Math.min(MAX_SPAN, t1 - t0));
     this.t0 = t0; this.t1 = t0 + span; this.span = span;
     if (this.t1 < Date.now() - 2000) this.setFollowSilently(false);
-    if (reload) this.load(true); else this.render();
+    if (reload === "soon") this.load(false); else if (reload) this.load(true); else this.render();
   }
 
   setFollowSilently(on) { this.follow = on; this.el.follow.classList.toggle("active", on); }
 
-  zoom(factor, at = null) {
+  /** @param {boolean|string} reload true: fetch right away, "soon": after the gesture settled (wheel, pinch) */
+  zoom(factor, at = null, reload = true) {
     const pivot = at ?? (this.follow ? this.t1 : (this.t0 + this.t1) / 2);
     let t0 = pivot - (pivot - this.t0) * factor;
     let t1 = pivot + (this.t1 - pivot) * factor;
     if (this.follow) { t1 = Date.now(); t0 = t1 - (this.span * factor); }
-    this.setWindow(t0, t1);
+    this.setWindow(t0, t1, reload);
   }
 
-  pan(fraction) {
+  pan(fraction, reload = true) {
     const delta = this.span * fraction;
-    this.setWindow(this.t0 + delta, this.t1 + delta);
+    this.setWindow(this.t0 + delta, this.t1 + delta, reload);
   }
 
   // -- data --------------------------------------------------------------------------
@@ -255,10 +309,15 @@ click for the definitions tab` : "click for the definitions tab";
     if (this.follow) { this.now = Date.now(); this.t1 = this.now; this.t0 = this.t1 - this.span; }
     const token = ++this.loadToken;
     const from = Math.floor(this.t0), to = Math.ceil(this.t1);
+    // a newer window makes the older request pointless: abort it so that the device stops working on it
+    this.abort?.abort();
+    const abort = (this.abort = new AbortController());
+    this.loading = { from, to };
+    this.updateDecodeState();
     try {
       const [runs, events] = await Promise.all([
-        api.get(`api/telegrams/runs?from=${from}&to=${to}`),
-        api.get(`api/events?from=${from - EVENT_LOOKBACK}&to=${to}`),
+        api.get(`api/telegrams/runs?from=${from}&to=${to}`, { signal: abort.signal }),
+        api.get(`api/events?from=${from - EVENT_LOOKBACK}&to=${to}`, { signal: abort.signal }),
       ]);
       if (token !== this.loadToken) return;
       this.data = runs;
@@ -269,7 +328,9 @@ click for the definitions tab` : "click for the definitions tab";
       this.render();
       this.rememberRuns();
     } catch (err) {
-      if (token === this.loadToken) toast(`loading telegrams failed: ${err.message}`, "err");
+      if (err.name !== "AbortError" && token === this.loadToken) toast(`loading telegrams failed: ${err.message}`, "err");
+    } finally {
+      if (token === this.loadToken) { this.loading = null; this.updateDecodeState(); this.markFirstLoad(); }
     }
   }
 
@@ -587,6 +648,8 @@ click for the definitions tab` : "click for the definitions tab";
     const x0 = (this.t0 - start) * scale, x1 = (this.t1 - start) * scale;
     ctx.fillStyle = "rgba(11,125,218,.18)"; ctx.fillRect(x0, 0, Math.max(2, x1 - x0), height);
     ctx.strokeStyle = "#0b7dda"; ctx.strokeRect(Math.round(x0) + 0.5, 0.5, Math.max(2, x1 - x0), height - 1);
+    ctx.fillStyle = "#0b7dda";
+    for (const x of [x0, x1]) { ctx.beginPath(); ctx.roundRect(Math.round(x) - 2.5, height / 2 - 9, 5, 18, 2); ctx.fill(); }
     ctx.fillStyle = "#6b7a8a"; ctx.font = "10px system-ui";
     ctx.fillText(fmt.dateTime(start).slice(0, 16), 4, 11);
     const label = "now"; ctx.fillText(label, width - ctx.measureText(label).width - 4, 11);
@@ -618,30 +681,88 @@ click for the definitions tab` : "click for the definitions tab";
     });
     plot.addEventListener("mousemove", (e) => this.hoverAt(e));
     plot.addEventListener("mouseleave", () => { this.hover = null; this.el.tooltip.style.display = "none"; this.drawPlot(); });
+    // like the browser's developer tools: scrolling scrolls the rows; Ctrl/⌘ + scroll (and a trackpad
+    // pinch, which browsers report that way) zooms the time axis; Shift + scroll or a sideways swipe moves it
     plot.addEventListener("wheel", (e) => {
-      e.preventDefault();
-      if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) { this.pan((e.deltaX || e.deltaY) / this.width); return; }
-      const factor = Math.exp(Math.sign(e.deltaY) * 0.25);
-      this.zoom(factor, this.tOf(e.offsetX));
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const delta = Math.max(-100, Math.min(100, e.deltaY));
+        this.zoom(Math.exp(delta * 0.006), this.tOf(e.offsetX), "soon");
+      } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        e.preventDefault();
+        this.pan((e.deltaX || e.deltaY) / this.width, "soon");
+      }
+      // otherwise the event is left alone and the list of rows scrolls
     }, { passive: false });
+    // Safari reports pinch gestures as gesture events instead
+    let pinch = null;
+    plot.addEventListener("gesturestart", (e) => { e.preventDefault(); pinch = { scale: 1 }; });
+    plot.addEventListener("gesturechange", (e) => {
+      e.preventDefault();
+      if (!pinch) return;
+      const rect = plot.getBoundingClientRect();
+      this.zoom(pinch.scale / e.scale, this.tOf(e.clientX - rect.left), "soon");
+      pinch.scale = e.scale;
+    });
+    plot.addEventListener("gestureend", (e) => { e.preventDefault(); pinch = null; });
     plot.addEventListener("dblclick", (e) => this.zoom(0.5, this.tOf(e.offsetX)));
+    // overview strip, as in the developer tools: drag the edges of the window to resize it, drag
+    // inside to move it, drag outside to select a new one; the wheel zooms or moves
     const overview = this.el.overviewCanvas;
     let odrag = null;
-    overview.addEventListener("mousedown", (e) => { odrag = { x: e.offsetX }; });
-    overview.addEventListener("mousemove", (e) => { if (odrag) { odrag.x1 = e.offsetX; } });
-    window.addEventListener("mouseup", (e) => {
-      if (!odrag || !this.overviewScale) { odrag = null; return; }
+    const EDGE = 7;
+    const timeAt = (clientX) => {
       const { start, scale } = this.overviewScale;
-      const rect = overview.getBoundingClientRect();
-      const xEnd = e.clientX - rect.left;
-      if (Math.abs(xEnd - odrag.x) > 4) {
-        this.setWindow(start + Math.min(odrag.x, xEnd) / scale, start + Math.max(odrag.x, xEnd) / scale);
-      } else {
-        const center = start + odrag.x / scale;
+      return start + (clientX - overview.getBoundingClientRect().left) / scale;
+    };
+    const hit = (clientX) => {
+      if (!this.overviewScale) return "new";
+      const { start, scale } = this.overviewScale;
+      const x = clientX - overview.getBoundingClientRect().left;
+      const x0 = (this.t0 - start) * scale, x1 = (this.t1 - start) * scale;
+      if (Math.abs(x - x0) <= EDGE) return "left";
+      if (Math.abs(x - x1) <= EDGE) return "right";
+      return x > x0 && x < x1 ? "move" : "new";
+    };
+    const cursors = { left: "ew-resize", right: "ew-resize", move: "grab", new: "crosshair" };
+    overview.addEventListener("mousemove", (e) => { if (!odrag) overview.style.cursor = cursors[hit(e.clientX)]; });
+    overview.addEventListener("mousedown", (e) => {
+      if (!this.overviewScale) return;
+      const mode = hit(e.clientX);
+      odrag = { mode, x: e.clientX, t0: this.t0, t1: this.t1, anchor: timeAt(e.clientX), moved: false };
+      if (mode === "move") overview.style.cursor = "grabbing";
+      e.preventDefault();
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!odrag || !this.overviewScale) return;
+      if (Math.abs(e.clientX - odrag.x) > 3) odrag.moved = true;
+      if (!odrag.moved) return;
+      const t = timeAt(e.clientX);
+      let t0 = odrag.t0, t1 = odrag.t1;
+      if (odrag.mode === "left") t0 = Math.min(t, odrag.t1 - MIN_SPAN);
+      else if (odrag.mode === "right") t1 = Math.max(t, odrag.t0 + MIN_SPAN);
+      else if (odrag.mode === "move") { t0 = odrag.t0 + (t - odrag.anchor); t1 = odrag.t1 + (t - odrag.anchor); }
+      else { t0 = Math.min(odrag.anchor, t); t1 = Math.max(odrag.anchor, t); if (t1 - t0 < MIN_SPAN) t1 = t0 + MIN_SPAN; }
+      this.setFollowSilently(false);
+      this.setWindow(t0, t1, false);
+    });
+    window.addEventListener("mouseup", (e) => {
+      if (!odrag) return;
+      const d = odrag;
+      odrag = null;
+      overview.style.cursor = this.overviewScale ? cursors[hit(e.clientX)] : "";
+      if (d.moved) this.load(true);
+      else if (this.overviewScale && d.mode !== "left" && d.mode !== "right") {
+        const center = timeAt(e.clientX);
         this.setWindow(center - this.span / 2, center + this.span / 2);
       }
-      odrag = null;
     });
+    overview.addEventListener("wheel", (e) => {
+      if (!this.overviewScale) return;
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) this.zoom(Math.exp(Math.max(-100, Math.min(100, e.deltaY)) * 0.006), timeAt(e.clientX), "soon");
+      else this.pan((e.deltaX || e.deltaY) / 400, "soon");
+    }, { passive: false });
   }
 
   onKey(e) {
@@ -786,6 +907,33 @@ click for the definitions tab` : "click for the definitions tab";
     this.drawPlot();
   }
 
+  /** Rename form of a definition: the message name and a table of its fields with their latest values. */
+  renameForm(def, values = null, onDone = null) {
+    const nameInput = h("input", { type: "text", value: setup.exportName(def), size: 26,
+      onchange: () => setup.rename(def, nameInput.value), onkeydown: (e) => { if (e.key === "Enter") { setup.rename(def, nameInput.value); onDone?.(); } } });
+    const map = setup.fieldMap(def);
+    const rows = (def.fields || []).map((field) => {
+      const input = h("input", { type: "text", value: map[field], size: 22, onchange: () => setup.renameField(def, field, input.value) });
+      return h("tr", {}, h("td", { class: "mono muted" }, field), h("td", {}, input), h("td", { class: "mono muted" }, values && field in values ? String(values[field]) : ""));
+    });
+    return h("div", { class: "rename" },
+      h("div", { class: "kv-row" }, h("label", {}, "Message name in my config"), nameInput, h("span", { class: "muted" }, `upstream: ${def.name}`)),
+      rows.length ? h("table", { class: "fieldnames" }, h("thead", {}, h("tr", {}, h("th", {}, "Field (upstream)"), h("th", {}, "Field name in my config"), h("th", {}, values ? "Latest value" : ""))), h("tbody", {}, rows)) : h("div", { class: "muted" }, "This message has no named fields."),
+      h("div", { class: "muted" }, "Names end up in the exported CSV, the MQTT topics (ebusd/<circuit>/<message>) and the JSON fields (value_json.<field>)."));
+  }
+
+  /** The value ranges of a candidate over the whole recording. */
+  valuesDetail(cov) {
+    const fields = summarizeFields(cov);
+    const top = [...cov.values.values()].sort((a, b) => b.n - a.n).slice(0, 25);
+    return h("div", { class: "allvalues" },
+      fields.length ? h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Field"), h("th", {}, "Over the whole recording"))),
+        h("tbody", {}, fields.map((f) => h("tr", {}, h("td", { class: "mono" }, f.name),
+          h("td", { class: "mono" }, f.kind === "range" ? `${f.min} … ${f.max}  (${fmt.count(f.distinct)} distinct)` : f.top.map(([v, n]) => `${v} ×${fmt.count(n)}`).join(", ") + (f.distinct > f.top.length ? `, … ${f.distinct - f.top.length} more` : "")))))) : null,
+      h("div", { class: "muted", style: "margin-top:4px" }, `${fmt.count(cov.values.size)}${cov.truncated ? "+" : ""} distinct decoded values${top.length < cov.values.size ? `, the ${top.length} most frequent:` : ":"}`),
+      h("div", { class: "values-list mono" }, top.map((v) => h("div", {}, h("span", { class: "n" }, `×${fmt.count(v.n)}`), ` ${v.text}`))));
+  }
+
   renderPicker() {
     const pop = this.el.popover;
     if (!this.picker || !this.picker.row) { pop.style.display = "none"; return; }
@@ -793,62 +941,98 @@ click for the definitions tab` : "click for the definitions tab";
     const decoder = app.decoder;
     const entries = decoder?.entries || [];
     const included = new Set(setup.includedKeys(entries));
+    const scan = decoder.scan || {};
+    // every recorded telegram of the row, not only the ones in the visible window
+    const telegrams = rowTelegrams(decoder, row.row);
+    const all = decoder.candidatesOf(telegrams.map((t) => t.line));
+    for (const [key, c] of row.candidates || []) if (!all.has(key)) all.set(key, c);
     const lastRun = row.runs[row.runs.length - 1];
     const sample = [...row.runs].reverse().find((r) => r.t1 >= this.t0 && r.t0 <= this.t1) || lastRun;
-    const candidates = [...row.candidates.values()].sort((a, b) => (b.def.key === row.defKey) - (a.def.key === row.defKey) || b.used - a.used
-      || (STATUS_ORDER[a.def.status] ?? 9) - (STATUS_ORDER[b.def.status] ?? 9) || b.ok - a.ok || a.def.name.localeCompare(b.def.name));
+    const usedKey = [...all.values()].find((c) => c.used)?.def.key || null;
+    const candidates = [...all.values()];
     const otherKeys = candidates.map((c) => c.def.key);
-    const ebusdKey = candidates.find((c) => c.used)?.def.key || null;
-    const list = h("div", { class: "cands" });
-    for (const c of candidates) {
-      const def = c.def;
-      const key = def.key;
-      const d = sample ? decoder.decodesOf(sample.line)?.get(key) : null;
-      const colors = messageColors(def.circuit, def.name);
+    const { groups } = groupCandidates(decoder, candidates, telegrams, { chosenKey: row.defKey, usedKey });
+    const total = telegrams.reduce((n, t) => n + (t.n || 0), 0);
+    const lead = groups.find((g) => g.hasUsed) || groups[0];
+
+    const member = (m, group) => {
+      const def = m.def, key = def.key;
       const chosen = key === row.defKey;
+      const colors = messageColors(def.circuit, def.name);
       const exportName = setup.exportName(def);
       const renameOpen = this.picker.renaming === key;
-      const nameInput = h("input", { type: "text", value: exportName, size: 22, title: "the message name in my config (MQTT topic ebusd/<circuit>/<name>); upstream: " + def.name,
-        onchange: () => setup.rename(def, nameInput.value), onkeydown: (e) => { if (e.key === "Enter") { setup.rename(def, nameInput.value); this.picker.renaming = null; this.renderPicker(); } } });
-      const fieldInputs = (def.fields || []).map((field) => {
-        const input = h("input", { type: "text", value: setup.fieldMap(def)[field], size: 12, onchange: () => setup.renameField(def, field, input.value) });
-        return h("label", { class: "field" }, h("span", { class: "mono muted" }, field, " → "), input, d?.fields && field in d.fields ? h("span", { class: "muted" }, ` = ${d.fields[field]}`) : null);
-      });
-      const item = h("div", { class: `cand ${chosen ? "chosen" : ""}`,
-        onmouseenter: () => this.setPreview(row, key), onmouseleave: () => this.setPreview(row, null) },
+      const d = m.coverage?.latest || null;
+      const why = !chosen && key !== usedKey ? whyNot(def, scan, group.failed ? m.coverage.errorKinds : null) : "";
+      const fieldNote = group.fieldNames ? fieldNamesOf(def) : "";
+      return h("div", { class: `member ${chosen ? "chosen" : ""}`, onmouseenter: () => this.setPreview(row, key), onmouseleave: () => this.setPreview(row, null) },
         h("div", { class: "line" },
           h("button", { class: `pick ${chosen ? "on" : ""}`, title: chosen ? "shown in this row and part of the setup" : "use this definition for this row (it joins the setup, the other candidates leave it)",
-            onclick: () => { setup.choose(row.key, key, otherKeys, entries); } }, chosen ? "●" : "○"),
+            onclick: () => setup.choose(row.key, key, otherKeys, entries) }, chosen ? "●" : "○"),
           h("span", { class: "chip-msg", style: `color:${colors.text};background:${colors.background};border-color:${colors.border}` }, `${def.circuit} ${def.name}${def.passive ? " (u)" : ""}`),
           exportName !== def.name ? h("span", { class: "export" }, `→ ${setup.circuitOf(def)} ${exportName}`) : null,
           h("span", { class: "muted mono", title: def.file }, def.file.replace(/^.*\//, "")),
           h("span", { class: `badge ${def.status}`, title: STATUS_HELP[def.status] || "" }, def.status),
           def.source !== "base" ? h("span", { class: "badge", title: "added or changed by this community layer" }, def.source) : null,
-          def.write ? h("span", { class: "badge write" }, "write") : null,
-          key === ebusdKey ? h("span", { class: "muted", title: "the definition ebusd itself picks for these telegrams" }, "ebusd's choice") : null,
+          def.write ? h("span", { class: "badge write", title: "write definition: sends values to the device" }, "write") : null,
+          key === usedKey ? h("span", { class: "muted", title: "the definition ebusd itself picks for these telegrams" }, "ebusd's choice") : null,
           h("span", { style: "margin-left:auto" }),
           h("label", { class: "muted", title: "part of the setup of this installation (without changing what this row shows)" },
             h("input", { type: "checkbox", checked: included.has(key), onchange: (e) => setup.include(key, e.target.checked, entries) }), " in setup"),
           h("button", { class: "small", title: "rename the message and its fields for my config", onclick: () => { this.picker.renaming = renameOpen ? null : key; this.renderPicker(); } }, renameOpen ? "done" : "rename")),
-        h("div", { class: "decoded mono" }, d ? (d.result === "ok" ? d.text || "(empty)" : h("span", { class: "err" }, `✗ ${d.result}`)) : h("span", { class: "muted" }, "not decoded yet"),
-          sample ? h("span", { class: "muted" }, `  (${sample === lastRun ? "latest" : "visible"}: ${sample.label})`) : null),
-        h("div", { class: "stats muted" }, `${c.ok} ok${c.errors ? `, ${c.errors} ✗` : ""} on this row · ${fmt.count(def.occurrences)} telegrams in ${def.distinct} variants overall · ${def.file}${def.condition ? ` ${def.condition}` : ""}`),
-        renameOpen ? h("div", { class: "rename" }, h("label", {}, "name in my config ", nameInput), fieldInputs.length ? h("div", { class: "fields" }, fieldInputs) : h("span", { class: "muted" }, "no named fields")) : null);
-      list.appendChild(item);
-    }
-    pop.replaceChildren(
-      h("div", { class: "head" }, h("span", { class: "mono" }, row.label), h("span", { class: "muted" }, `${candidates.length} candidate definition${candidates.length > 1 ? "s" : ""}`),
+        fieldNote ? h("div", { class: "muted mono note" }, `fields: ${fieldNote}`) : null,
+        why ? h("div", { class: "why" }, why) : null,
+        renameOpen ? this.renameForm(def, d?.fields || null, () => { this.picker.renaming = null; this.renderPicker(); }) : null);
+    };
+    const fieldNamesOf = (def) => (def.fields || []).join(", ");
+
+    const rowId = (row.row.id || "").length / 2;
+    const longer = Math.max(0, ...candidates.map((c) => c.def.idlen || 0));
+    const isLumped = longer > rowId;   // different messages share the row: the groups are not competing for the same telegrams
+    const cards = groups.filter((g) => !g.failed).map((g) => {
+      const cov = g.coverage;
+      const first = g.members.find((m) => m.def.key === row.defKey) || g.members.find((m) => m.def.key === usedKey) || g.members[0];
+      const latest = coverage(decoder, telegrams, first.def.key).latest;
+      const key = `${g.key}`;
+      const open = this.picker.expanded?.has(key);
+      return h("div", { class: `group ${g.hasChosen ? "chosen" : ""}` },
+        h("div", { class: "ghead" },
+          h("b", {}, g.members.length > 1 ? `${g.members.length} of ${candidates.length} candidates are the same definition and decode alike` : `1 of ${candidates.length} candidates`),
+          g.writable ? h("span", { class: "badge write" }, g.writable === g.members.length ? "writable" : `${g.writable} writable`) : null,
+          g.hasUsed ? h("span", { class: "badge active" }, "includes ebusd's choice") : !isLumped && lead && !lead.failed && g !== lead ? h("span", { class: "badge variant", title: "decodes differently than the definition ebusd uses" }, "differs from ebusd's choice") : null),
+        h("div", { class: "decoded mono" }, latest ? latest.text : h("span", { class: "err" }, "decodes nothing of this row"),
+          latest ? h("span", { class: "muted", title: latest.line }, `  (latest, ${fmt.dateTime(latest.last_ms).slice(5, 16)})`) : null),
+        h("div", { class: `cover ${cov.errors ? "warn" : "ok"}` },
+          cov.errors ? `decodes ${fmt.count(cov.ok)} of ${fmt.count(cov.distinct)} recorded variants, fails for ${fmt.count(cov.errors)} (${[...cov.errorKinds.entries()].map(([k, n]) => `${k} ×${n}`).join(", ")})`
+            : `decodes all ${fmt.count(cov.ok)} recorded variants without error`,
+          h("span", { class: "muted" }, ` · ${fmt.count(cov.okOccurrences)} telegrams${cov.first_ms ? `, ${fmt.date(cov.first_ms)} – ${fmt.date(cov.last_ms || cov.first_ms)}` : ""}`),
+          cov.decoded < cov.telegrams ? h("span", { class: "muted", title: "the other telegrams of this row belong to other messages (see the note above)" }, ` · matches ${fmt.count(cov.decoded)} of the row's ${fmt.count(cov.telegrams)} variants`) : null,
+          " ", h("a", { href: "#", onclick: (e) => { e.preventDefault(); (this.picker.expanded ||= new Set())[open ? "delete" : "add"](key); this.renderPicker(); } }, open ? "hide values" : "all values")),
+        open ? this.valuesDetail(cov) : null,
+        g.members.map((m) => member(m, g)));
+    });
+    const failed = groups.find((g) => g.failed);
+    const failedBox = failed ? h("details", { class: "group failed" },
+      h("summary", {}, `${failed.members.length} candidate${failed.members.length > 1 ? "s" : ""} decode none of this row's telegrams`),
+      failed.members.map((m) => member(m, failed))) : null;
+    const lumped = isLumped ? h("div", { class: "note-box" },
+      h("b", {}, "Why so many candidates? "), `This row groups telegrams by only ${rowId} ID byte${rowId === 1 ? "" : "s"} (${fmt.hex(row.row.zz)} ${fmt.hex(row.row.pb)}${fmt.hex(row.row.sb)} ${row.row.id}), but the definitions identify their messages by up to ${longer} bytes. So these are not ${candidates.length} alternatives for one message: they are different messages (registers) that share this row, each in the file ebusd loads and again in the files of other device variants. `,
+      h("button", { class: "small primary", onclick: () => this.setIdLength(row.row.zz, row.row.pb, row.row.sb, longer) }, `Split this row by ${longer} ID bytes`)) : null;
+    const none = !row.defKey ? h("div", { class: "note-box" }, "ebusd itself has no definition for this row: none of the candidates below would be used. Pick one to use it anyway (it joins the setup of this installation). The reasons are listed with each candidate.") : null;
+
+    pop.replaceChildren();
+    append(pop,
+      h("div", { class: "head" }, h("span", { class: "mono" }, row.label), h("span", { class: "muted" }, `${candidates.length} candidate definition${candidates.length > 1 ? "s" : ""} · ${fmt.count(telegrams.length)} recorded variants, ${fmt.count(total)} telegrams`),
         h("span", { style: "margin-left:auto" }),
         setup.chosenFor(row.key) ? h("button", { class: "small", title: "forget the choice for this row and show ebusd's choice again", onclick: () => setup.choose(row.key, null) }, "ebusd's choice") : null,
         h("button", { class: "small", onclick: () => { bus.emit("show-tab", "definitions"); bus.emit("show-definition", row.defKey || candidates[0]?.def.key); } }, "Definitions ›"),
         h("button", { class: "small", onclick: () => this.closePicker() }, "✕")),
-      list,
-      h("div", { class: "hint foot" }, "Hovering a candidate shows its decoding in the row. Picking one puts it into the setup of this installation (and takes the others of this row out); renamed messages and fields keep their upstream meaning but are exported and published under the new names."));
+      lumped, none, cards, failedBox,
+      h("div", { class: "hint foot" }, "Candidates are compared over every telegram of this row in the recording. Definitions that are the same and decode the same values are shown together; what differs is their name, file and status. Hovering shows the decoding in the row; picking puts the definition into the setup (the row's other candidates leave it)."));
     pop.style.display = "block";
     const stageTop = this.el.stage.getBoundingClientRect().top;
-    const top = Math.max(0, Math.min(this.picker.anchorTop - stageTop + ROW, this.el.stage.clientHeight - Math.min(pop.offsetHeight, this.el.stage.clientHeight * 0.7)));
+    const top = Math.max(0, Math.min(this.picker.anchorTop - stageTop + ROW, this.el.stage.clientHeight - Math.min(pop.offsetHeight, this.el.stage.clientHeight * 0.8)));
     pop.style.top = `${top}px`;
-    pop.style.left = `${Math.min(this.el.labels.offsetWidth - 40, this.el.stage.clientWidth - pop.offsetWidth - 10)}px`;
+    pop.style.left = `${Math.max(0, Math.min(this.el.labels.offsetWidth - 40, this.el.stage.clientWidth - pop.offsetWidth - 10))}px`;
   }
 
   // -- setup drawer: what is chosen for this installation, and the exports ----------------------
@@ -890,11 +1074,6 @@ click for the definitions tab` : "click for the definitions tab";
         const colors = messageColors(m.circuit, m.name);
         const exportName = setup.exportName(m);
         const editing = this.drawerEditing === m.key;
-        const nameInput = h("input", { type: "text", value: exportName, size: 20, onchange: () => setup.rename(m, nameInput.value), onkeydown: (e) => { if (e.key === "Enter") { setup.rename(m, nameInput.value); this.drawerEditing = null; this.renderDrawer(); } } });
-        const fieldInputs = (m.fields || []).map((field) => {
-          const input = h("input", { type: "text", value: setup.fieldMap(m)[field], size: 12, onchange: () => setup.renameField(m, field, input.value) });
-          return h("label", { class: "field" }, h("span", { class: "mono muted" }, field, " → "), input);
-        });
         append(list, h("div", { class: `item ${m.write ? "write" : ""}` },
           h("div", { class: "line" },
             h("span", { class: "chip-msg", style: `color:${colors.text};background:${colors.background};border-color:${colors.border}` }, exportName, m.write ? " (w)" : m.passive ? " (u)" : ""),
@@ -905,7 +1084,7 @@ click for the definitions tab` : "click for the definitions tab";
             h("button", { class: "small", title: "rename for my config", onclick: () => { this.drawerEditing = editing ? null : m.key; this.renderDrawer(); } }, editing ? "done" : "✎"),
             h("button", { class: "small", title: "take out of the setup", onclick: () => setup.include(m.key, false, entries) }, "✕")),
           m.examples?.[0] ? h("div", { class: "mono muted example" }, m.examples[0].slice(0, 100)) : null,
-          editing ? h("div", { class: "rename" }, h("label", {}, "name ", nameInput), fieldInputs.length ? h("div", { class: "fields" }, fieldInputs) : null) : null));
+          editing ? this.renameForm(m, decoder.sampleFields(m.key), () => { this.drawerEditing = null; this.renderDrawer(); }) : null));
       }
     }
     if (!included.length) append(list, h("div", { class: "hint", style: "padding:8px" }, entries.length ? "Nothing included yet. Pick candidates in the timeline (badge next to a row name) or tick definitions in the Definitions tab." : "No definitions matched the recording yet."));

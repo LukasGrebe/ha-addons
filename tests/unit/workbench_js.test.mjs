@@ -17,6 +17,7 @@ const { generateHaYaml, generateEbusdOptions } = await import("../../ebusd_workb
 const { frameMatches, parseAddressMap, runProfile } = await import("../../ebusd_workbench/www/evidence.js");
 const { lineOfRun, defKeyOf } = await import("../../ebusd_workbench/www/decoder.js");
 const { app } = await import("../../ebusd_workbench/www/app.js");
+const { structuralSignature, rowTelegrams, coverage, groupCandidates, summarizeFields, whyNot } = await import("../../ebusd_workbench/www/compare.js");
 
 const roomTemp = { key: "vaillant/15.700.csv|700|Z1RoomTemp|", circuit: "700", name: "Z1RoomTemp", write: false, passive: false, status: "active", source: "base", file: "vaillant/15.700.csv",
   fields: ["temp"], csv: "r,700,Z1RoomTemp,Room temperature,,15,b524,020000000700,temp,s,D2C,,°C,room temperature" };
@@ -92,4 +93,70 @@ test("timeline runs map back to ebusd's hex notation", () => {
   assert.equal(lineOfRun({ ...row, zz: null }, { payload: "", slave: "", status: "ok" }), null);
   assert.equal(lineOfRun(row, { payload: "", slave: "", status: "timeout" }), null);
   assert.equal(defKeyOf({ file: "a.csv", circuit: "c", name: "n", write: true, passive: true }), "a.csv|c|n|wu");
+});
+
+// -- comparing candidates over the whole recording ---------------------------------------------------
+
+const defOf = (circuit, name, file, status, csvFieldName = "temp", extra = {}) => ({ key: `${file}|${circuit}|${name}|`, circuit, name, file, status, write: false, passive: false, zz: "15", pbsb: "b524",
+  csv: `r,${circuit},${name},comment ${name},,15,b524,020002000700,${csvFieldName},s,EXP,,°C,comment`, fields: [csvFieldName], source: "base", condition: "", conditions: [], ...extra });
+const ok = (line, key, text, fields) => ({ id: `${line}|${key}`, line, defKey: key, result: "ok", text, fields, used: false });
+const fake = (telegrams, decodes) => ({ telegrams: new Map(telegrams.map((t) => [t.line, t])), decodesOf: (line) => decodes[line] });
+
+test("structural signature ignores names, comments and circuits but not types", () => {
+  const a = "r,700,Hc1ActualFlowTempDesired,flow,,15,b524,020002000700,ign,s,IGN:4,,,,value,s,EXP,,°C,x";
+  const b = "r,720,Hc1FlowTempDesired,other comment,,15,b524,020002000700,ign,s,IGN:4,,,,flow,s,EXP,,°C,y";
+  const c = "r,720,Hc1FlowTempDesired,other,,15,b524,020002000700,ign,s,IGN:4,,,,value,s,D2C,,°C,y";
+  assert.equal(structuralSignature(a), structuralSignature(b));
+  assert.notEqual(structuralSignature(a), structuralSignature(c));
+  assert.equal(structuralSignature(`[id_sw>=413]${a}`), structuralSignature(a), "conditions are not part of what a definition is");
+});
+
+test("candidates over the whole recording are grouped by structure and decoded values", () => {
+  const lines = [["3115b52406060009010700", "0102070000000000", 100], ["3115b52406060009010700", "0102070000005041", 50], ["3115b52406060009010701", "0102070000000000", 10]];
+  const telegrams = lines.map(([m, sl, n], i) => ({ line: `${m}/${sl}`, master: m, slave: sl, n, first_ms: 1000 * (i + 1), last_ms: 2000 * (i + 1) }));
+  const other = { line: "3115b524030d2800/0000", master: "3115b524030d2800", slave: "0000", n: 5, first_ms: 1, last_ms: 2 };   // another row
+  const d700 = defOf("700", "Hc1ActualFlowTempDesired", "vaillant/15.700.csv", "active");
+  const d720 = defOf("720", "Hc1FlowTempDesired", "vaillant/15.720.csv", "variant", "flow");
+  const dBad = defOf("ehp", "Other", "vaillant/08.ehp.csv", "error", "temp", { csv: "r,ehp,Other,,,15,b524,020002000700,temp,s,UCH,,," });
+  const dDiff = defOf("hmu", "Scaled", "vaillant/08.hmu.csv", "hidden", "temp", { csv: "r,hmu,Scaled,,,15,b524,020002000700,temp,s,D2C,,°C," });
+  const decodes = {};
+  for (const t of telegrams) {
+    const n = t.master.endsWith("01") ? "0.0 °C" : t.slave.endsWith("5041") ? "13.0 °C" : "0.0 °C";
+    decodes[t.line] = new Map([
+      [d700.key, ok(t.line, d700.key, `value=${n}`, { value: parseFloat(n) })],
+      [d720.key, ok(t.line, d720.key, `flow=${n}`, { flow: parseFloat(n) })],
+      [dDiff.key, ok(t.line, dDiff.key, `temp=${n}`, { temp: parseFloat(n) * 2 })],
+      [dBad.key, { id: "x", line: t.line, defKey: dBad.key, result: "ERR_INVALID_POS", text: "", fields: null, used: false }],
+    ]);
+  }
+  const decoder = fake([...telegrams, other], decodes);
+  const row = { qq: 0x31, zz: 0x15, pb: 0xb5, sb: 0x24, id: "060009010700" };
+  assert.deepEqual(rowTelegrams(decoder, row).map((t) => t.line), [telegrams[0].line, telegrams[1].line]);
+  assert.equal(rowTelegrams(decoder, { ...row, id: "" }).length, 4, "without an ID the whole command belongs to the row");
+  const rowLines = rowTelegrams(decoder, row);
+  const cov = coverage(decoder, rowLines, d700.key);
+  assert.deepEqual([cov.distinct, cov.ok, cov.errors, cov.occurrences, cov.first_ms, cov.last_ms], [2, 2, 0, 150, 1000, 4000]);
+  assert.equal(cov.fields.get("value").max, 13);
+  assert.deepEqual(summarizeFields(cov), [{ name: "value", kind: "range", min: 0, max: 13, distinct: 2 }]);
+  const { groups, total } = groupCandidates(decoder, [d700, d720, dDiff, dBad].map((def) => ({ def })), rowLines, { chosenKey: d700.key, usedKey: d700.key });
+  assert.equal(total, 4);
+  // 700 and 720 are the same definition (names differ) and decode the same values; the scaled one differs; the failing one is last
+  assert.deepEqual(groups.map((g) => g.members.map((m) => m.def.circuit)), [["700", "720"], ["hmu"], ["ehp"]]);
+  assert.equal(groups[0].hasChosen, true);
+  assert.deepEqual(groups[0].names, ["700 Hc1ActualFlowTempDesired", "720 Hc1FlowTempDesired"]);
+  assert.deepEqual(groups[0].fieldNames, ["temp", "flow"], "differently named fields are shown");
+  assert.equal(groups[1].fieldNames, null);
+  assert.equal(groups[2].failed, true);
+  assert.equal(groups[2].coverage.errorKinds.get("ERR_INVALID_POS"), 2);
+});
+
+test("why a candidate is not what ebusd uses", () => {
+  const scan = { "15": { manufacturer: "Vaillant", ident: "BASV2", sw: "0507", hw: "1704", file: "vaillant/15.700.csv" } };
+  assert.match(whyNot({ ...defOf("720", "X", "vaillant/15.720.csv", "variant"), zz: "15" }, scan), /only loaded for another device variant.*BASV2.*SW 0507.*loads 15\.700\.csv/);
+  assert.match(whyNot(defOf("720", "X", "vaillant/15.720.csv", "variant"), {}), /No identification of device 15 was recorded/);
+  const conditional = defOf("ehp", "X", "vaillant/50.ehp.csv", "conditional", "temp", { condition: "[Ehp_heatpumptype=3]",
+    conditions: [{ name: "Ehp_heatpumptype", circuit: "ehp", message: "HeatPumpType", field: "type", value: [3] }, { name: "id_sw", circuit: "scan", message: "scan", field: "SW", value: [413, 4294967295] }] });
+  assert.match(whyNot(conditional, scan), /\[Ehp_heatpumptype=3\].*ehp HeatPumpType type = 3 and the device identification SW ≥ 413/);
+  assert.match(whyNot(defOf("a", "b", "a.csv", "hidden"), scan), /takes precedence/);
+  assert.match(whyNot(defOf("a", "b", "a.csv", "error"), scan, new Map([["ERR_INVALID_POS", 2]])), /ERR_INVALID_POS ×2/);
 });

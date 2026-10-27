@@ -19,14 +19,29 @@ export const api = {
         payload = JSON.stringify(body);
       }
     }
-    const response = await fetch(path, { method, headers, body: payload, cache: "no-store" });
-    const text = await response.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch { data = { error: text.slice(0, 200) }; }
-    if (!response.ok) throw new Error((data && data.error) || `${response.status} ${response.statusText}`);
-    return data;
+    // the device may be busy (the Home Assistant proxy answers 502/503/504 then): reads are tried again
+    const attempts = method === "GET" ? 3 : 1;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const response = await fetch(path, { method, headers, body: payload, cache: "no-store", signal: options.signal });
+        const text = await response.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch { data = { error: text.slice(0, 200) }; }
+        if (!response.ok) {
+          const err = new Error((data && data.error) || `${response.status} ${response.statusText || "(the device did not answer in time)"}`);
+          err.status = response.status;
+          throw err;
+        }
+        return data;
+      } catch (err) {
+        if (err.name === "AbortError" || options.signal?.aborted) throw err;
+        const transient = [502, 503, 504].includes(err.status) || err instanceof TypeError;
+        if (!transient || attempt >= attempts) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 800 * attempt * attempt));
+      }
+    }
   },
-  get: (path) => api.call("GET", path),
+  get: (path, options) => api.call("GET", path, undefined, options),
   post: (path, body) => api.call("POST", path, body ?? {}),
   put: (path, body, options) => api.call("PUT", path, body, options),
   del: (path) => api.call("DELETE", path),
@@ -118,8 +133,8 @@ function updateStatusBar() {
   const haText = !ha.configured ? "HA: not available" : ha.connected ? `HA: ${ha.entities.length} entities` : "HA: disconnected";
   bar.appendChild(h("span", { class: `chip ${haState}`, title: ha.last_error || "" }, haText));
   const repo = s.repo;
-  const repoText = !repo.exists ? "no repository" : `${repo.branch || "?"}${repo.changes?.length ? ` · ${repo.changes.length} changed` : ""}${repo.ahead ? ` ↑${repo.ahead}` : ""}${repo.behind ? ` ↓${repo.behind}` : ""}`;
-  bar.appendChild(h("span", { class: `chip ${repo.exists ? (repo.changes?.length ? "warn" : "ok") : ""}`, title: repo.dir || "" }, repoText));
+  const repoText = repo.busy ? `${repo.busy.what}…` : !repo.exists ? "no repository" : `${repo.branch || "?"}${repo.changes?.length ? ` · ${repo.changes.length} changed` : ""}${repo.ahead ? ` ↑${repo.ahead}` : ""}${repo.behind ? ` ↓${repo.behind}` : ""}`;
+  bar.appendChild(h("span", { class: `chip ${repo.busy ? "busy" : repo.exists ? (repo.changes?.length ? "warn" : "ok") : ""}`, title: repo.dir || "" }, repoText));
 }
 
 export async function refreshStatus() {
@@ -154,7 +169,8 @@ async function main() {
   });
   bus.on("show-tab", showTab);
   showTab(["timeline", "definitions", "settings"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "timeline");
-  setInterval(refreshStatus, 10_000);
+  const poll = async () => { await refreshStatus(); setTimeout(poll, app.status?.repo?.busy ? 2000 : 10_000); };
+  setTimeout(poll, 10_000);
   // the browser-side copy of the recording and its decodings; the views listen to "decodes-changed"
   app.decoder.init().catch((err) => { console.error(err); toast(`store failed: ${err.message}`, "err", 8000); });
 }

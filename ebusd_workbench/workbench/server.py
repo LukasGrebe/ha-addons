@@ -9,6 +9,10 @@ import logging
 import mimetypes
 import os
 import re
+import select
+import socket
+import sqlite3
+import threading
 import time
 import traceback
 import urllib.parse
@@ -34,6 +38,14 @@ def route(method, pattern):
     return register
 
 
+HEAVY_PATHS = ("/api/telegrams", "/api/events", "/api/export/rawlog")   # queries that scan the recording
+HEAVY_LIMIT = 3                  # at most this many at once; the device may be a Raspberry Pi
+
+
+class Cancelled(Exception):
+    """The client went away while its request was running."""
+
+
 class ApiError(Exception):
     def __init__(self, message, status=HTTPStatus.BAD_REQUEST):
         super().__init__(message)
@@ -50,6 +62,7 @@ class Context:
         self.www_dir = www_dir
         self.allow_any = allow_any or os.environ.get("WORKBENCH_ALLOW_ANY") == "1"
         self.started = time.time()
+        self.heavy = threading.BoundedSemaphore(HEAVY_LIMIT)
 
 
 def window(query, default_span_ms=3600_000):
@@ -341,6 +354,15 @@ class Request:
         self.params = params
         self._body = None
 
+    def client_gone(self):
+        """Whether the browser closed the connection (aborted the fetch, scrolled on, closed the tab)."""
+        try:
+            sock = self.handler.connection
+            readable, _, _ = select.select([sock], [], [], 0)
+            return bool(readable) and sock.recv(1, socket.MSG_PEEK) == b""
+        except (OSError, ValueError):
+            return True
+
     def body(self):
         if self._body is None:
             length = int(self.handler.headers.get("Content-Length") or 0)
@@ -404,7 +426,7 @@ class Handler(BaseHTTPRequestHandler):
                     match = pattern.match(path)
                     if match and route_method == method:
                         request = Request(self, path, query, match.groupdict())
-                        result = func(self.ctx, request)
+                        result = self.run_route(func, request)
                         if result is not None:
                             self.send_json(result)
                         return
@@ -422,9 +444,31 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": f"invalid request: {err}"}, HTTPStatus.BAD_REQUEST)
         except (BrokenPipeError, ConnectionResetError):
             pass
+        except Cancelled:
+            self.close_connection = True   # nobody is waiting for the answer any more
         except Exception as err:  # noqa: BLE001 - report instead of killing the connection silently
             log.error("%s %s failed: %s\n%s", method, path, err, traceback.format_exc())
             self.send_json({"error": f"internal error: {err}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def run_route(self, func, request):
+        """Run a route; queries over the recording are limited in number and stop when the client is gone."""
+        db = self.ctx.db
+        heavy = request.path.startswith(HEAVY_PATHS)
+        if heavy:
+            while not self.ctx.heavy.acquire(timeout=0.5):
+                if request.client_gone():
+                    raise Cancelled()
+        db.local.cancel = request.client_gone
+        try:
+            return func(self.ctx, request)
+        except sqlite3.OperationalError as err:
+            if "interrupted" in str(err) or request.client_gone():
+                raise Cancelled()
+            raise
+        finally:
+            db.local.cancel = None
+            if heavy:
+                self.ctx.heavy.release()
 
     def send_json(self, obj, status=HTTPStatus.OK):
         data = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode()

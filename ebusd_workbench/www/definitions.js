@@ -57,7 +57,13 @@ export class Definitions {
     this.autoCompiled = false;
     this.setupFilter = "";
     this.build();
-    bus.on("status", (status) => { if (status.repo?.exists !== this.repo?.exists) this.refresh(); });
+    bus.on("status", (status) => {
+      const busy = status.repo?.busy || null;
+      const wasBusy = this.repo?.busy || null;
+      if (status.repo?.exists !== this.repo?.exists || (wasBusy && !busy)) this.refresh();
+      else if (JSON.stringify(busy) !== JSON.stringify(wasBusy) && this.repo) { this.repo.busy = busy; this.renderRepo(); }
+    });
+    setInterval(() => { for (const el of this.root.querySelectorAll("[data-since]")) el.textContent = fmt.duration(Date.now() - Number(el.dataset.since)); }, 1000);
     bus.on("decodes-changed", (reason) => { this.updateDecodeStatus(); if (reason !== "progress") { this.setCounts(); this.refreshViews(); } });
     bus.on("setup-changed", () => { this.setCounts(); this.refreshViews(["setup", "export"]); });
     bus.on("show-view", (id) => this.showView(id));
@@ -231,16 +237,23 @@ export class Definitions {
   }
 
   async repoAction(action, body, label) {
-    const button = this.el.repo.querySelector(`button[data-action="${action}"]`);
-    if (button) button.disabled = true;
+    const slow = ["clone", "fetch", "pull", "push"].includes(action);
+    if (slow) {
+      // visible right away; the server's own busy state (polled with the status) takes over if the request is cut off
+      this.pending = { what: action === "clone" ? `cloning ${body?.url || ""}` : `${label || action}`, since: Date.now() / 1000 };
+      this.renderRepo();
+      refreshStatus();
+    }
     try {
       this.repo = await api.post(`api/repo/${action}`, body);
+      this.pending = null;
       toast(`${label || action} done`);
       await this.refresh();
       refreshStatus();
     } catch (err) {
+      this.pending = null;
       toast(`${label || action} failed: ${err.message}`, "err", 8000);
-      if (button) button.disabled = false;
+      await this.refresh();
     }
   }
 
@@ -248,6 +261,13 @@ export class Definitions {
     const r = this.repo || {};
     const box = this.el.repo;
     box.replaceChildren();
+    const busy = r.busy || this.pending;
+    if (busy) {
+      append(box, h("h2", {}, "Definitions repository"),
+        h("div", { class: "busy-box" }, h("span", { class: "spinner" }), h("div", {}, h("b", {}, `${busy.what}…`), " ", h("span", { class: "muted", "data-since": String(Math.round(busy.since * 1000)) }, fmt.duration(Date.now() - busy.since * 1000)),
+          h("div", { class: "hint" }, busy.what.startsWith("cloning") ? "A full clone of ebusd-configuration (with its history, needed for the community layers) takes a minute or two on a small device. You can leave this tab; the timeline shows the progress." : "This can take a moment."))));
+      if (!r.exists) return;
+    }
     if (!r.exists) {
       const url = h("input", { type: "text", placeholder: "https://github.com/<you>/ebusd-configuration.git", value: app.status?.repo_url || "" });
       append(box, h("h2", {}, "Definitions repository"),

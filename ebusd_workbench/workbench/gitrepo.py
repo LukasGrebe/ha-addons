@@ -1,5 +1,6 @@
 """The git repository with the message definitions (TypeSpec sources) and safe file access to it."""
 
+import contextlib
 import io
 import os
 import re
@@ -7,6 +8,8 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import threading
+import time
 
 GIT_TIMEOUT = 60
 CLONE_TIMEOUT = 600
@@ -34,11 +37,24 @@ def safe_relative(path):
 class Repo:
     def __init__(self, directory):
         self.dir = os.path.abspath(directory)
+        self.busy = None              # {"what", "since"} while a slow operation runs
+        self._busy_lock = threading.Lock()
 
     # -- git --------------------------------------------------------------------
 
     def exists(self):
         return os.path.isdir(os.path.join(self.dir, ".git"))
+
+    @contextlib.contextmanager
+    def working(self, what):
+        """Mark a slow operation (cloning, fetching) so that the UI can show it while it runs."""
+        with self._busy_lock:
+            self.busy = {"what": what, "since": time.time()}
+        try:
+            yield
+        finally:
+            with self._busy_lock:
+                self.busy = None
 
     def run(self, *args, timeout=GIT_TIMEOUT, check=True, cwd=None):
         env = dict(os.environ)
@@ -68,7 +84,8 @@ class Repo:
         if branch:
             args += ["--branch", branch]
         args += ["--", url.strip(), self.dir]
-        self.run(*args, timeout=CLONE_TIMEOUT, cwd=parent)
+        with self.working(f"cloning {url.strip()}"):
+            self.run(*args, timeout=CLONE_TIMEOUT, cwd=parent)
 
     def init(self):
         if self.exists():
@@ -77,11 +94,12 @@ class Repo:
         self.run("init", "-q")
 
     def status(self):
+        busy = self.busy
         if not self.exists():
-            return {"exists": False, "dir": self.dir}
+            return {"exists": False, "dir": self.dir, "busy": busy}
         proc = self.run("status", "--porcelain=v2", "--branch", "--untracked-files=all")
         result = {"exists": True, "dir": self.dir, "branch": None, "upstream": None, "ahead": 0, "behind": 0,
-                  "changes": [], "remote": None, "head": None}
+                  "changes": [], "remote": None, "head": None, "busy": busy}
         for line in proc.stdout.splitlines():
             if line.startswith("# branch.head "):
                 result["branch"] = line[14:]
@@ -152,18 +170,21 @@ class Repo:
         return self.status()
 
     def fetch(self):
-        self.run("fetch", "--quiet", timeout=CLONE_TIMEOUT)
+        with self.working("fetching"):
+            self.run("fetch", "--quiet", timeout=CLONE_TIMEOUT)
         return self.status()
 
     def pull(self):
-        proc = self.run("pull", "--ff-only", "--quiet", timeout=CLONE_TIMEOUT, check=False)
+        with self.working("pulling"):
+            proc = self.run("pull", "--ff-only", "--quiet", timeout=CLONE_TIMEOUT, check=False)
         if proc.returncode != 0:
             raise RepoError(proc.stderr.strip() or "pull failed (local commits and remote diverged? commit or discard your changes first)")
         return self.status()
 
     def push(self):
         branch = self.run("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-        proc = self.run("push", "--quiet", "-u", "origin", branch, timeout=CLONE_TIMEOUT, check=False)
+        with self.working("pushing"):
+            proc = self.run("push", "--quiet", "-u", "origin", branch, timeout=CLONE_TIMEOUT, check=False)
         if proc.returncode != 0:
             raise RepoError(proc.stderr.strip() or "push failed")
         return self.status()
@@ -232,7 +253,8 @@ class Repo:
             source = f"refs/heads/{rest}"
         else:
             remote, source = "origin", f"refs/heads/{rest}"
-        self.run("fetch", "--quiet", "--force", remote, f"{source}:refs/workbench/{ref}", timeout=CLONE_TIMEOUT)
+        with self.working(f"fetching {ref}"):
+            self.run("fetch", "--quiet", "--force", remote, f"{source}:refs/workbench/{ref}", timeout=CLONE_TIMEOUT)
         return self.layer_info(ref)
 
     def layer_info(self, ref, subdir=""):

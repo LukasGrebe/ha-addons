@@ -1,4 +1,4 @@
-# 0.2.0 (unreleased)
+# 0.2.1 (unreleased)
 
 The timeline becomes the place where definitions are compared, chosen and named.
 
@@ -21,6 +21,20 @@ The timeline becomes the place where definitions are compared, chosen and named.
 * Evidence checks: address mapping between the profile author's installation and this bus
   (`f1=31`), ebusd's own address as a setting used by the raw log export too
 * `ebusd-check` reports the messages a condition refers to
+* Candidate picker compares over the whole recording: identical definitions that decode the same
+  values are shown as one card, with agreement and writable counts, coverage (all recorded
+  variants decoded?), all decoded values, and the reason each candidate is not ebusd's choice;
+  rename form with a field table; lumped rows (fewer ID bytes than the definitions use) are
+  explained and can be split with one click
+* Timeline controls like the browser developer tools (wheel scrolls, Ctrl/⌘ + wheel or pinch zooms,
+  Shift + wheel moves; resizable window in the overview strip), status indicator with progress
+  (loading, reading the recording, decoding x of y, compiling, cloning), notice when there are
+  no definitions to decode with
+* Repository operations (clone, fetch, pull, push) report their state, shown in the status bar,
+  the timeline and the definitions tab
+* Robustness: the recording is read into the browser day by day after the first timeline load,
+  queries stop when the browser aborts a request, at most three scans run at once, reads are
+  retried on 502/503/504
 
 # 0.1.0 (unreleased)
 

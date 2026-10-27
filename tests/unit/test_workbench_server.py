@@ -35,6 +35,7 @@ class Api(unittest.TestCase):
             f.write("<!doctype html><html><head><title>t</title></head><body>hi</body></html>")
         ctx = Context(db, Settings(os.path.join(cls.tmp.name, "settings.json")), Repo(os.path.join(cls.tmp.name, "repo")),
                       deploy_dir=os.path.join(cls.tmp.name, "deploy"), www_dir=www)
+        cls.server_ctx = ctx
         cls.server = make_server(ctx, "127.0.0.1", 0)
         cls.port = cls.server.server_address[1]
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
@@ -120,6 +121,33 @@ class Api(unittest.TestCase):
         self.assertNotEqual(len(own_lines), len(as_10))
         self.assertTrue(all(l.split(" ", 2)[2].startswith(">10") for l in as_10), as_10[:2])
         self.request("PUT", "/api/settings", {"own_address": "31"})
+
+    def test_client_gone_stops_queries(self):
+        import socket
+        import sqlite3
+        from workbench import server as srv
+        a, b = socket.socketpair()
+        handler = type("H", (), {"connection": a})()
+        request = srv.Request(handler, "/api/telegrams/runs", {}, {})
+        self.assertFalse(request.client_gone())
+        b.close()                     # the browser aborted the fetch
+        self.assertTrue(request.client_gone())
+        a.close()
+        # a connection opened for a request whose client is gone interrupts a long query
+        ctx = self.server_ctx
+        ctx.db.local.cancel = lambda: True
+        try:
+            conn = ctx.db.connect()
+            with self.assertRaises(sqlite3.OperationalError):
+                conn.execute("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 50000000) SELECT count(*) FROM c").fetchone()
+            conn.close()
+        finally:
+            ctx.db.local.cancel = None
+
+    def test_repo_busy_state(self):
+        status = self.get_json("/api/status")
+        self.assertIn("busy", status["repo"])
+        self.assertIsNone(status["repo"]["busy"])
 
     def test_repo_and_deploy(self):
         self.assertEqual(self.request("GET", "/api/repo/file?path=x")[0], 400)

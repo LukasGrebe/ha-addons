@@ -10,7 +10,7 @@ import { api, app, bus, fmt } from "./app.js";
 import { openStore } from "./store.js";
 
 const SYNC_INTERVAL = 5000;
-const SYNC_CHUNK = 7 * 86400e3;
+const SYNC_CHUNK = 86400e3;
 const BATCH = 1500;
 
 export const defKeyOf = (c) => `${c.file}|${c.circuit}|${c.name}|${c.write ? "w" : ""}${c.passive ? "u" : ""}`;
@@ -71,6 +71,7 @@ export class Decoder {
     this.syncing = false;
     this.decoding = false;
     this.progress = null;
+    this.fraction = null;
     this.error = null;
     this.worker = null;
     this.workerFailed = false;
@@ -134,7 +135,7 @@ export class Decoder {
     return {
       store: this.store?.kind || "none", compile: this.compile ? { id: this.compile.id, at: this.compile.at, summary: this.compile.summary, entry: this.compile.entry, layers: this.compile.layers, loaded: this.compile.loaded } : null,
       telegrams: this.telegrams.size, decoded, known, definitions: this.entries.length, active: this.entries.filter((e) => e.status === "active").length,
-      syncing: this.syncing, decoding: this.decoding, progress: this.progress, lastSync: this.meta.lastSync, error: this.error,
+      syncing: this.syncing, decoding: this.decoding, progress: this.progress, fraction: this.fraction, lastSync: this.meta.lastSync, error: this.error,
     };
   }
 
@@ -144,14 +145,23 @@ export class Decoder {
     if (this.syncing || !this.store) return;
     const db = app.status?.db;
     if (!db?.exists || !db.has_telegram_table || !db.first_ms) return;
+    // the timeline's first load goes first: the device answers one thing at a time best
+    await Promise.race([app.views.timeline?.firstLoad, new Promise((r) => setTimeout(r, 20000))]);
     this.syncing = true;
     try {
       const start = this.meta.lastSync ?? db.first_ms;
-      const end = Date.now();
+      // never past what the database holds (the browser's clock may differ from the device's)
+      const end = Math.min(Date.now(), (db.last_ms || 0) + 60e3);
       let added = 0, changed = 0;
-      for (let from = start; from < end; from = Math.min(from + SYNC_CHUNK, end)) {
+      this.error = null;
+      const chunks = Math.ceil((end - start) / SYNC_CHUNK);
+      for (let from = start, i = 0; from < end; from = Math.min(from + SYNC_CHUNK, end), i++) {
         const to = Math.min(from + SYNC_CHUNK, end);
-        if (end - start > SYNC_CHUNK) { this.progress = `indexing the recording ${fmt.date(from)}…`; this.emit("progress"); }
+        if (chunks > 1) {
+          this.progress = `reading the recording into the browser: day ${i + 1} of ${chunks} (${fmt.date(from)})`;
+          this.fraction = i / chunks;
+          this.emit("progress");
+        }
         const list = await this.fetchDistinct(from, to);
         const put = [];
         for (const t of list) {
@@ -173,13 +183,19 @@ export class Decoder {
         }
         if (put.length) await this.store.putAll("telegrams", put);
         this.meta.lastSync = to;
+        await this.saveMeta();
+        if (added || changed) this.emit("telegrams");
+        added = changed = 0;
       }
       this.progress = null;
+      this.fraction = null;
       await this.saveMeta();
       if (added || changed) this.emit("telegrams");
     } catch (err) {
       console.warn("telegram sync failed:", err);
       this.progress = null;
+      this.fraction = null;
+      this.error = `reading the recording failed: ${err.message}`;
     } finally {
       this.syncing = false;
     }
@@ -272,7 +288,8 @@ export class Decoder {
     this.error = null;
     try {
       for (let i = 0; i < pending.length; i += BATCH) {
-        this.progress = `decoding ${fmt.count(Math.min(i + BATCH, pending.length))} of ${fmt.count(pending.length)} telegrams…`;
+        this.progress = `decoding ${fmt.count(Math.min(i + BATCH, pending.length))} of ${fmt.count(pending.length)} telegrams`;
+        this.fraction = i / pending.length;
         this.emit("progress");
         await this.decodeBatch(pending.slice(i, i + BATCH));
         this.rebuildEntries(false);
@@ -284,6 +301,7 @@ export class Decoder {
     } finally {
       this.decoding = false;
       this.progress = null;
+      this.fraction = null;
       this.rebuildEntries(true);
       this.emit("decodes");
       // telegrams that arrived while decoding
@@ -444,6 +462,16 @@ export class Decoder {
   def(key) { return this.defs.get(key); }
 
   decodesOf(line) { return this.decodes.get(line); }
+
+  /** The decoded fields of the latest telegram a definition decoded (for showing values next to names). */
+  sampleFields(defKey) {
+    let best = null;
+    for (const t of this.telegrams.values()) {
+      const d = this.decodes.get(t.line)?.get(defKey);
+      if (d && d.result === "ok" && d.fields && (!best || (t.last_ms || 0) > best.at)) best = { at: t.last_ms || 0, fields: d.fields };
+    }
+    return best?.fields || null;
+  }
 
   /** The telegrams sorted by first appearance (manual ones last). */
   telegramList() { return [...this.telegrams.values()].sort(byFirst); }

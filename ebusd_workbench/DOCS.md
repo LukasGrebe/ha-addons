@@ -62,9 +62,17 @@ slave are the **value**.
   definitions** applies the lengths of the decoded definitions after a decode run. Rows that
   seem to change with every telegram (a date/time broadcast for example) do so because the
   whole payload is the value; rows mixing several registers need more ID bytes.
-- Wheel zooms, dragging pans, `+`/`-`/`←`/`→` work as well, `N` returns to **live** mode in
-  which the right edge follows the current time. The strip at the top shows the whole recording
-  (red: telegrams with errors); click or drag in it to jump.
+- Controls like the browser's developer tools: the wheel **scrolls the rows**; **Ctrl/⌘ + wheel**
+  or a trackpad pinch zooms the time axis around the pointer; **Shift + wheel** or a sideways
+  swipe moves in time; dragging the chart moves, a double click zooms in. `+`/`-`/`←`/`→` work
+  as well, `N` returns to **live** mode in which the right edge follows the current time.
+  The strip at the top shows the whole recording (red: telegrams with errors): **drag the
+  edges of the blue window to resize it, drag inside to move it, drag outside to select a new
+  one**; the wheel over it zooms (Ctrl/⌘) or moves.
+- The status button in the toolbar and the bar under it show what the app is doing: loading
+  telegrams of the window, reading the recording into the browser (day n of m), decoding (x of
+  y telegrams), compiling, cloning the repository. A notice appears when there is no definitions
+  source (nothing to decode with: rows show raw hex) or the definitions are not compiled yet.
 - Clicking a bar lists its telegrams with timestamp, master part (`QQ ZZ PB SB NN DD`), slave
   part (`NN DD`), status and the decoded values of the row's definition.
 - Broken telegrams (`crc`, `nak`, `timeout`, …) are red.
@@ -82,15 +90,29 @@ result in place:
   values** (`temp=23.5 °C;pumpstate=on ×954 every 5 s`) instead of the hex; the tooltip has both,
   and the other candidates' readings.
 - A badge next to the name (`4▾`, orange when ebusd itself knows no definition for the row)
-  opens the **candidates** in place: for each one its status (used by ebusd, hidden, other
-  variant, condition not met, decode error), where it comes from (checkout or community
-  layer), how it decodes the latest telegram and how it fared on the whole row. **Hovering a
-  candidate previews its decoding in the row's bars**; picking one (○) makes it the row's
-  definition and puts it into the setup of this installation (the row's other candidates leave
-  it). *ebusd's choice* undoes a pick. *in setup* includes or excludes a definition without
-  changing what the row shows.
-- **rename** gives a message and its fields the names they should have in *your* config
-  (`Z1RoomTemp → Zone1RoomTemperature`, `temp → temperature`): the timeline, the exported CSV
+  opens the **candidates** in place. They are compared **over every recorded telegram of the
+  row, not only the visible window**: candidates that are the same definition and decode the
+  same values (a copy in another file or circuit) are shown together as one card with what
+  differs (name, file, status, source, field names), how many of the candidates agree and how
+  many are writable. A card says whether the definition decodes *all* recorded variants
+  without error (or which fail and why), how many telegrams and which period that covers, the
+  latest decoded value, and **all values** over the recording (range per field, most frequent
+  decoded values). Candidates that decode none of the row's telegrams are collapsed at the
+  end. Each candidate that is not ebusd's choice says why: another device variant (and which
+  file ebusd loads for the identified device), a condition that was not met (and what it
+  needs), a definition taking precedence, or the decode error. **Hovering a candidate previews
+  its decoding in the row's bars**; picking one (○) makes it the row's definition and puts it
+  into the setup of this installation (the row's other candidates leave it). *ebusd's choice*
+  undoes a pick. *in setup* includes or excludes a definition without changing what the row
+  shows.
+- **Many candidates on one row** usually means the row groups telegrams by fewer ID bytes
+  than the definitions use (for `b51a` the register is 3 bytes, the default row key 1): the
+  "candidates" are then different messages (registers), each in the file ebusd loads and again
+  in the files of other device variants. The picker says so, and a notice above the timeline
+  offers **Split rows like the definitions** (also in the picker for one command).
+- **rename** opens a small form: the message name, and a table of the message's fields (upstream
+  name, name in my config, latest value). It gives a message and its fields the names they should
+  have in *your* config (`Z1RoomTemp → Zone1RoomTemperature`, `temp → temperature`): the timeline, the exported CSV
   files and the Home Assistant entities use the new names, the upstream names stay in the CSV
   comments and in the definitions table. Names are limited to `A–Z a–z 0–9 _ . -` (they become
   MQTT topics and JSON keys).

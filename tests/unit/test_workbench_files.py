@@ -60,7 +60,7 @@ class Repository(unittest.TestCase):
 
     def test_clone_edit_commit_push(self):
         self.assertFalse(self.repo.exists())
-        self.assertEqual(self.repo.status(), {"exists": False, "dir": self.repo.dir})
+        self.assertEqual(self.repo.status(), {"exists": False, "dir": self.repo.dir, "busy": None})
         self.repo.clone(self.remote)
         status = self.repo.status()
         self.assertTrue(status["exists"])
@@ -160,6 +160,22 @@ class Deploy(unittest.TestCase):
                 with self.assertRaises(RepoError):
                     deploy.deploy(bad, target)
             self.assertFalse(deploy.list_deployed(os.path.join(tmp, "missing"))["exists"])
+
+
+class RepoBusy(unittest.TestCase):
+    def test_busy_state_while_working(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Repo(os.path.join(tmp, "repo"))
+            self.assertIsNone(repo.status()["busy"])
+            with repo.working("cloning https://example.invalid/x.git"):
+                busy = repo.status()["busy"]
+                self.assertEqual(busy["what"], "cloning https://example.invalid/x.git")
+                self.assertGreater(busy["since"], 0)
+            self.assertIsNone(repo.status()["busy"])
+            # a failing clone clears the state again
+            with self.assertRaises(RepoError):
+                repo.clone("file:///does/not/exist.git")
+            self.assertIsNone(repo.status()["busy"])
 
 
 class SettingsFile(unittest.TestCase):

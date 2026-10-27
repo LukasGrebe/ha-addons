@@ -115,6 +115,7 @@ class Database:
         self._info_cache = (0, None)
         self._schema_cache = None
         self._lock = threading.Lock()
+        self.local = threading.local()   # per request: cancel() -> True when the client is gone
 
     # -- connection -----------------------------------------------------------
 
@@ -122,6 +123,10 @@ class Database:
         conn = sqlite3.connect(self.path, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=10000")
+        cancel = getattr(self.local, "cancel", None)
+        if cancel is not None:
+            # long queries stop when the browser has given up on the request (scrolled on, closed the tab)
+            conn.set_progress_handler(lambda: 1 if cancel() else 0, 50000)
         return conn
 
     def ensure_schema(self):
