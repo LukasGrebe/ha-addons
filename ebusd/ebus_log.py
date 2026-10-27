@@ -162,6 +162,21 @@ def configured_db():
         return None
 
 
+def execute(db_path, sql, params):
+    """Run one statement in a connection of its own and return the row id.
+
+    The database is not kept open at the prompt: the telegram log can only keep
+    an unconvertible database aside while no other program has it open.
+    """
+    db = ebus_sqlite.open_db(db_path)
+    try:
+        db.executescript(ebus_sqlite.EVENT_SCHEMA)  # missing in v1 or early v2 databases
+        with db:
+            return db.execute(sql, params).lastrowid
+    finally:
+        db.close()
+
+
 def main(argv=None):
     now = time.time_ns()  # first of all: the moment Enter was pressed
     args = list(sys.argv[1:] if argv is None else argv)
@@ -182,31 +197,26 @@ def main(argv=None):
               file=sys.stderr)
         return 1
     try:
-        db = ebus_sqlite.open_db(db_path)
         # stored right away, so that the time is kept even if the terminal is closed at the prompt
-        with db:
-            event = db.execute("INSERT INTO event (ts, ts_min, ts_max, message, logged) VALUES (?, ?, ?, ?, ?)",
-                               (ts, ts_min, ts_max, message, now)).lastrowid
+        event = execute(db_path, "INSERT INTO event (ts, ts_min, ts_max, message, logged) VALUES (?, ?, ?, ?, ?)",
+                        (ts, ts_min, ts_max, message, now))
+        if message is None:
+            print(f"{describe(ts, ts_min, ts_max)} logged. What happened? "
+                  "(Enter alone keeps just the time, Ctrl+C removes it)")
+            try:
+                message = input("> ").strip() or None
+            except EOFError:
+                print()
+            except KeyboardInterrupt:
+                execute(db_path, "DELETE FROM event WHERE id = ?", (event,))
+                print("\nRemoved, nothing logged.")
+                return 130
+            if message:
+                execute(db_path, "UPDATE event SET message = ? WHERE id = ?", (message, event))
     except (OSError, sqlite3.Error) as err:
         print(f"log: unable to write to {db_path}: {err}", file=sys.stderr)
         return 1
-    if message is None:
-        print(f"{describe(ts, ts_min, ts_max)} logged. What happened? "
-              "(Enter alone keeps just the time, Ctrl+C removes it)")
-        try:
-            message = input("> ").strip() or None
-        except EOFError:
-            print()
-        except KeyboardInterrupt:
-            with db:
-                db.execute("DELETE FROM event WHERE id = ?", (event,))
-            print("\nRemoved, nothing logged.")
-            return 130
-        if message:
-            with db:
-                db.execute("UPDATE event SET message = ? WHERE id = ?", (message, event))
     print(f"Logged {describe(ts, ts_min, ts_max)}: {message or '(time only)'}")
-    db.close()
     return 0
 
 

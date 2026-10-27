@@ -44,4 +44,5 @@ configuration:
     name: Okres przechowywania logu telegramów SQLite (dni)
     description: >
       Telegramy starsze niż podana liczba dni są usuwane z logu telegramów SQLite.
-      0 zachowuje wszystko. W zależności od ruchu na magistrali ok. 50-170 MB dziennie.
+      0 zachowuje wszystko. Ok. 9 MB dziennie przy 120 000 telegramach dziennie,
+      maksymalnie ok. 75 MB przy stale zajętej magistrali.

@@ -182,6 +182,26 @@ class Command(unittest.TestCase):
         self.assertEqual(ts, logged)
         self.assertLess(ts - before, 50 * 10**6)
 
+    def test_database_closed_at_the_prompt(self):
+        modes = []
+
+        def answer(prompt):  # the telegram log keeps an unconvertible database aside meanwhile
+            db = sqlite3.connect(self.db)
+            modes.append(db.execute("PRAGMA journal_mode=DELETE").fetchone()[0])
+            db.close()
+            return "x"
+        with contextlib.redirect_stdout(io.StringIO()), mock.patch("builtins.input", answer):
+            self.assertEqual(e.main([]), 0)
+        self.assertEqual(modes, ["delete"])
+        self.assertEqual(self.events(), [(0, "x")])
+
+    def test_table_created_in_database_without_it(self):
+        db = e.ebus_sqlite.open_db(self.db)
+        db.executescript("DROP VIEW event_local; DROP TABLE event")  # e.g. schema 2 before the log command
+        db.close()
+        self.assertEqual(self.run_log("x")[0], 0)
+        self.assertEqual(self.events(), [(0, "x")])
+
     def test_errors(self):
         code, _, err = self.run_log("25:00", "x")
         self.assertEqual((code, err), (1, "log: 25:00 is not a valid time (see log --help)\n"))
