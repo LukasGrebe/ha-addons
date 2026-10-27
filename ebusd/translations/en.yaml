@@ -43,4 +43,4 @@ configuration:
     name: SQLite telegram log retention (days)
     description: >
       Telegrams older than this many days are deleted from the SQLite telegram log.
-      0 keeps everything. Expect roughly 50-170 MB per day, depending on bus traffic.
+      0 keeps everything. Expect roughly 10-60 MB per day, depending on bus traffic.
