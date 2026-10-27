@@ -89,40 +89,47 @@ result in place:
 - A row is **named** after the definition that decodes it and its bars show the **decoded
   values** (`temp=23.5 °C;pumpstate=on ×954 every 5 s`) instead of the hex; the tooltip has both,
   and the other candidates' readings.
-- A badge next to the name (`4▾`, orange when ebusd itself knows no definition for the row)
-  opens the **candidates** in place. They are compared **over every recorded telegram of the
-  row, not only the visible window**: candidates that are the same definition and decode the
-  same values (a copy in another file or circuit) are shown together as one card with what
-  differs (name, file, status, source, field names), how many of the candidates agree and how
-  many are writable. A card says whether the definition decodes *all* recorded variants
-  without error (or which fail and why), how many telegrams and which period that covers, the
-  latest decoded value, and **all values** over the recording (range per field, most frequent
-  decoded values). Candidates that decode none of the row's telegrams are collapsed at the
-  end. Each candidate that is not ebusd's choice says why: another device variant (and which
-  file ebusd loads for the identified device), a condition that was not met (and what it
-  needs), a definition taking precedence, or the decode error. **Hovering a candidate previews
-  its decoding in the row's bars**; picking one (○) makes it the row's definition and puts it
-  into the setup of this installation (the row's other candidates leave it). *ebusd's choice*
-  undoes a pick. *in setup* includes or excludes a definition without changing what the row
-  shows.
-- **History**: each card charts the definition's values over the whole recording by the
-  timestamp of every telegram (numbers as a line with the min–max band, other values as lanes);
-  hover for a value, click to move the timeline there. The blue band is the timeline's window.
+- **Click a value** (or the name, or the badge `4▾` next to it) and the **details** open below
+  the timeline. They stay put while you move the window, and the handle above them resizes them
+  (the height is remembered); Esc closes them. They are one view of the message, for one
+  definition at a time. **Tabs** switch between the definitions that decode the row, compared
+  **over every recorded telegram of the row, not only the visible window**: definitions that
+  decode the same values (a copy in another file or circuit) are one tab (`×4` files). A tab shows
+  the plain kind (active read, passive write, …), `ebusd` for ebusd's choice, `mine` for your
+  own, `differs` when it decodes different values than the row's definition, and ⚠ when it fails
+  on some recorded telegram. Hovering a tab previews its decoding in the row's bars. The last
+  tabs are **＋ new definition** and, when some fail, **N failing**. Below the tabs:
+  - **Source**: *use for this row* (it joins the setup of this installation, the row's other
+    definitions leave it), *in setup*, *rename*, the TypeSpec source at its line, what kind it is,
+    where it comes from, when it applies (conditions in words), why ebusd does not use it, and the
+    files it is in.
+  - **Compared with the other definitions**: this tab beside the row's definition: the value you
+    clicked, the latest value, how many recorded variants decode, telegrams and period, kind,
+    files and how they differ as definitions.
+  - **History**: a chart of the definition's values over the whole recording by the timestamp of
+    every telegram (hover for a value, click to move the timeline there; the blue band is the
+    window), and the values as a list of runs of the same value, newest first, the clicked run
+    highlighted (*every telegram* lists them one by one).
+  - **Edit**: the definition as a form and as raw CSV, both ways. While you type, ebusd's own
+    decoder reads the draft against every recorded variant (how many decode, the latest text,
+    the errors), and the chart and list show the **draft**. **Save as my version** never changes
+    the source: it adds your own version (kind `mine`) to your own definitions, decodes the whole
+    recording with it and picks it for the row. Editing your own definition updates it.
 - **Pivot**: the **+** and **−** buttons next to a row split it at its next message ID byte or
   combine it with the rows that share all but its last byte (all rows of the command when no
   ID byte is left), like expanding and collapsing a pivot table. Only the telegrams that start
   with that prefix are regrouped (the rules are in *Settings → Telegram grouping*, where they can
   be cleared or reset to the defaults). **rows like the definitions** (or the notice above the
   timeline) sets the rules from the decoded definitions: one row per message they know.
-- **hide failing** in the picker (and in the Choose step) hides candidates that fail to decode
+- **hide failing** in the details (and in the Choose step) hides candidates that fail to decode
   some recorded telegram.
 - **source ↗** opens the TypeSpec source of a definition at its line in the editor (read only
   for what only a community layer changes); for an own definition it opens the own definitions.
 - **Many candidates on one row** usually means the row groups telegrams by fewer ID bytes
   than the definitions use (for `b51a` the register is 3 bytes, the default row key 1): the
   "candidates" are then different messages (registers), each in the file ebusd loads and again
-  in the files of other device variants. The picker says so, and a notice above the timeline
-  offers **Split rows like the definitions** (also in the picker for one command).
+  in the files of other device variants. The details say so, and a notice above the timeline
+  offers **Split rows like the definitions** (also in the details for one command).
 - **rename** opens a small form: the message name, and a table of the message's fields (upstream
   name, name in my config, latest value). It gives a message and its fields the names they should
   have in *your* config (`Z1RoomTemp → Zone1RoomTemperature`, `temp → temperature`): the timeline, the exported CSV
@@ -214,10 +221,10 @@ timeline. Three ways to make one:
   its range over the whole history, and apply one; the rest stays raw (HEX). Name the fields,
   add a divisor or unit; the history of the selected field is charted. ebusd's own decoder
   checks the line against every recorded variant while you work (how many it decodes, the
-  latest decoded text, the errors). **Add as my definition** decodes the recording with it and
-  picks it for the row.
-- **Edit a candidate**: **raw** in a candidate card shows the CSV line(s) as ebusd reads them;
-  change them and add the result as your own definition.
+  latest decoded text, the errors). **Save as my version** decodes the recording with it and
+  picks it for the row (the editor is the *＋ new definition* tab of the details).
+- **Edit a definition**: the *Edit* column of the details shows its CSV line as a form and as
+  text; change it and **Save as my version**.
 - **Paste**: write or paste lines in the Sources step or the timeline's Sources popover.
 
 The text is stored in the app's settings; the files of the setup contain these definitions with
@@ -307,7 +314,7 @@ fits (a temperature of 21.5 °C is plausible, 6553.5 °C is not). Write definiti
 red: writing to a device with a definition of another variant can be harmful, so include only
 what you are sure about, and test reading first. Until you tick anything, the setup is what
 ebusd itself uses. The **name in my config** column renames a message for the export (fields
-are renamed in the timeline's candidate picker or setup drawer, where their values are
+are renamed in the timeline's details below the timeline or setup drawer, where their values are
 visible). The selection, the choices made per timeline row and the names are stored in the
 app's data folder, so every browser sees the same setup.
 

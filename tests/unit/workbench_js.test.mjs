@@ -333,3 +333,22 @@ test("conditions and kinds are put in words", () => {
   assert.equal(kindSuffix({ passive: false, write: false }), "");
   assert.equal(kindSuffix({ passive: true, write: true }), " · passive write");
 });
+
+test("a definition line is split into header and fields and put together again", async () => {
+  const { parseDefinition, buildDefinition, splitType } = await import("../../ebusd_workbench/www/definition-edit.js");
+  const csv = "r,hmu,DateTime,date/time,,08,b504,00,dcfstate,s,UCH,0=nosignal;1=ok;2=sync;3=valid,,DCF receiver state,btime,s,BTI,,,time";
+  const parsed = parseDefinition(csv);
+  assert.deepEqual(parsed.header, { condition: "", type: "r", circuit: "hmu", name: "DateTime", comment: "date/time", qq: "", zz: "08", pbsb: "b504", id: "00" });
+  assert.equal(parsed.fields.length, 2);
+  assert.deepEqual(parsed.fields[0], { name: "dcfstate", part: "s", type: "UCH", divisor: "0=nosignal;1=ok;2=sync;3=valid", unit: "", comment: "DCF receiver state" });
+  assert.equal(buildDefinition(parsed), csv, "nothing changes unless the form changes it");
+  parsed.fields.splice(0, 1);
+  parsed.fields[0].unit = "h";
+  assert.equal(buildDefinition(parsed), "r,hmu,DateTime,date/time,,08,b504,00,btime,s,BTI,,h,time");
+  // a condition belongs to the source: a version of your own applies whenever it matches
+  assert.equal(buildDefinition(parseDefinition("[ehp.type=3]r,ehp,Flow,,,08,b509,0d,flow,s,D2C,,°C,")), "r,ehp,Flow,,,08,b509,0d,flow,s,D2C,,°C,");
+  assert.equal(parseDefinition('r,c,n,"a, b",,08,b504,00').header.comment, "a, b", "a comma in quotes stays in the cell");
+  assert.deepEqual(splitType("HEX:4"), { code: "HEX", length: "4" });
+  assert.deepEqual(splitType("d2c"), { code: "D2C", length: "" });
+  assert.deepEqual(splitType("1 bad"), { code: "", length: "" });
+});

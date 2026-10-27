@@ -8,16 +8,17 @@ import { messageColors, telegramValue, valueColors } from "./colors.js";
 import { generateEbusdOptions, generateHaYaml } from "./hayaml.js";
 import { describeMatch, fmtTime, parseAddressMap, runProfile, summaryJson } from "./evidence.js";
 import { accessKind, describeConditions, kindSuffix, locateSource } from "./compare.js";
-import { setup } from "./setup.js";
+import { customKey } from "./define.js";
+import { setup, splitCsv } from "./setup.js";
 
 const dirname = (p) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const basename = (p) => p.slice(p.lastIndexOf("/") + 1);
-const VIEWS = [["sources", "1 · Sources"], ["results", "2 · Live decoding"], ["setup", "3 · Choose"], ["editor", "4 · Edit"], ["export", "5 · Summary & save"], ["evidence", "Evidence"]];
+const VIEWS = [["sources", "1 · Sources"], ["results", "2 · Live decoding"], ["setup", "3 · Choose"], ["editor", "4 · TypeSpec"], ["export", "5 · Summary & save"], ["evidence", "Evidence"]];
 const STEP_HELP = {
   sources: "Where definitions come from: a repository (the default ebusd-configuration or your own), community pull requests, other repositories, and definitions you write yourself. They are compiled in your browser and decode your recorded telegrams.",
-  results: "Every distinct telegram of the recording, decoded by every matching definition as it arrives, newest first. The same decodings are in the timeline.",
-  setup: "All definitions that matched your telegrams, hidden ones included. Tick the ones for your installation and name them the way you want them in your config.",
-  editor: "The TypeSpec sources of the definitions. Saving recompiles and decodes the whole recording again. To write a definition of your own, add it as an own definition in Sources or from a candidate in the timeline.",
+  results: "Every distinct telegram of the recording, decoded by every matching definition as it arrives, newest first. To work on one message (compare definitions, history, edit), click its value in the timeline: the details open below it.",
+  setup: "All definitions that matched your telegrams, hidden ones included. Tick the ones for your installation and name them the way you want them in your config. Per message, the details below the timeline do the same with the history next to it.",
+  editor: "The TypeSpec sources of the definitions. Saving recompiles and decodes the whole recording again. A definition of your own is written in the timeline: click a value, edit its definition and save it as your own version.",
   export: "What you chose, where each definition comes from and how it fared on your recording. Save it as CSV files for the eBUSd app, together with a record of its sources.",
   evidence: "Checks of ebus-evidence profiles against your recording, and the raw log export for the research.",
 };
@@ -563,6 +564,27 @@ export class Definitions {
   async addCustomLine(csv) {
     const current = (this.customDraft ?? app.settings?.custom ?? "").trimEnd();
     await this.saveCustom(`${current}${current ? "\n" : ""}${csv.trim()}\n`);
+  }
+
+  /**
+   * Put a definition line into the own definitions: it replaces the line of oldKey (editing your own definition) or the
+   * line of the same message, else it is added. Returns the key the decoder gives it.
+   */
+  async upsertCustom(csv, oldKey = null) {
+    const keyOf = (line) => {
+      const cells = splitCsv(line);
+      if (cells.length < 3) return null;
+      const type = cells[0].replace(/^\[[^\]]*\]/, "");
+      return customKey({ type, circuit: cells[1], name: cells[2] });
+    };
+    const line = csv.trim().replace(/\s*\n\s*/g, " ");
+    const key = keyOf(line);
+    if (!key) throw new Error("this is not a definition line (type,circuit,name,…)");
+    const lines = (this.customDraft ?? app.settings?.custom ?? "").split("\n");
+    const at = lines.findIndex((l) => l.trim() && !l.trim().startsWith("#") && (keyOf(l) === (oldKey || key)));
+    if (at >= 0) lines[at] = line; else { while (lines.length && !lines[lines.length - 1].trim()) lines.pop(); lines.push(line); }
+    await this.saveCustom(`${lines.join("\n").trimEnd()}\n`);
+    return key;
   }
 
   compilePanel(compact) {

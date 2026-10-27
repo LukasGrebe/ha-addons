@@ -1,4 +1,23 @@
-# 0.3.2 (unreleased)
+# 0.4.0 (unreleased)
+
+Everything about a message in one place: the details below the timeline.
+
+## Features
+* Click a value in the timeline and the **details** open in the area below it instead of a
+  popover: it stays put while you move the window, can be resized by dragging its handle (the
+  height is remembered), and the clicked value stays outlined in the row
+* The details are one view with the definitions that decode the row as tabs (plus ＋ new
+  definition and the failing ones); for the selected one: its **source** (use for this row, in
+  setup, rename, TypeSpec source, kind, conditions, files), a **comparison** with the row's
+  definition, its **history** as a chart and a list of values (the clicked one highlighted) and an
+  **editor** (form and CSV) whose live preview by ebusd's decoder also drives the chart and list
+* **Save as my version** makes your own version of any definition (the source is never
+  modified), decodes the recording with it and picks it for the row; editing your own definition
+  updates it
+* The definitions tab keeps Sources, the overview of decodings, Choose, the TypeSpec files and
+  Summary & save; per message work happens in the timeline
+
+# 0.3.2
 
 The timeline becomes the place where definitions are compared, chosen and named.
 
