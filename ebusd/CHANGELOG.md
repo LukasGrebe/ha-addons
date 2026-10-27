@@ -1,7 +1,7 @@
 # Unreleased
 
 ## App Changes
-* SQLite telegram log: the database takes about 60 % less space, about 70 instead of 190 bytes per telegram (e.g. 10 instead of 25 MB per day). Data bytes are stored as binary instead of hex text, `raw` only where the other columns cannot give it back (escape sequences, repetitions after NAK, broken telegrams), and instead of four indexes there is one for commands, while the table itself is ordered by time. An existing database is converted at the first start: typically in under a minute, without delaying ebusd; telegrams received meanwhile are written afterwards
+* SQLite telegram log: the database takes about 65 % less space: on a real system 73 instead of 205 bytes per telegram, i.e. about 9 instead of 25 MB per day at 120,000 telegrams per day. Data bytes are stored as binary instead of hex text, `raw` only where the other columns cannot give it back (escape sequences, repetitions after NAK, broken telegrams), and instead of four indexes there is one for commands, while the table itself is ordered by time. An existing database is converted at the first start: typically in under a minute, without delaying ebusd; telegrams received meanwhile are written afterwards
 * SQLite telegram log, changed queries: `dd`, `s_dd` and `raw` are binary (`hex(dd)`, `dd = x'0d2800'`) and `raw` is empty where not needed; `id` is gone, `ts` is unique now (order by it); `type` is only in the view `telegram_hex`, which shows everything as before. See the [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#table-telegram)
 
 # 26.1.10 (2026-10-22)

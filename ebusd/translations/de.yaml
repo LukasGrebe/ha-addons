@@ -45,4 +45,5 @@ configuration:
     name: Aufbewahrung SQLite-Telegramm-Log (Tage)
     description: >
       Telegramme, die älter als diese Anzahl Tage sind, werden aus dem SQLite-Telegramm-Log
-      gelöscht. 0 behält alles. Je nach Busverkehr ca. 10-60 MB pro Tag.
+      gelöscht. 0 behält alles. Ca. 9 MB pro Tag bei 120.000 Telegrammen pro Tag,
+      höchstens ca. 75 MB bei ständig ausgelastetem Bus.

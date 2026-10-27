@@ -44,4 +44,5 @@ configuration:
     name: Conservazione log telegrammi SQLite (giorni)
     description: >
       I telegrammi più vecchi di questo numero di giorni vengono eliminati dal log SQLite.
-      0 conserva tutto. A seconda del traffico sul bus circa 10-60 MB al giorno.
+      0 conserva tutto. Circa 9 MB al giorno con 120.000 telegrammi al giorno, al
+      massimo circa 75 MB con il bus sempre occupato.

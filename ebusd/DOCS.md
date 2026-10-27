@@ -291,8 +291,10 @@ sqlite_retention_days: 10
   [SQL integration](https://www.home-assistant.io/integrations/sql/)) and other apps.
   `/config/…` is the app config folder (`/addon_configs/2ad9b828_ebusd/` on the host).
 - Telegrams older than **SQLite telegram log retention** days are deleted every hour
-  (default 10, `0` keeps everything). A telegram takes about 70 bytes, which is roughly
-  10–60 MB per day depending on bus traffic. Both folders are part of HA backups.
+  (default 10, `0` keeps everything). A telegram takes about 75 bytes. A heating system
+  with about 120,000 telegrams per day (heater, controller and ebusd reading values, the
+  bus about 12 % busy) needs about 9 MB per day or 3.3 GB per year; a bus that is busy all
+  the time needs at most about 75 MB per day. Both folders are part of HA backups.
 - The app enables ebusd's binary dump of received bytes (`--dump`, `--dumpfile`,
   `--dumpflush`, `--dumpsize`) and points it at a FIFO read by the logger. Don't add dump
   options to `commandline_options` (the telegram log is then disabled), and don't run
