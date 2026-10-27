@@ -1,0 +1,30 @@
+configuration:
+  database:
+    name: Telegram database
+    description: >
+      The SQLite telegram log written by the eBUSd app (its option "SQLite telegram log").
+      Both apps must use the same path, e.g. /share/ebusd/telegrams.db. Home Assistant
+      entity changes recorded by the Workbench are stored in the same file (table "event").
+  deploy_path:
+    name: Deploy folder for compiled CSV files
+    description: >
+      Folder the compiled and tested CSV message definitions are written to, e.g.
+      /share/ebusd/config. Point the eBUSd app at it with --configpath=/share/ebusd/config.
+  repo_url:
+    name: Git repository of the message definitions
+    description: >
+      HTTPS URL of the git repository with the TypeSpec (.tsp) sources, e.g. your fork of
+      https://github.com/john30/ebusd-configuration.git. It is cloned into the app config
+      folder on first use; leave empty to clone from the Workbench UI.
+  git_user_name:
+    name: Git user name
+    description: Name used as author of commits made in the Workbench.
+  git_user_email:
+    name: Git user email
+    description: Email address used as author of commits made in the Workbench.
+  git_token:
+    name: Git access token
+    description: >
+      Personal access token for pushing to the repository over HTTPS (e.g. a GitHub
+      fine-grained token with "Contents: read and write" on the repository). Only needed
+      for pull and push of private repositories and for push in general.

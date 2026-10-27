@@ -1,0 +1,17 @@
+#include <tunables/global>
+
+profile ebusd_workbench flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  # Files: the database and the deployed CSV files in /share, the repository in /config,
+  # settings in /data, the UI and the backend in /opt/workbench
+  file,
+  signal (send) set=(kill,term,int,hup,cont),
+
+  # Network: Home Assistant API (via Supervisor) and git remotes over HTTPS
+  network tcp,
+  network udp,
+
+  @{PROC}/** r,
+}

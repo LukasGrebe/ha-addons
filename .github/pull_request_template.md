@@ -12,6 +12,6 @@
 
 ## Checklist
 
-- [ ] User-visible changes are described under `# Unreleased` in `ebusd/CHANGELOG.md`
+- [ ] User-visible changes are described under `# Unreleased` in `ebusd/CHANGELOG.md` (or `ebusd_workbench/CHANGELOG.md`)
 - [ ] The version in `ebusd/config.yaml` is unchanged (it is set when releasing)
 - [ ] New or changed options: schema, all files in `ebusd/translations/` and `ebusd/DOCS.md`

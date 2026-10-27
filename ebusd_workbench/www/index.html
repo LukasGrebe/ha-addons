@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eBUSd Workbench</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><img src="icon.svg" alt="" width="22" height="22"> <span>eBUSd Workbench</span></div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="timeline" class="active">Timeline</button>
+    <button data-tab="definitions">Definitions</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+  <div class="status" id="status"></div>
+</header>
+<main>
+  <section id="tab-timeline" class="tab active"></section>
+  <section id="tab-definitions" class="tab"></section>
+  <section id="tab-settings" class="tab"></section>
+</main>
+<div id="toasts" class="toasts"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

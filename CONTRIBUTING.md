@@ -28,6 +28,15 @@ system belong to the [ebusd project](https://github.com/john30/ebusd/discussions
    from forks once a maintainer has read the diff and added the label `preview` (remove
    and add it again to update the preview).
 
+## eBUSd Workbench
+
+The second app in this repository, `ebusd_workbench/`, follows the same rules (changelog in
+`ebusd_workbench/CHANGELOG.md`, options in its `config.yaml`, translations and `DOCS.md`). Its
+backend is Python (standard library only, unit tests in `tests/unit/test_workbench_*.py`), the
+UI plain JavaScript in `ebusd_workbench/www/`. The two generated files in `www/vendor/` (the
+TypeSpec compiler bundle and ebusd's message library as WebAssembly) are built with the
+scripts in `ebusd_workbench/tools/`, see the README there.
+
 ## Tests
 
 The end-to-end tests (`tests/e2e/run.py`) start the app image the way Supervisor does and

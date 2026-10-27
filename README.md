@@ -19,6 +19,10 @@ Contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 This Add-on runs [ebusd](http://ebusd.eu), a daemon for handling communication with eBUS devices connected to a 2-wire bus system (“energy bus” used by numerous heating systems), in [Home Assistant OS](https://www.home-assistant.io/installation/raspberrypi). You can simply plugin a ebus hardware interface into your RaspberryPi, and install the addon to run ebusd.
 
+## [ebusd Workbench](https://github.com/LukasGrebe/ha-addons/tree/main/ebusd_workbench)
+
+A companion app for working on eBUS message definitions: a timeline of the telegrams recorded by the eBUSd app next to Home Assistant entity changes, a git-backed editor for the TypeSpec sources, compiling to CSV and testing against the recorded telegrams in the browser, and deploying the result for ebusd. See its [documentation](ebusd_workbench/DOCS.md).
+
 
 # Thanks ...
 

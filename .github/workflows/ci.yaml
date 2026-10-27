@@ -32,11 +32,21 @@ jobs:
         with:
           path: ./ebusd
 
+      - name: 🚀 Run Home Assistant Add-on Lint (Workbench)
+        uses: frenck/action-addon-linter@v2.21
+        with:
+          path: ./ebusd_workbench
+
       - name: Shellcheck
-        run: shellcheck ebusd/run.sh tests/check_translations.sh
+        run: shellcheck ebusd/run.sh ebusd_workbench/run.sh ebusd_workbench/git-askpass.sh ebusd_workbench/tools/wasm/build.sh tests/check_translations.sh
 
       - name: Check translations
-        run: tests/check_translations.sh ebusd
+        run: |
+          tests/check_translations.sh ebusd
+          tests/check_translations.sh ebusd_workbench
+
+      - name: Check the Workbench UI
+        run: for f in ebusd_workbench/www/*.js; do node --check "$f"; done
 
       - name: Unit tests
         run: |
