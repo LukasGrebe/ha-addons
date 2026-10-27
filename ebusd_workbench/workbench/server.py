@@ -138,9 +138,9 @@ def api_runs(ctx, req):
             if ":" in item:
                 pbsb, length = item.split(":", 1)
                 overrides[pbsb.strip().lower()] = int(length)
-    max_rows = max(1000, min(2_000_000, int(req.query.get("max", 300_000))))
+    max_rows = max(1000, min(2_000_000, int(req.query.get("max", 200_000))))
     return ctx.db.runs(from_ms, to_ms, id_bytes=id_bytes, id_overrides=overrides, max_rows=max_rows,
-                       id_rules=settings.get("id_rules") or {})
+                       id_rules=settings.get("id_rules") or {}, buckets=int(req.query.get("buckets", 1500)))
 
 
 @route("GET", "/api/telegrams")

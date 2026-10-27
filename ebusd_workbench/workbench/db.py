@@ -15,7 +15,7 @@ import threading
 import time
 
 NS_PER_MS = 1_000_000
-MAX_RUN_ROWS = 300_000  # telegrams scanned per runs() call at most
+MAX_RUN_ROWS = 200_000  # telegrams of a window up to which its runs are exact; beyond it they are summed up in steps of time
 MAX_ATTRIBUTES = 4096  # bytes of JSON attributes stored per state change
 MASTER_NIBBLES = (0x0, 0x1, 0x3, 0x7, 0xF)
 
@@ -268,23 +268,37 @@ class Database:
         params.append(default * 2)
         return ("(CASE %s ELSE ? END)" % " ".join(cases) if cases else "?"), params
 
-    def runs(self, from_ms, to_ms, id_bytes=1, id_overrides=None, max_rows=MAX_RUN_ROWS, id_rules=None):
+    def runs(self, from_ms, to_ms, id_bytes=1, id_overrides=None, max_rows=MAX_RUN_ROWS, id_rules=None, buckets=1500):
         """Group the telegrams of a time window into rows (one per source, destination, command and
         message ID) and collapse consecutive identical values into runs.
 
         A run is a sequence of telegrams of one row whose data (master payload, slave answer and
         status) did not change: [first_ms, last_ms, count, value, mean_interval_ms, min_interval_ms].
+
+        A window with more than max_rows telegrams is not cut: it is summed up in `buckets` steps
+        of time instead (see _runs_bucketed), so that the whole window is there, at a coarser grain.
         """
         schema = self.schema()
         if schema is None:
-            return {"rows": [], "scanned": 0, "truncated": False, "from_ms": from_ms, "to_ms": to_ms}
+            return {"rows": [], "scanned": 0, "bucket_ms": None, "from_ms": from_ms, "to_ms": to_ms}
         id_len, id_params = self._id_length_sql(id_bytes, id_overrides, id_rules, f"coalesce({schema.dd}, '')")
+        conn = self.connect()
+        try:
+            scanned = conn.execute("SELECT count(*) FROM telegram WHERE ts >= ? AND ts < ?",
+                                   (from_ms * NS_PER_MS, to_ms * NS_PER_MS)).fetchone()[0]
+            if scanned > max_rows:
+                return self._runs_bucketed(conn, schema, id_len, id_params, from_ms, to_ms, scanned, max(10, min(5000, int(buckets))))
+            return self._runs_exact(conn, schema, id_len, id_params, from_ms, to_ms, scanned)
+        finally:
+            conn.close()
+
+    def _runs_exact(self, conn, schema, id_len, id_params, from_ms, to_ms, scanned):
         sql = f"""
 WITH t AS (
   SELECT {schema.id} AS id, ts, qq, zz, pb, sb, status,
          substr(coalesce({schema.dd}, ''), 1, {id_len}) AS kid,
          substr(coalesce({schema.dd}, ''), {id_len} + 1) || '/' || coalesce({schema.s_dd}, '') || '/' || status AS value
-  FROM telegram WHERE ts >= ? AND ts < ? ORDER BY ts LIMIT ?
+  FROM telegram WHERE ts >= ? AND ts < ? ORDER BY ts
 ), w AS (
   SELECT *, lag(value) OVER win AS prev, lag(ts) OVER win AS prev_ts FROM t
   WINDOW win AS (PARTITION BY qq, zz, pb, sb, kid ORDER BY ts, id)
@@ -298,33 +312,64 @@ SELECT qq, zz, pb, sb, kid, min(ts) AS t0, max(ts) AS t1, count(*) AS n, value,
        min(CASE WHEN prev = value THEN ts - prev_ts END) AS min_interval
 FROM c GROUP BY qq, zz, pb, sb, kid, run ORDER BY qq, zz, pb, sb, kid, t0
 """
-        params = id_params + id_params  # the ID length expression appears twice
-        params += [from_ms * NS_PER_MS, to_ms * NS_PER_MS, int(max_rows) + 1]
-        conn = self.connect()
-        try:
-            scanned, last_ts = conn.execute(
-                "SELECT count(*), max(ts) FROM (SELECT ts FROM telegram WHERE ts >= ? AND ts < ? ORDER BY ts LIMIT ?)",
-                (from_ms * NS_PER_MS, to_ms * NS_PER_MS, int(max_rows) + 1)).fetchone()
-            truncated = scanned > max_rows
-            if truncated:
-                # cut the window where the row limit is reached so that all rows cover the same span
-                to_ms = ms(last_ts)
-                params[-2] = to_ms * NS_PER_MS
-            rows = {}
-            for r in conn.execute(sql, params):
-                key = (r["qq"], r["zz"], r["pb"], r["sb"], r["kid"])
-                entry = rows.get(key)
-                if entry is None:
-                    entry = rows[key] = {"qq": r["qq"], "zz": r["zz"], "pb": r["pb"], "sb": r["sb"],
-                                         "id": r["kid"], "n": 0, "runs": []}
-                entry["n"] += r["n"]
-                entry["runs"].append([ms(r["t0"]), ms(r["t1"]), r["n"], r["value"],
-                                      None if r["mean_interval"] is None else int(r["mean_interval"]) // NS_PER_MS,
-                                      ms(r["min_interval"])])
-            return {"rows": list(rows.values()), "scanned": min(scanned, max_rows), "truncated": truncated,
-                    "from_ms": from_ms, "to_ms": to_ms}
-        finally:
-            conn.close()
+        params = id_params + id_params + [from_ms * NS_PER_MS, to_ms * NS_PER_MS]  # the ID length expression appears twice
+        rows = {}
+        for r in conn.execute(sql, params):
+            entry = self._row_entry(rows, r)
+            entry["n"] += r["n"]
+            entry["runs"].append([ms(r["t0"]), ms(r["t1"]), r["n"], r["value"],
+                                  None if r["mean_interval"] is None else int(r["mean_interval"]) // NS_PER_MS,
+                                  ms(r["min_interval"])])
+        return {"rows": list(rows.values()), "scanned": scanned, "bucket_ms": None, "from_ms": from_ms, "to_ms": to_ms}
+
+    @staticmethod
+    def _row_entry(rows, r):
+        key = (r["qq"], r["zz"], r["pb"], r["sb"], r["kid"])
+        entry = rows.get(key)
+        if entry is None:
+            entry = rows[key] = {"qq": r["qq"], "zz": r["zz"], "pb": r["pb"], "sb": r["sb"], "id": r["kid"], "n": 0, "runs": []}
+        return entry
+
+    def _runs_bucketed(self, conn, schema, id_len, id_params, from_ms, to_ms, scanned, buckets):
+        """The runs of a window too big for the exact ones: per row and step of time one entry, which
+        is a run of its single value when the row had one value in the step and else a run of the
+        steps with several, marked by its 7th element (the most different values in one step).
+        Neighbouring steps with the same single value are one run, as in the exact runs; the value
+        of a run with several values is the latest one."""
+        bucket_ms = max(1000, -(-(to_ms - from_ms) // buckets))
+        bucket_ns = bucket_ms * NS_PER_MS
+        sql = f"""
+SELECT qq, zz, pb, sb, kid, b, count(*) AS n, max(ts) AS t1, count(DISTINCT value) AS k, value
+FROM (
+  SELECT ts, qq, zz, pb, sb,
+         substr(coalesce({schema.dd}, ''), 1, {id_len}) AS kid,
+         substr(coalesce({schema.dd}, ''), {id_len} + 1) || '/' || coalesce({schema.s_dd}, '') || '/' || status AS value,
+         (ts - ?) / ? AS b
+  FROM telegram WHERE ts >= ? AND ts < ?)
+GROUP BY qq, zz, pb, sb, kid, b ORDER BY qq, zz, pb, sb, kid, b
+"""
+        params = id_params + id_params + [from_ms * NS_PER_MS, bucket_ns, from_ms * NS_PER_MS, to_ms * NS_PER_MS]
+        rows = {}
+        for r in conn.execute(sql, params):
+            entry = self._row_entry(rows, r)
+            entry["n"] += r["n"]
+            t1 = ms(r["t1"])
+            t0 = t1 if r["n"] == 1 else min(t1, from_ms + r["b"] * bucket_ms)   # the step's start: exact to a step
+            many = r["k"] if r["k"] > 1 else 0
+            runs = entry["runs"]
+            last = runs[-1] if runs else None
+            if last and ((many and last[6]) or (not many and not last[6] and last[3] == r["value"])):
+                last[1] = t1                    # the same single value, or steps with several values: one run
+                last[2] += r["n"]
+                last[3] = r["value"]
+                last[6] = max(last[6], many)
+            else:
+                runs.append([t0, t1, r["n"], r["value"], None, None, many])
+        for entry in rows.values():
+            for run in entry["runs"]:
+                if run[2] > 1:
+                    run[4] = (run[1] - run[0]) // (run[2] - 1)
+        return {"rows": list(rows.values()), "scanned": scanned, "bucket_ms": bucket_ms, "from_ms": from_ms, "to_ms": to_ms}
 
     def _telegram_select(self, schema):
         return (f"SELECT {schema.id} AS id, ts, qq, zz, pb, sb, nn, {schema.dd} AS dd, crc, ack, s_nn, "

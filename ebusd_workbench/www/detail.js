@@ -330,7 +330,7 @@ export class DetailPanel {
     const la = g.coverage.latest?.fields || {}, lb = other.coverage.latest?.fields || {};
     const diffNames = new Set(differingFields(g.coverage, other.coverage));
     for (const name of new Set([...Object.keys(la), ...Object.keys(lb)])) rows.push(h("tr", { class: diffNames.has(name) ? "diff" : "" }, h("td", {}, `latest ${name}`), h("td", { class: "mono" }, name in la ? String(la[name]) : "—"), h("td", { class: "mono" }, name in lb ? String(lb[name]) : "—")));
-    if (st.run) {
+    if (st.run && !st.run.mixed) {
       const line = st.run.line;
       const clicked = (x) => { const d = line ? app.decoder.decodesOf(line)?.get(this.preferred(x).def.key) : null; return d ? (d.result === "ok" ? d.text || "(empty)" : `✗ ${d.result}`) : "—"; };
       rows.unshift(h("tr", {}, h("td", {}, "the value you clicked"), h("td", { class: "mono" }, clicked(g)), h("td", { class: "mono" }, clicked(other))));

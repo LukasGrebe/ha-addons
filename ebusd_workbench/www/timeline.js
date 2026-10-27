@@ -22,6 +22,7 @@ import { structureOf } from "./compare.js";
 
 const ROW = 24;
 const LABEL_MARGIN = 30;                               // rows beyond the view that have a label in the DOM
+const MIXED_COLORS = { fill: "#e8eaf6", stroke: "#7986cb" };   // a run of steps with several values (summed-up windows)
 const GROUP_MIN = 6;                                   // rows of one command from which a header offers to collapse them
 const DEFAULT_ID_OVERRIDES = { b509: 3, b524: 6 };      // as in the backend's settings: commands whose message ID is longer than the default
 const STATUS_ORDER = { active: 0, custom: 1, hidden: 2, conditional: 3, variant: 4, error: 5, companion: 6 };
@@ -83,7 +84,7 @@ export class Timeline {
     this.syncSettings();
     this.load(true);
     this.loadHistogram();
-    setInterval(() => { if (this.follow && document.visibilityState === "visible" && this.root.classList.contains("active")) this.load(); }, 5000);
+    setInterval(() => { if (this.follow && !this.loading && document.visibilityState === "visible" && this.root.classList.contains("active") && Date.now() - (this.fetchedAt || 0) > Math.max(5000, (this.fetchMs || 0) * 4)) this.load(); }, 1000);
     setInterval(() => this.loadHistogram(), 60_000);
   }
 
@@ -305,7 +306,7 @@ export class Timeline {
     const parts = [];
     if (this.data) {
       parts.push(`${fmt.count(this.data.scanned)} telegrams in ${this.rows.filter((r) => r.kind === "telegram").length} rows`);
-      if (this.data.truncated) parts.push(`⚠ window cut at ${fmt.time(this.data.to_ms)} (row limit), zoom in`);
+      if (this.data.bucket_ms) parts.push(`summed up in ${fmt.duration(this.data.bucket_ms)} steps, zoom in for every value`);
     }
     this.el.info.textContent = parts.join(" · ");
     this.el.corner.textContent = `${fmt.dateTime(this.t0)} – ${fmt.time(this.t1)} (${fmt.duration(this.span)})`;
@@ -361,6 +362,7 @@ export class Timeline {
   async fetch() {
     if (this.follow) { this.now = Date.now(); this.t1 = this.now; this.t0 = this.t1 - this.span; }
     const token = ++this.loadToken;
+    const started = Date.now();
     const from = Math.floor(this.t0), to = Math.ceil(this.t1);
     // a newer window makes the older request pointless: abort it so that the device stops working on it
     this.abort?.abort();
@@ -369,10 +371,12 @@ export class Timeline {
     this.updateDecodeState();
     try {
       const [runs, events] = await Promise.all([
-        api.get(`api/telegrams/runs?from=${from}&to=${to}`, { signal: abort.signal }),
+        api.get(`api/telegrams/runs?from=${from}&to=${to}&buckets=${Math.max(300, Math.min(3000, Math.round(this.width || 1200)))}`, { signal: abort.signal }),
         api.get(`api/events?from=${from - EVENT_LOOKBACK}&to=${to}`, { signal: abort.signal }),
       ]);
       if (token !== this.loadToken) return;
+      this.fetchedAt = Date.now();
+      this.fetchMs = this.fetchedAt - started;   // heavy windows are not read every few seconds
       this.data = runs;
       this.states = events.states;
       this.markers = events.markers;
@@ -400,7 +404,7 @@ export class Timeline {
 
   /** Store the fetched runs as occurrences (pointers to their telegram) for the parts of the time range not stored yet. */
   rememberRuns() {
-    if (!app.decoder?.store) return;
+    if (!app.decoder?.store || this.data?.bucket_ms) return;   // the runs of a summed-up window are not the telegrams
     const from = this.data?.from_ms ?? this.t0, to = this.data?.to_ms ?? this.t1;
     const r = this.remembered;
     const fresh = this.rows.filter((row) => row.kind === "telegram").map((row) => ({ runs: row.runs.filter((run) => !r || run.t0 < r.t0 || run.t1 > r.t1) }));
@@ -417,8 +421,9 @@ export class Timeline {
       const key = `${fmt.hex(row.qq)}→${fmt.hex(row.zz)} ${fmt.hex(row.pb)}${fmt.hex(row.sb)} ${row.id}`;
       const runs = row.runs.map((r) => {
         const [payload, slave, status] = r[3].split("/");
-        const label = payload && slave ? `${payload} / ${slave}` : payload || slave || (status === "ok" ? "(no data)" : status);
-        const run = { t0: r[0], t1: r[1], n: r[2], value: r[3], payload, slave, status, mean: r[4], min: r[5], label, line: null };
+        const mixed = r[6] || 0;   // a summed-up window: this run is steps with several values (the value is the latest)
+        const label = mixed ? `${mixed}+ different values` : payload && slave ? `${payload} / ${slave}` : payload || slave || (status === "ok" ? "(no data)" : status);
+        const run = { t0: r[0], t1: r[1], n: r[2], value: r[3], payload, slave, status, mean: r[4], min: r[5], label, mixed, line: null };
         run.line = lineOfRun(row, run);
         return run;
       });
@@ -530,6 +535,7 @@ export class Timeline {
   }
 
   runLabel(row, run) {
+    if (run.mixed) return run.label;
     const d = this.decodeOf(row, run);
     if (!d) return run.label;
     return d.result === "ok" ? (d.text || "(empty)") : `✗ ${d.result}`;
@@ -565,13 +571,13 @@ export class Timeline {
     return this.fieldsOf(row).map((field) => {
       const runs = [];
       for (const run of row.runs) {
-        const d = app.decoder.decodesOf(run.line)?.get(row.defKey);
+        const d = run.mixed ? null : app.decoder.decodesOf(run.line)?.get(row.defKey);
         const ok = d?.result === "ok" && d.fields && field in d.fields;
         const value = ok ? d.fields[field] : null;
-        const label = !d ? "…" : !ok ? `✗ ${d.result}` : value === null ? "-" : String(value);
-        const status = ok ? "ok" : "error";
+        const label = run.mixed ? "changes" : !d ? "…" : !ok ? `✗ ${d.result}` : value === null ? "-" : String(value);
+        const status = ok || run.mixed ? "ok" : "error";
         const last = runs[runs.length - 1];
-        if (last && last.label === label && last.status === status) { last.t1 = run.t1; last.n += run.n; } else runs.push({ t0: run.t0, t1: run.t1, n: run.n, value: label, status, label, line: run.line, unit: ok && value !== null ? units[field] || "" : "" });
+        if (last && last.label === label && last.status === status) { last.t1 = run.t1; last.n += run.n; } else runs.push({ t0: run.t0, t1: run.t1, n: run.n, value: label, status, label, mixed: run.mixed ? 1 : 0, line: run.line, unit: ok && value !== null ? units[field] || "" : "" });
       }
       return { kind: "field", key: `${row.key}#${field}`, label: `   ↳ ${field}`, name: setup.fieldMap(row.def)[field] || field, parent: row, field, def: row.def, defKey: row.defKey, candidates: new Map(), n: row.n, runs, row: row.row };
     });
@@ -839,7 +845,7 @@ export class Timeline {
       if (run.t0 > this.t1) break;
       const x0 = this.xOf(run.t0), x1 = this.xOf(run.t1);
       if (x1 - x0 < 2) { const pixel = Math.round(x0); if (pixel === lastPixel) continue; lastPixel = pixel; }   // many runs in one pixel column: draw the first
-      const { fill, stroke } = valueColors(run.value, run.status);
+      const { fill, stroke } = run.mixed ? MIXED_COLORS : valueColors(run.value, run.status);
       const next = runs[j + 1];
       if (next && row.kind !== "event") {
         // the value holds until the next (different) telegram
@@ -1092,7 +1098,9 @@ export class Timeline {
     if (marker) {
       text = `${marker.message || "(time only)"}\n${fmt.dateTime(marker.ms)}` + (marker.ms_max > marker.ms_min ? ` (between ${fmt.time(marker.ms_min)} and ${fmt.time(marker.ms_max)})` : "");
     } else if (row && run) {
-      if (row.kind === "telegram") {
+      if (run.mixed) {
+        text = `${row.label}${row.name ? `  ${row.name}` : ""}\n${run.label} in ${fmt.count(run.n)} telegrams\n${fmt.dateTime(run.t0)} – ${fmt.dateTime(run.t1)}\nthe window is summed up in ${fmt.duration(this.data.bucket_ms)} steps: zoom in for every value`;
+      } else if (row.kind === "telegram") {
         const d = this.decodeOf(row, run);
         const others = row.candidates ? [...row.candidates.values()].filter((c) => c.def.key !== row.defKey).slice(0, 4) : [];
         text = `${row.label}${row.name ? `  ${row.name}` : ""}\n${d ? `${d.result === "ok" ? d.text || "(empty)" : `✗ ${d.result}`}\n` : ""}${run.label}${run.status !== "ok" ? `  [${run.status}]` : ""}\n`

@@ -1,4 +1,14 @@
-# 0.4.2 (unreleased)
+# 0.4.3 (unreleased)
+
+## Fixes
+* Zooming out shows the whole window, newest telegrams included: a window with more than
+  200 000 telegrams was cut at 300 000 (the newest part stayed empty); it is now summed up in
+  steps of about a pixel. Unchanged values stay one bar, rows that changed within steps are a
+  lavender bar with the number of different values; zoom in for every value. Even the whole
+  recording (675 000 telegrams) takes about a second and a third of a megabyte
+* Windows that take long to read are refreshed less often while live
+
+# 0.4.2
 
 ## Features
 * A command with many messages (the registers of b524, the parameters of b516) gets a header row

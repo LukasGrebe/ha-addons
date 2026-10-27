@@ -77,7 +77,10 @@ slave are the **value**.
   part (`NN DD`), status and the decoded values of the row's definition.
 - Broken telegrams (`crc`, `nak`, `timeout`, …) are red.
 
-The window is cut when it contains more than 300 000 telegrams (a note appears); zoom in then.
+A window with more than 200 000 telegrams is not cut: it is **summed up in steps of time**
+(about one per pixel; a note says how long a step is). A row's value that did not change stays
+one bar; where a row had several values within steps, one lavender bar says how many different
+values (at least) and how many telegrams. Zoom in for every value.
 
 ### Decoded values, candidates and the setup — without leaving the timeline
 

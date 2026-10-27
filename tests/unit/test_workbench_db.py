@@ -47,7 +47,7 @@ class TelegramQueries(unittest.TestCase):
     def test_runs_collapse_identical_telegrams(self):
         from_ms, to_ms = self.window(1)
         result = self.db.runs(from_ms, to_ms, id_bytes=1, id_overrides={"b509": 3})
-        self.assertFalse(result["truncated"])
+        self.assertIsNone(result["bucket_ms"])   # few telegrams: the runs are exact
         rows = {(r["qq"], r["zz"], r["pb"], r["sb"], r["id"]): r for r in result["rows"]}
         # the register poll with a 3 byte ID is one row per register, not one row for all of b509
         self.assertIn((0x31, 0x08, 0xB5, 0x09, "0d0f00"), rows)
@@ -118,13 +118,29 @@ class TelegramQueries(unittest.TestCase):
         self.assertEqual(thinned["points"][-1][0], series["points"][-1][0])
         self.assertEqual(self.db.series(from_ms, to_ms, qq=0x99)["points"], [])
 
-    def test_runs_truncation(self):
+    def test_big_windows_are_summed_up_not_cut(self):
         from_ms, to_ms = self.window(6)
-        result = self.db.runs(from_ms, to_ms, max_rows=1000)
-        self.assertTrue(result["truncated"])
-        self.assertEqual(result["scanned"], 1000)
-        self.assertLess(result["to_ms"], to_ms)
-        self.assertGreater(result["to_ms"], from_ms)
+        exact = self.db.runs(from_ms, to_ms)
+        coarse = self.db.runs(from_ms, to_ms, max_rows=1000, buckets=100)
+        self.assertIsNone(exact["bucket_ms"])
+        self.assertEqual(coarse["bucket_ms"], -(-(to_ms - from_ms) // 100))
+        self.assertEqual(coarse["scanned"], exact["scanned"])               # nothing of the window is left out
+        self.assertEqual(coarse["to_ms"], to_ms)
+        key = lambda r: (r["qq"], r["zz"], r["pb"], r["sb"], r["id"])
+        exact_rows, coarse_rows = {key(r): r for r in exact["rows"]}, {key(r): r for r in coarse["rows"]}
+        self.assertEqual(set(exact_rows), set(coarse_rows))                  # every row is there ...
+        for k, row in exact_rows.items():
+            other = coarse_rows[k]
+            self.assertEqual(other["n"], row["n"], k)                        # ... with all its telegrams
+            self.assertEqual(other["runs"][-1][1], row["runs"][-1][1], k)    # ... up to its newest one
+            self.assertEqual(other["runs"][0][1] >= row["runs"][0][0], True)
+            self.assertEqual(sum(run[2] for run in other["runs"]), row["n"], k)
+            if len(row["runs"]) == 1:                                        # a value that never changed stays one run of it
+                self.assertEqual((len(other["runs"]), other["runs"][0][3], other["runs"][0][6]), (1, row["runs"][0][3], 0), k)
+        # a row that changes within a step is a run marked with the number of values: the mode message flips between few values
+        changing = [run for r in coarse["rows"] for run in r["runs"] if run[6]]
+        self.assertTrue(changing)
+        self.assertTrue(all(run[6] > 1 for run in changing))
 
     def test_telegrams_and_distinct(self):
         from_ms, to_ms = self.window(1)
