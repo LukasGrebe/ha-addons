@@ -214,6 +214,7 @@ ebusctl info
 ebusctl scan result
 ebusctl read -f OutsideTemp
 ebusctl find -d -r
+log Modus geändert   # note what you did, see "Logging what you did" below
 ```
 
 ### Via SSH (alternative)
@@ -370,6 +371,59 @@ For a Home Assistant sensor, add the **SQL** integration with the database URL
 `sqlite:////share/ebusd/telegrams.db` and e.g. the query
 `SELECT count(*) AS errors FROM telegram WHERE status != 'ok' AND ts > (strftime('%s', 'now') - 3600) * 1000000000`
 (column `errors`).
+
+### Logging what you did: `log`
+
+To find the telegrams of something that happened off the bus, e.g. a setting you changed
+on the heater or the defrosting you saw outside, note it with `log` in the built-in
+terminal (**Open Web UI**). It is stored in the same database:
+
+```bash
+log Modus auf Einschaltempfehlung geändert              # now
+log 8:52:23 ~1s Modus auf Einschaltempfehlung geändert   # 8:52:22 to 8:52:24
+log 8:50 -10m Dampf vom Abtauen                          # 8:40 to 8:50: started before you saw it
+log 2026-10-26 22:15 Warmwasser auf 50 °C                # with a date (also 26.10.2026 or 26.10.)
+log                                                      # now, then asks what happened
+```
+
+- **Time** (optional): `8:52`, `8:52:23` or `8:52:23.5`, local time. Without a date, it is
+  the last time the clock showed it (yesterday for a time still to come today). Without a
+  time, it is the moment you press Enter: run `log` alone right when you press the
+  button, and type the message at the prompt (no quoting needed there for `'`, `"` or
+  `!`). The time is stored before the prompt; Enter alone keeps just the time, Ctrl+C
+  removes it again.
+- **Uncertainty** (optional), when it may have happened: `~1s` (or `+-1s`, `±1s`) before
+  or after, `-10m` up to 10 minutes before, `+30s` up to 30 seconds after, `-10m+30s` both.
+  Units `ms`, `s`, `m` (or `min`) and `h`. Without one, the precision of the time:
+  `8:52` is 8:52:00 to 8:53:00, `8:52:23` that second, now exactly.
+- **Message**: the rest of the line. Put `--` before a message that starts like a time
+  (`log -- 10:30 Uhr Termin`).
+- `log --help` shows all of this; `log` needs **SQLite telegram log (database file)** to
+  be set.
+
+Events are not deleted after **SQLite telegram log retention** days, but the telegrams
+around them are. Table `event`:
+
+| Column | Content |
+|---|---|
+| `id` | row id |
+| `ts` | the time given (or when Enter was pressed), integer nanoseconds since 1970-01-01 UTC |
+| `ts_min`, `ts_max` | earliest and latest time it may have happened |
+| `message` | what happened; empty (`NULL`) if only the time was logged |
+| `logged` | when it was logged |
+
+The view `event_local` adds the local times `time_local`, `earliest_local`,
+`latest_local` and `logged_local`. Telegrams around the last event, with a minute more on
+each side:
+
+```bash
+sqlite3 -box /share/ebusd/telegrams.db "
+  SELECT t.time_local, t.master, t.slave, t.status
+  FROM event e JOIN telegram_hex t
+    ON t.ts BETWEEN e.ts_min - 60 * 1000000000 AND e.ts_max + 60 * 1000000000
+  WHERE e.id = (SELECT max(id) FROM event)
+  ORDER BY t.ts"
+```
 
 ---
 
