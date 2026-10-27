@@ -263,9 +263,9 @@ class SqliteLog(AppTestCase):
         self.addCleanup(bus.stop)
         self.start_app({"network_device": f"enh:127.0.0.1:{bus.port}", "sqlite_db": "/share/ebusd/telegrams.db",
                         "commandline_options": BASE_OPTIONS + ["--enablehex"]})
-        self.wait_log(r"telegrams are not recorded: /share/ebusd/telegrams\.db is open in another program")
-        self.wait_log(r"SQLite telegram log stopped")
-        # ebusd keeps decoding and sending while every write to its dump fails with EPIPE
+        self.wait_log(r"telegrams are not recorded until the app is restarted: /share/ebusd/telegrams\.db "
+                      r"is open in another program")
+        # the logger keeps reading the FIFO, so ebusd can open its dump and keeps decoding and sending
         self.check_bus()
         time.sleep(5)
         self.assertEqual(self.ebusctl("hex", "08b509030d2800"), SLAVE_08_ANSWER)

@@ -36,6 +36,7 @@ COMMIT_INTERVAL = 1.0  # seconds
 PURGE_INTERVAL = 3600.0  # seconds
 PURGE_CHUNK = 10000  # rows per DELETE
 SILENCE_WARNING = 60.0  # seconds; an idle bus still has a SYN every ~40ms
+LOCKED_RETRY = 60  # seconds until converting a database locked by another program is tried again
 EXIT_CONFIG = 2  # run.sh does not restart the logger on this exit code
 
 SCHEMA_VERSION = 2
@@ -454,6 +455,15 @@ def read_fifo(fd, chunks):
         chunks.put((time.time_ns(), data))
 
 
+def discard(chunks, stop):
+    """Keep reading the FIFO without recording anything until the app stops."""
+    while not stop.is_set():
+        try:
+            chunks.get(timeout=0.5)
+        except queue.Empty:
+            pass
+
+
 class Logger:
     def __init__(self, db, retention_days):
         self.db = db
@@ -544,15 +554,23 @@ def main():
     threading.Thread(target=read_fifo, args=(fd, chunks), name="fifo", daemon=True).start()
     if args.ready_file:
         open(args.ready_file, "w").close()
-    # after ebusd was started, so that converting a large database does not delay it
-    try:
-        db = upgrade_or_replace_db(db, args.db)
-    except (OSError, sqlite3.Error) as err:
-        if is_locked(err):
-            log.warning("database %s is locked by another program, trying again: %s", args.db, err)
-            return 1  # run.sh starts the logger again
-        log.error("unable to keep the database aside and start a new one, telegrams are not recorded: %s", err)
-        return EXIT_CONFIG
+    # From here on the logger must not exit before the app stops: ebusd may not have
+    # opened the FIFO yet and would block on that forever without a reader.
+    # Converting after ebusd was started keeps a large database from delaying it.
+    while True:
+        try:
+            db = upgrade_or_replace_db(db, args.db)
+            break
+        except (OSError, sqlite3.Error) as err:
+            if not is_locked(err):
+                log.error("unable to keep the database aside and start a new one, telegrams are not "
+                          "recorded until the app is restarted: %s", err)
+                discard(chunks, stop)
+                return 0
+            log.warning("database %s is locked by another program, trying again in %d s: %s",
+                        args.db, LOCKED_RETRY, err)
+            if stop.wait(LOCKED_RETRY):
+                return 0
     log.info("writing telegrams to %s (retention: %s)", args.db,
              f"{args.retention_days} days" if args.retention_days else "keep all")
 
