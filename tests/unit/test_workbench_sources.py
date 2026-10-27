@@ -214,6 +214,25 @@ class Fetching(unittest.TestCase):
         self.sources.ensure_defaults(background=False)   # not twice
         self.assertEqual(len(self.sources.list()), 2)
 
+    def test_prefetch_takes_titles_from_the_list_and_spends_no_api_call(self):
+        self.fetch.routes["https://codeload.github.com/john30/ebusd-configuration/tar.gz/refs/pull/702/head"] = PR
+        before = len(self.fetch.calls)
+        summaries = self.sources.prefetch([702, 660])
+        self.assertEqual([s["id"] for s in summaries], ["pr/702", "pr/660"])
+        for _ in range(100):
+            if self.sources.summary("pr/702")["state"] == "ready" and self.sources.summary("pr/660")["state"] == "ready":
+                break
+            time.sleep(0.05)
+        meta = self.sources.summary("pr/702")
+        self.assertEqual((meta["state"], meta["title"], meta["head"]), ("ready", "vaillant/hmu: add brine test values", "c93fb06"))
+        self.assertEqual(self.sources.list(), [], "prefetched pull requests are not configured")
+        self.assertEqual(self.sources.files("pr/702")["kind"], "tsp")
+        api_calls = [u for u in self.fetch.calls[before:] if "api.github.com/repos/john30/ebusd-configuration/pulls/" in u]
+        self.assertEqual(api_calls, [])
+        downloads = len([u for u in self.fetch.calls if "codeload" in u])
+        self.sources.prefetch([702])   # cached at the same head: nothing to fetch
+        self.assertEqual(len([u for u in self.fetch.calls if "codeload" in u]), downloads)
+
     def test_suggested_pull_requests_are_cached(self):
         pulls = self.sources.suggest()
         self.assertEqual([p["number"] for p in pulls["pulls"]], [702, 701])

@@ -13,6 +13,7 @@ import { csvEditor } from "./definition-edit.js";
 import { defineEditor } from "./define-ui.js";
 import { MINE, setup } from "./setup.js";
 import { mineLines, removeMine, upsertMine } from "./mine.js";
+import { prSearch } from "./prsearch.js";
 
 const PAGE = 120;
 const STATUS_HELP = {
@@ -256,7 +257,8 @@ export class Scratchpad {
       h("div", { class: "cards" },
         m.shown.map((g) => this.card(g)),
         m.hidden.length ? this.failingCard() : null,
-        this.newCard()));
+        this.newCard()),
+      prSearch.section(row, m.telegrams, () => { if (this.state?.row.key === row.key && !this.dirty.size) this.render(true); }));
   }
 
   notes() {
@@ -328,7 +330,7 @@ export class Scratchpad {
       h("div", { class: "dcol" }, this.sourceSection(g, pref)),
       h("div", { class: "dcol" }, this.compareSection(g, pref)),
       h("div", { class: "dcol" }, this.historySection(pref.def)),
-      h("div", { class: "dcol" }, this.editSection(g, pref)));
+      h("div", { class: "dcol edit" }, this.editSection(g, pref)));
   }
 
   async copyToMine(def) {
@@ -378,14 +380,13 @@ export class Scratchpad {
     const map = setup.fieldMap(def);
     const circuit = setup.circuitOf(def);
     const rows = (def.fields || []).map((field) => {
-      const input = h("input", { type: "text", value: map[field], size: 18, onchange: () => setup.renameField(def, field, input.value) });
-      const entity = `${circuit} ${setup.exportName(def)} ${map[field]}`;
-      return h("tr", {}, h("td", { class: "mono muted" }, field), h("td", {}, input), h("td", { class: "muted", title: "the name ebusd's MQTT discovery gives the entity (prefix, circuit, message, field)" }, entity), h("td", { class: "mono muted" }, values && field in values ? String(values[field]) : ""));
+      const input = h("input", { type: "text", value: map[field], title: `entity: ${circuit} ${setup.exportName(def)} ${map[field]}`, onchange: () => setup.renameField(def, field, input.value) });
+      return h("tr", {}, h("td", { class: "mono muted", title: field }, field), h("td", {}, input), h("td", { class: "mono muted latest" }, values && field in values ? String(values[field]) : ""));
     });
     return h("div", { class: "names" },
       h("div", { class: "kv-row" }, h("b", {}, "In Home Assistant"), h("span", { class: "muted" }, "topic "), h("span", { class: "mono" }, `ebusd/${circuit}/`), nameInput, setup.exportName(def) !== def.name ? h("span", { class: "muted" }, `(upstream ${def.name})`) : null),
-      rows.length ? h("table", { class: "fieldnames" }, h("thead", {}, h("tr", {}, h("th", {}, "field"), h("th", {}, "name in my config"), h("th", {}, "entity"), h("th", {}, values ? "latest" : ""))), h("tbody", {}, rows)) : h("div", { class: "muted" }, "This message has no named fields."),
-      h("div", { class: "hint" }, "Names end up in the exported CSV, the MQTT topics and the JSON fields; the upstream names stay in the file's comments. Letters, digits, _ . - only."));
+      rows.length ? h("table", { class: "fieldnames" }, h("colgroup", {}, h("col", { style: "width:34%" }), h("col", { style: "width:36%" }), h("col", { style: "width:30%" })), h("thead", {}, h("tr", {}, h("th", {}, "field"), h("th", {}, "name in my config"), h("th", {}, values ? "latest" : ""))), h("tbody", {}, rows)) : h("div", { class: "muted" }, "This message has no named fields."),
+      h("div", { class: "hint" }, `Entities are named "${circuit} ${setup.exportName(def)} <field>" by ebusd's MQTT discovery; the names end up in the exported CSV, the MQTT topics and the JSON fields, the upstream names stay in the file's comments. Letters, digits, _ . - only.`));
   }
 
   // -- comparison -------------------------------------------------------------------------------------------------

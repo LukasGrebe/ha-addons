@@ -65,6 +65,7 @@ export class Decoder {
     this.build = null;            // {id, at, sources: [{id, label, kind, filesId, files, head, title, enabled, delta}]}
     this.buildChecked = false;    // the builder has had its say since the page loaded: the build from the store may be stale before
     this.scan = {};               // source -> zz -> {manufacturer, ident, sw, hw, file}
+    this.scanFresh = new Set();   // "buildId|source" whose scan was taken from the current files
     this.conditionRefs = {};      // source -> Set of message names a condition refers to
     this.loaded = {};             // source -> {messages, errors, files, stderr} of the last run
     this.meta = { key: "current", source: "", lastSync: null, scan: {} };
@@ -332,12 +333,16 @@ export class Decoder {
     const sources = this.enabledSources().filter((s) => s.files && Object.keys(s.files).length);
     if (!sources.length) return;
     const work = sources.map((s) => ({ source: s, pending: [...this.telegrams.values()].filter((t) => t.decoded?.[s.id] !== s.filesId).sort(byFirst) })).filter((w) => w.pending.length);
-    if (!work.length) return;
+    const stale = sources.filter((s) => !this.scanFresh.has(`${this.build.id}|${s.id}`));
+    if (!work.length && !stale.length) return;
     this.decoding = true;
     this.error = null;
     const total = work.reduce((n, w) => n + w.pending.length, 0);
     let done = 0;
     try {
+      // the identification of the devices with the files of this build (persisted results may be stale)
+      for (const source of stale) await this.refreshScan(source);
+      if (stale.length) { this.rebuildEntries(false); this.emit("scan"); }
       for (const { source, pending } of work) {
         for (let i = 0; i < pending.length; i += BATCH) {
           // the build changed meanwhile (a source refreshed, unticked or removed): this source is done for now
@@ -351,6 +356,7 @@ export class Decoder {
           this.rebuildEntries(false);
           this.emit("decodes");
         }
+        await this.refreshScan(source);
       }
     } catch (err) {
       console.error(err);
@@ -365,6 +371,18 @@ export class Decoder {
       const stamps = this.stamps();
       if (!this.error && [...this.telegrams.values()].some((t) => this.enabledSources().some((s) => t.decoded?.[s.id] !== stamps[s.id]))) setTimeout(() => this.decodePending(), 50);
     }
+  }
+
+  /** The devices' identification as this source's files see it: the scan telegrams alone, replacing what was stored. */
+  async refreshScan(source) {
+    const lines = [...this.telegrams.values()].filter((t) => isScanLine(t.line)).map((t) => t.line);
+    this.scanFresh.add(`${this.build.id}|${source.id}`);
+    if (!lines.length) return;
+    try {
+      const result = await this.run({ files: source.files, filesId: source.filesId, args: ["--candidates"], stdin: lines.join("\n") + "\n", worker: source.id });
+      const scan = (result.results.find((r) => r.scan) || {}).scan;
+      if (scan) { this.scan[source.id] = scan; await this.saveMeta(); }
+    } catch (err) { console.warn(`scan with ${source.id} failed:`, err); }
   }
 
   /** Telegrams that have to precede an incremental run of a source: identifications and condition setters. */

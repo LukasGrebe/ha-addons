@@ -118,8 +118,10 @@ export class MessagesView {
       row.defKey = this.rowDefinition(row, included, primary, order);
       row.def = row.defKey ? d.def(row.defKey) : null;
       row.name = row.def ? `${setup.circuitOf(row.def)} ${setup.exportName(row.def)}` : "";
-      row.inSetup = row.defKey ? included.has(row.defKey) : false;
-      row.attention = row.known ? 0 : row.newIn.length ? 2 : row.candidates.size ? 1 : 3;   // 3 nothing fits, 2 another source knows it, 1 something fits but ebusd would not use it
+      row.inSetup = [...row.candidates.keys()].some((k) => included.has(k));
+      // 0 handled (ebusd understands it, or you put a definition into your setup), 1 something fits but ebusd would not use it,
+      // 2 another source understands it, 3 nothing fits
+      row.attention = row.known || row.inSetup ? 0 : row.newIn.length ? 2 : row.candidates.size ? 1 : 3;
     }
     this.allRows = [...rows.values()];
     this.senders = senders;
@@ -149,7 +151,8 @@ export class MessagesView {
       let dev = byZz.get(row.zz);
       if (!dev) byZz.set(row.zz, (dev = { zz: row.zz, messages: 0, n: 0, known: 0, knownN: 0, newOnly: 0, newN: 0, unknown: 0, unknownN: 0, newIn: new Set() }));
       dev.messages++; dev.n += row.n;
-      if (row.known) { dev.known++; dev.knownN += row.n; } else if (row.newIn.length) { dev.newOnly++; dev.newN += row.n; for (const s of row.newIn) dev.newIn.add(s); } else { dev.unknown++; dev.unknownN += row.n; }
+      // understood: by ebusd today, or with what you put into your setup
+      if (row.attention === 0) { dev.known++; dev.knownN += row.n; } else if (row.attention === 2) { dev.newOnly++; dev.newN += row.n; for (const s of row.newIn) dev.newIn.add(s); } else { dev.unknown++; dev.unknownN += row.n; }
     }
     const list = [...byZz.values()].map((dev) => {
       const ident = idents[dev.zz] || null;
@@ -230,7 +233,7 @@ export class MessagesView {
       el.appendChild(h("button", { class: `device ${this.device === dev.zz ? "active" : ""} ${!dev.broadcast && id && !dev.file ? "nofile" : ""}`, title, onclick: () => { this.device = this.device === dev.zz ? null : dev.zz; if (this.device && this.filter === "attention" && !this.allRows.some((r) => r.zz === dev.zz && r.attention)) this.filter = "all"; this.render(); } },
         h("span", { class: "mono addr" }, dev.zz), h("b", {}, name),
         !dev.broadcast && id && !dev.file ? h("span", { class: "err", title: `${primaryLabel} loads no file for ${id.ident} (${id.manufacturer}): ebusd decodes nothing of this device unless a source adds a file for it` }, "no file") : dev.file ? h("span", { class: "mono muted" }, dev.file.replace(/^.*\//, "")) : null,
-        h("span", { class: "muted" }, `${dev.messages} messages · ${share} % of the traffic understood`),
+        h("span", { class: "muted", title: "understood by ebusd today or by what you put into your setup" }, `${dev.messages} messages · ${share} % of the traffic understood`),
         dev.newOnly ? h("span", { class: "accent", title: `${dev.newOnly} messages only ${[...dev.newIn].map((s) => app.decoder.source(s)?.label || s).join(", ")} understand` }, `+${dev.newOnly} with other sources`) : null,
         dev.unknown ? h("span", { class: "warn" }, `${dev.unknown} unknown`) : null));
     }
@@ -269,7 +272,8 @@ export class MessagesView {
     const understood = [];
     if (r.known) understood.push(h("span", { class: "tbadge active", title: "ebusd understands this message today" }, "ebusd"));
     for (const s of r.newIn) understood.push(srcBadge(s, d.source(s)?.label));
-    if (!r.known && !r.newIn.length) understood.push(h("span", { class: r.candidates.size ? "warn" : "err" }, r.candidates.size ? "fits, but ebusd would not use it" : "nothing"));
+    if (!r.known && r.inSetup) understood.push(h("span", { class: "tbadge custom", title: "a definition of your setup" }, "my setup"));
+    if (!r.known && !r.newIn.length && !r.inSetup) understood.push(h("span", { class: r.candidates.size ? "warn" : "err" }, r.candidates.size ? "fits, but ebusd would not use it" : "nothing"));
     const senders = [...r.senders.keys()].map((q) => `${q}${ROLE[q] ? ` (${q === (app.settings?.own_address || "31") ? "ebusd" : ROLE[q]})` : ""}`).join(", ");
     const title = `${r.label}${r.def ? `\n${r.def.circuit} ${r.def.name} (${r.def.sourceLabel || r.def.source}, ${r.def.file.replace(/^.*\//, "")})` : ""}\nasked by ${senders}\n${fmt.count(r.candidates.size)} definition${r.candidates.size === 1 ? "" : "s"} fit: click to compare and choose`;
     return h("tr", { class: `msg ${this.selected?.key === r.key ? "selected" : ""} attention${r.attention}`, "data-key": r.key, title, onclick: () => this.select(r, null, true) },
@@ -277,7 +281,7 @@ export class MessagesView {
       h("td", { class: "name" }, r.def ? [chip(r.def.circuit, r.def.name), setup.exportName(r.def) !== r.def.name ? h("span", { class: "export" }, `→ ${setup.exportName(r.def)}`) : null, h("span", { class: "tmeta" }, accessKind(r.def))] : [h("span", { class: "mono" }, r.label), h("span", { class: "tmeta" }, r.zz === "fe" ? "broadcast" : r.latest?.slave ? "answered" : "no answer")],
         !r.def ? h("span", { class: "define" }, "＋ define") : null),
       h("td", {}, understood),
-      h("td", { class: "mono value", title: dec ? latestHex : "" }, value.length > 90 ? `${value.slice(0, 88)}…` : value),
+      h("td", { class: "mono value", title: dec ? `${value}\n${latestHex}` : "" }, value.length > 400 ? `${value.slice(0, 398)}…` : value),
       h("td", { class: "num" }, fmt.count(r.n)),
       h("td", { class: "num" }, fmt.count(r.distinct)),
       h("td", { class: "muted nowrap" }, r.latest?.last_ms ? fmt.duration(Math.max(0, Date.now() - r.latest.last_ms)) + " ago" : ""),

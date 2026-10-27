@@ -240,6 +240,19 @@ row** usually means the row groups telegrams by fewer ID bytes than the definiti
 messages (registers). A notice says so and **Split this row like the definitions** fixes the
 grouping; the list groups messages like the definitions by itself.
 
+### Searching the open pull requests for a message
+
+Below the cards, **search the open pull requests for this message** asks every open pull
+request of ebusd-configuration (the ones that are not sources yet) whether it decodes the
+message: the device fetches them once (a tarball each, cached), the browser compiles each once
+per commit (cached) and runs ebusd's decoder over the recorded telegrams of the message with it.
+The first search takes a few minutes, later ones are quick. The result lists the pull requests
+that decode the message, with the definition's name, whether ebusd would use it with that pull
+request (or it is hidden in a file for another variant) and the latest decoded value; **+ add as
+a source** makes it a source like the others. This is how a message no source understands, or
+one that another pull request may name better (an outside temperature called `temp_2`), is found
+without reading the pull requests by hand.
+
 ### Your own definitions
 
 Your definitions are ebusd CSV lines, one per message, stored in the app's settings (every

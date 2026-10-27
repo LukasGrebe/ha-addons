@@ -197,6 +197,28 @@ class Api(unittest.TestCase):
         self.assertEqual(self.request("DELETE", "/api/sources?id=pr%2F660")[0], 200)
         self.assertNotIn("pr/660", [s["id"] for s in self.get_json("/api/sources")["sources"]])
 
+    def test_error_answers_leave_the_connection_usable(self):
+        """A POST to an unknown path (or a rejected one) must not leave its body for the next request on the connection."""
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            conn.request("POST", "/api/no-such-route", body=json.dumps({"numbers": [1, 2, 3]}), headers={"Content-Type": "application/json"})
+            response = conn.getresponse()
+            self.assertEqual(response.status, 404)
+            response.read()
+            conn.request("GET", "/api/health")
+            response = conn.getresponse()
+            self.assertEqual(response.status, 200, "the second request on the same connection")
+            self.assertTrue(json.loads(response.read())["ok"])
+            conn.request("POST", "/api/sources", body="not json", headers={"Content-Type": "application/json"})
+            response = conn.getresponse()
+            self.assertEqual(response.status, 400)
+            response.read()
+            conn.request("GET", "/api/health")
+            self.assertEqual(conn.getresponse().status, 200)
+        finally:
+            conn.close()
+
     def test_deploy(self):
         self.assertEqual(self.request("GET", "/api/repo/file?path=x")[0], 404)
         code, _, body = self.request("POST", "/api/deploy", {"files": {"a.csv": "type,circuit\n", "sub/b.inc": "x\n"}})

@@ -198,16 +198,22 @@ table.plain th { background: var(--bg); color: var(--muted); font-weight: 500; }
 .card-body.single { padding: 6px 10px; }
 .pick { border: none; background: none; font-size: 13px; padding: 0 4px; color: var(--muted); cursor: pointer; }
 .pick.on, .pick:hover { color: var(--accent); }
-/* the columns of an unfolded card grow with their content: the scratchpad scrolls as one piece */
-.dtl-body { display: grid; grid-template-columns: minmax(260px, .9fr) minmax(360px, 1.2fr) minmax(320px, 1fr) minmax(440px, 1.5fr); overflow-x: auto; }
-.dcol { min-width: 0; border-right: 1px solid #eef1f4; }
+/* the columns of an unfolded card: as many as the width takes (at least 400 px each), the editor on a row of its own
+   below them; every column keeps its content inside, the scratchpad scrolls as one piece */
+.dtl-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); align-items: start; }
+.dcol { min-width: 0; overflow: hidden; border-right: 1px solid #eef1f4; border-bottom: 1px solid #eef1f4; }
+.dcol.edit { grid-column: 1 / -1; border-right: none; border-bottom: none; }
+.dsec table { width: 100%; table-layout: fixed; }
+.dsec td, .dsec th, .dsec dd { overflow-wrap: anywhere; }
+.dsec dl.kv dd { word-break: normal; font-family: inherit; }
+.dsec .frow .mono { overflow: hidden; text-overflow: ellipsis; }
 .dcol:last-child { border-right: none; }
 .dsec { padding: 6px 12px 10px; }
 .dsec h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
 .dsec dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 6px 0; }
 .dsec dl.kv dt { color: var(--muted); } .dsec dl.kv dd { margin: 0; }
 .frow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 2px 0; }
-.dsec table.cmp { table-layout: fixed; width: 100%; border-collapse: collapse; }
+.dsec table.cmp { border-collapse: collapse; }
 .dsec table.cmp td, .dsec table.cmp th { padding: 2px 8px 2px 0; border-bottom: 1px solid #eef1f4; text-align: left; white-space: normal; word-break: break-word; overflow-wrap: anywhere; font-weight: normal; }
 .dsec table.cmp th { color: var(--muted); }
 .dsec table.cmp th:first-child { width: 22%; }
@@ -218,22 +224,27 @@ table.plain th { background: var(--bg); color: var(--muted); font-weight: 500; }
 .dsec .history canvas { display: block; cursor: crosshair; width: 100%; }
 .vlist { max-height: 190px; overflow: auto; border: 1px solid #eef1f4; border-radius: 4px; margin-top: 4px; }
 .vlist table { border-collapse: collapse; width: 100%; }
+.vlist table { table-layout: auto; }
 .vlist table td { padding: 1px 8px; border-bottom: 1px solid #f3f5f7; }
+.vlist table td:last-child { white-space: normal; overflow-wrap: anywhere; width: 100%; }
 .vlist tr { cursor: pointer; } .vlist tr:hover { background: #f7f9fb; }
 .vlist tr.hl { background: var(--accent-soft); font-weight: 600; }
 .names { margin: 8px 0 0; padding-top: 6px; border-top: 1px dashed #eef1f4; display: flex; flex-direction: column; gap: 4px; }
 .names .kv-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.names table.fieldnames { border-collapse: collapse; }
+.names table.fieldnames { border-collapse: collapse; width: 100%; table-layout: fixed; }
 .names table.fieldnames th { text-align: left; font-weight: 500; color: var(--muted); padding: 0 10px 2px 0; font-size: 11px; }
-.names table.fieldnames td { padding: 1px 10px 1px 0; }
-.names input { font-family: var(--mono); font-size: 12px; }
+.names table.fieldnames td { padding: 1px 10px 1px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.names table.fieldnames td.latest { white-space: normal; overflow-wrap: anywhere; }
+.names input { font-family: var(--mono); font-size: 12px; width: 100%; box-sizing: border-box; }
+.names .kv-row input { width: auto; }
 
 /* editors: a definition as a form and as CSV (csved), a new one read off the bytes (definer) */
 .csved table.segs, .definer table.segs { border-collapse: collapse; font-size: 12px; width: 100%; }
 .csved table.segs th, .definer table.segs th { text-align: left; color: var(--muted); font-weight: 500; padding: 2px 8px 2px 0; }
 .csved table.segs td, .definer table.segs td { padding: 2px 8px 2px 0; border-top: 1px solid #eef1f4; }
 .csved table.segs input, .csved table.segs select, .csved select.wide, .definer table.segs input, .definer table.segs select { font-family: var(--mono); font-size: 12px; text-overflow: ellipsis; }
-.csved table.segs select.wide { max-width: 130px; }
+.csved table.segs select.wide { max-width: 260px; }
+.csved table.segs, .definer table.segs { table-layout: auto; }
 .csved .row > select.wide, .definer select.wide { max-width: 100%; }
 .definer table.segs select.wide { max-width: 340px; text-overflow: ellipsis; }
 .definer table.segs tr.sel td { background: var(--accent-soft); }
@@ -289,8 +300,8 @@ table.plain th { background: var(--bg); color: var(--muted); font-weight: 500; }
 .picker .list div:hover { background: var(--accent-soft); }
 .picker .list .id { font-family: var(--mono); }
 .picker .list .name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 12px; }
-.kv dt { color: var(--muted); } .kv dd { margin: 0; font-family: var(--mono); word-break: break-all; }
+.kv.about { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 12px; }
+.kv.about dt { color: var(--muted); } .kv.about dd { margin: 0; font-family: var(--mono); word-break: break-all; }
 .overrides .ov { display: flex; gap: 6px; align-items: center; margin: 3px 0; }
 .overrides input { width: 70px; }
 
@@ -320,7 +331,7 @@ table.msgs tr.group { background: #f7f9fb; cursor: pointer; color: var(--muted);
 table.msgs tr.group .muted, table.msgs tr.group .accent, table.msgs tr.group .warn { font-weight: 400; }
 table.msgs td.name { max-width: 380px; overflow: hidden; text-overflow: ellipsis; }
 table.msgs td.name .define { margin-left: 6px; }
-table.msgs td.value { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+table.msgs td.value { max-width: min(45vw, 1000px); overflow: hidden; text-overflow: ellipsis; }
 table.msgs td.name .export { color: var(--accent); font-style: italic; margin-left: 4px; }
 table.msgs td.name .tmeta { margin-left: 6px; }
 table.msgs .fold { color: var(--muted); }
@@ -333,3 +344,11 @@ table.msgs td input[type=checkbox] { margin: 0; }
 .setup .changes .item.removed { opacity: .75; }
 .extras .xs-parts { display: flex; flex-direction: column; gap: 14px; }
 .extras .xs-parts h3 { margin: 0 0 4px; }
+
+/* the search over the open pull requests, below the cards */
+.prsearch { margin: 4px 8px 12px; padding: 6px 10px; border: 1px dashed var(--line); border-radius: 6px; }
+.prsearch .hit { margin: 6px 0; padding: 4px 8px; background: #f7f9fb; border-radius: 4px; }
+.prsearch .hit .title { font-weight: 600; }
+.prsearch .ex { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.src .spinner { width: 9px; height: 9px; }
+.sources { line-height: 22px; }

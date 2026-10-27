@@ -34,6 +34,12 @@ your devices.
   the counterparts for writing), how it shows up in Home Assistant (the entities ebusd's MQTT
   discovery makes, the climate and water heater YAML), and saving for the eBUSd app. The setup is
   stored as changes against ebusd's choice, so a message seen tomorrow is understood tomorrow
+* **Search the open pull requests for a message**: every open pull request of
+  ebusd-configuration is fetched once, compiled once per commit and tried on the recorded
+  telegrams of the selected message; the ones that decode it are listed with the name they give
+  it and can be added as a source with one click
+* A message whose definition is in your setup counts as handled: it leaves "needs a look" and
+  the device chips count it as understood
 * New option **language** (en, de): the language of the definitions, as the eBUSd app's
   `--configlang`
 

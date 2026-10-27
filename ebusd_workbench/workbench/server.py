@@ -265,6 +265,15 @@ def api_sources_suggest(ctx, req):
     return ctx.sources.suggest()
 
 
+@route("POST", "/api/sources/prefetch")
+def api_sources_prefetch(ctx, req):
+    """Fetch pull requests into the cache (not configured as sources): for searching them for a message."""
+    numbers = req.json().get("numbers") or []
+    if not isinstance(numbers, list) or len(numbers) > 100:
+        raise ApiError("numbers: a list of at most 100 pull request numbers")
+    return {"sources": ctx.sources.prefetch([int(n) for n in numbers])}
+
+
 @route("GET", "/api/sources/files")
 def api_sources_files(ctx, req):
     """The definition files of a fetched source: CSV ready for ebusd, or TypeSpec to compile in the browser."""
@@ -302,12 +311,12 @@ def api_deploy_post(ctx, req):
 # -- request handling -------------------------------------------------------------
 
 class Request:
-    def __init__(self, handler, path, query, params):
+    def __init__(self, handler, path, query, params, body=None):
         self.handler = handler
         self.path = path
         self.query = query
         self.params = params
-        self._body = None
+        self._body = body
 
     def client_gone(self):
         """Whether the browser closed the connection (aborted the fetch, scrolled on, closed the tab)."""
@@ -374,13 +383,20 @@ class Handler(BaseHTTPRequestHandler):
         path = urllib.parse.unquote(parts.path)
         query = {k: v[-1] for k, v in urllib.parse.parse_qs(parts.query, keep_blank_values=True).items()}
         try:
+            # the body is read before anything can go wrong: an error answer that leaves it unread would have the
+            # next request on this keep-alive connection start in the middle of it
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > MAX_BODY:
+                self.close_connection = True
+                raise ApiError("request too large", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            body = self.rfile.read(length) if length else b""
             if not self.client_allowed():
                 raise ApiError("access only through Home Assistant ingress", HTTPStatus.FORBIDDEN)
             if path.startswith("/api/"):
                 for route_method, pattern, func in ROUTES:
                     match = pattern.match(path)
                     if match and route_method == method:
-                        request = Request(self, path, query, match.groupdict())
+                        request = Request(self, path, query, match.groupdict(), body)
                         result = self.run_route(func, request)
                         if result is not None:
                             self.send_json(result)

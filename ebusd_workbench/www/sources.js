@@ -254,8 +254,9 @@ export class SourcesStrip {
     else if (built?.error) { cls += " err"; parts.push("compile failed"); }
     else if (!built) { cls += " busy"; parts.push("loading…"); }
     else {
-      if (decoded?.pending) { cls += " busy"; parts.push(`decoding ${fmt.count(decoded.decoded)}/${fmt.count(decoded.decoded + decoded.pending)}`); }
-      else parts.push(`${fmt.count(decoded?.definitions || 0)} fit your bus`);
+      // the text keeps its length while decoding (the progress is in the top bar), so that the strip never reflows the page
+      if (decoded?.pending) cls += " busy";
+      parts.push(`${fmt.count(decoded?.definitions || 0)} fit your bus`);
       if (built.delta) parts.push(`+${built.delta.added.length} new${built.delta.changed.length ? `, ${built.delta.changed.length} changed` : ""}`);
     }
     const title = [`${s.label} (${s.id})`, KIND_HELP[s.kind] || "", s.title ? `“${s.title}”` : "", s.head ? `commit ${s.head.slice(0, 7)}` : "", s.fetched_at ? `fetched ${fmt.dateTime(s.fetched_at * 1000)}` : "",
@@ -263,6 +264,7 @@ export class SourcesStrip {
     const toggle = h("input", { type: "checkbox", checked: !!s.enabled, title: s.enabled ? "leave this source out" : "use this source", onchange: () => this.enable(s.id, toggle.checked) });
     return h("span", { class: cls, title },
       toggle,
+      cls.includes("busy") ? h("span", { class: "spinner", title: "decoding the recording with this source (progress in the top bar)" }) : null,
       h("b", {}, s.label),
       s.kind === "pr" && s.title ? h("span", { class: "muted t" }, s.title.length > 48 ? `${s.title.slice(0, 47)}…` : s.title) : null,
       h("span", { class: "muted" }, parts.join(" · ")),

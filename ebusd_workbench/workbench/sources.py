@@ -296,7 +296,57 @@ class Sources:
             with self._lock:
                 self.busy.pop(source_id, None)
 
-    def _download(self, ref):
+    def prefetch(self, numbers, max_workers=4):
+        """Fetch pull requests into the cache without configuring them (for a search over all open ones).
+
+        The title and head come from the cached list of open pull requests, so no API call is spent
+        per pull request. Returns the summaries; fetching happens in a few threads, missing ones are
+        reported as fetching and can be asked for again.
+        """
+        pulls = {}
+        try:
+            pulls = {p["number"]: p for p in self.suggest().get("pulls", [])}
+        except SourceError:
+            pass
+        todo = []
+        for number in numbers:
+            ref = parse_ref(str(number))
+            if ref["kind"] != "pr":
+                raise SourceError(f"{number} is not a pull request")
+            meta = self.meta(ref["id"])
+            head = (pulls.get(ref["number"]) or {}).get("head")
+            if meta and (not head or meta.get("head") == head):
+                continue
+            todo.append((ref, pulls.get(ref["number"])))
+        if todo:
+            lock = threading.Lock()
+            queue = list(todo)
+
+            def work():
+                while True:
+                    with lock:
+                        if not queue:
+                            return
+                        ref, pull = queue.pop(0)
+                    with self._lock:
+                        if ref["id"] in self.busy:
+                            continue
+                        self.busy[ref["id"]] = {"what": f"fetching {label_of(ref)}", "since": time.time()}
+                        self.errors.pop(ref["id"], None)
+                    try:
+                        self._download(ref, describe=False, pull=pull)
+                    except SourceError as err:
+                        self.errors[ref["id"]] = str(err)
+                        log.warning("fetching %s failed: %s", ref["id"], err)
+                    finally:
+                        with self._lock:
+                            self.busy.pop(ref["id"], None)
+
+            for _ in range(max(1, min(max_workers, len(todo)))):
+                threading.Thread(target=work, name="prefetch", daemon=True).start()
+        return [self.summary(parse_ref(str(n))["id"]) for n in numbers]
+
+    def _download(self, ref, describe=True, pull=None):
         data = self.fetch(CODELOAD.format(repo=ref["repo"], ref=urllib.parse.quote(ref["ref"], safe="/")))
         wanted = TSP_SUFFIXES + CSV_SUFFIXES
         if ref["kind"] == "cdn":
@@ -315,7 +365,10 @@ class Sources:
             meta["number"] = ref["number"]
         if ref.get("branch"):
             meta["branch"] = ref["branch"]
-        meta.update(self._describe(ref))
+        if pull:
+            meta.update(title=pull.get("title"), head=pull.get("head"), author=pull.get("author"), updated_at=pull.get("updated_at"), url=pull.get("url"))
+        if describe:
+            meta.update(self._describe(ref))
         self._save(meta, tree["files"])
         return meta
 

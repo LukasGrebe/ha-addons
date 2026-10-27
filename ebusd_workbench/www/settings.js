@@ -111,7 +111,7 @@ export class SettingsView {
     const s = app.status;
     if (!s || !this.options.info) return;
     box.replaceChildren(h("h2", {}, "About"),
-      h("dl", { class: "kv" },
+      h("dl", { class: "kv about" },
         h("dt", {}, "version"), h("dd", {}, s.version),
         h("dt", {}, "database"), h("dd", {}, `${s.db.path} (${s.db.exists ? `${fmt.bytes(s.db.size)}, ${fmt.count(s.db.telegrams)} telegrams, ${fmt.count(s.db.events)} events` : "missing"})`),
         h("dt", {}, "recorded"), h("dd", {}, s.db.first_ms ? `${fmt.dateTime(s.db.first_ms)} – ${fmt.dateTime(s.db.last_ms)}` : "nothing yet"),
