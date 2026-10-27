@@ -55,8 +55,8 @@ def app_mounts():
 MOUNTS = app_mounts()
 
 
-def docker(*args, check=True, timeout=120):
-    result = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout)
+def docker(*args, check=True, timeout=120, stdin=None):
+    result = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout, input=stdin)
     if check and result.returncode:
         raise RuntimeError(f"docker {' '.join(args)} failed ({result.returncode}): {result.stderr.strip()}")
     return result
@@ -217,6 +217,19 @@ class SqliteLog(AppTestCase):
         self.assertEqual({row[3] for row in rows}, {"ok"})
         self.assertTrue(all(started < row[4] < time.time_ns() for row in rows))
         self.assertEqual(set(statuses), {"ok"}, f"telegrams per status: {statuses}")
+        self.check_events(db_path)
+
+    def check_events(self, db_path):
+        """The log command of the terminal notes events in the same database."""
+        out = docker("exec", CONTAINER, "log", "+-1s", "Modus auf Einschaltempfehlung geändert").stdout
+        self.assertRegex(out, r"^Logged .* \(between .*\): Modus auf Einschaltempfehlung geändert$")
+        out = docker("exec", "-i", CONTAINER, "log", "-10m", stdin="Dampf vom Abtauen\n").stdout
+        self.assertIn("What happened?", out)
+        db = sqlite3.connect(os.path.join(self.tmp, db_path.lstrip("/")))
+        events = db.execute("SELECT ts_max - ts_min, message FROM event ORDER BY id").fetchall()
+        db.close()
+        self.assertEqual(events, [(2 * 10**9, "Modus auf Einschaltempfehlung geändert"),
+                                  (600 * 10**9, "Dampf vom Abtauen")])
 
     def test_usb_plain_in_share(self):
         bus = PtyAdapter(enhanced_protocol=False)

@@ -98,6 +98,38 @@ FROM (SELECT
 FROM telegram);
 """
 
+# Things that happened off the bus, noted with the `log` command of the terminal
+# (ebus_log.py), to find their telegrams by time. Part of schema version 2; the
+# log command also creates it in a database that lacks it.
+EVENT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS event (
+  id      INTEGER PRIMARY KEY,
+  ts      INTEGER NOT NULL,  -- time of the event as given, ns since 1970-01-01 UTC
+  ts_min  INTEGER NOT NULL,  -- earliest time it may have happened
+  ts_max  INTEGER NOT NULL,  -- latest time it may have happened
+  message TEXT,              -- what happened, NULL if only the time was logged
+  logged  INTEGER NOT NULL   -- when it was logged, ns since 1970-01-01 UTC
+);
+
+-- event with readable local times
+CREATE VIEW IF NOT EXISTS event_local AS SELECT
+  id,
+  strftime('%Y-%m-%d %H:%M:%S', ts / 1000000000, 'unixepoch', 'localtime')
+    || printf('.%03d', ts / 1000000 % 1000) AS time_local,
+  strftime('%Y-%m-%d %H:%M:%S', ts_min / 1000000000, 'unixepoch', 'localtime')
+    || printf('.%03d', ts_min / 1000000 % 1000) AS earliest_local,
+  strftime('%Y-%m-%d %H:%M:%S', ts_max / 1000000000, 'unixepoch', 'localtime')
+    || printf('.%03d', ts_max / 1000000 % 1000) AS latest_local,
+  message,
+  strftime('%Y-%m-%d %H:%M:%S', logged / 1000000000, 'unixepoch', 'localtime')
+    || printf('.%03d', logged / 1000000 % 1000) AS logged_local,
+  ts,
+  ts_min,
+  ts_max
+FROM event;
+"""
+SCHEMA += EVENT_SCHEMA
+
 COLUMNS = ("ts", "qq", "zz", "pb", "sb", "nn", "dd", "crc", "ack",
            "s_nn", "s_dd", "s_crc", "s_ack", "status", "raw")
 WIRE = COLUMNS[1:13]  # the fields qq to s_ack in the order they are sent

@@ -309,7 +309,8 @@ class Database(unittest.TestCase):
         self.assertEqual(db.execute("SELECT count(raw) FROM telegram").fetchone()[0],
                          sum(stored for _, stored in frames()))
         self.assertEqual(db.execute("SELECT type, name FROM sqlite_master ORDER BY name").fetchall(),
-                         [("table", "telegram"), ("index", "telegram_cmd"), ("view", "telegram_hex")])
+                         [("table", "event"), ("view", "event_local"), ("table", "telegram"),
+                          ("index", "telegram_cmd"), ("view", "telegram_hex")])
         self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], e.SCHEMA_VERSION)
         self.assertEqual(e.upgrade_db(db, self.path), 0)
         db.close()

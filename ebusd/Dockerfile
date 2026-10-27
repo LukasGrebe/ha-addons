@@ -41,8 +41,10 @@ LABEL \
     org.opencontainers.image.source="https://github.com/LukasGrebe/ha-addons" \
     org.opencontainers.image.licenses="Apache License 2.0"
 
-COPY run.sh ebus_sqlite.py /
-RUN chmod a+x /run.sh /ebus_sqlite.py
+COPY run.sh ebus_sqlite.py ebus_log.py /
+# "log" in the built-in terminal notes an event in the SQLite telegram log
+RUN chmod a+x /run.sh /ebus_sqlite.py /ebus_log.py \
+ && ln -s /ebus_log.py /usr/local/bin/log
 CMD ["/run.sh"]
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s \
