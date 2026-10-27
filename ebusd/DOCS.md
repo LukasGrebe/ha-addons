@@ -214,6 +214,7 @@ ebusctl info
 ebusctl scan result
 ebusctl read -f OutsideTemp
 ebusctl find -d -r
+log Modus geändert   # note what you did, see "Logging what you did" below
 ```
 
 ### Via SSH (alternative)
@@ -291,14 +292,19 @@ sqlite_retention_days: 10
   [SQL integration](https://www.home-assistant.io/integrations/sql/)) and other apps.
   `/config/…` is the app config folder (`/addon_configs/2ad9b828_ebusd/` on the host).
 - Telegrams older than **SQLite telegram log retention** days are deleted every hour
-  (default 10, `0` keeps everything). A telegram takes about 190 bytes, which is roughly
-  50–170 MB per day depending on bus traffic. Both folders are part of HA backups.
+  (default 10, `0` keeps everything). A telegram takes about 75 bytes. A heating system
+  with about 120,000 telegrams per day (heater, controller and ebusd reading values, the
+  bus about 12 % busy) needs about 9 MB per day or 3.3 GB per year; a bus that is busy all
+  the time needs at most about 75 MB per day. Both folders are part of HA backups.
 - The app enables ebusd's binary dump of received bytes (`--dump`, `--dumpfile`,
   `--dumpflush`, `--dumpsize`) and points it at a FIFO read by the logger. Don't add dump
   options to `commandline_options` (the telegram log is then disabled), and don't run
   `ebusctl dump`: it switches the dump off until you run it again.
 - Don't open the database over the Samba share while the app is running (SQLite locking
   does not work over network shares). Copy the file or use the built-in terminal.
+- Versions 26.1.9 and 26.1.10 of the app cannot use a database written by a newer version:
+  their telegram log stays off (`unable to open database … has schema version 2`), ebusd
+  runs normally. To go back to one of them, give it another `sqlite_db` file.
 
 ### Table `telegram`
 
@@ -307,30 +313,34 @@ the eBUS telegram structure `QQ ZZ PB SB NN DD… CRC ACK NN DD… CRC ACK SYN`:
 
 | Column | Content |
 |---|---|
-| `id` | row id |
-| `ts` | arrival time of the first byte, integer nanoseconds since 1970-01-01 UTC |
-| `type` | `BC` broadcast (ZZ = `fe`), `MM` master-master, `MS` master-slave |
+| `ts` | arrival time of the first byte, integer nanoseconds since 1970-01-01 UTC; unique, the key of the table |
 | `qq` | source address (master) |
 | `zz` | destination address |
 | `pb`, `sb` | primary and secondary command |
 | `nn` | number of data bytes of the master part |
-| `dd` | data bytes of the master part (hex) |
+| `dd` | data bytes of the master part |
 | `crc` | CRC of the master part |
 | `ack` | `00` (ACK) or `ff` (NAK) from the destination; empty for broadcasts |
-| `s_nn`, `s_dd`, `s_crc` | number of data bytes, data bytes (hex) and CRC of the slave answer (`MS` only) |
+| `s_nn`, `s_dd`, `s_crc` | number of data bytes, data bytes and CRC of the slave answer (`MS` only) |
 | `s_ack` | `00` (ACK) or `ff` (NAK) from the source for the slave answer |
 | `status` | `ok`; `crc` CRC mismatch; `nak` rejected again after the repetition; `timeout` ended by SYN before complete (e.g. slave did not answer); `invalid` invalid address or ACK byte; `escape` invalid escape sequence; `trailing` extra bytes after a complete telegram |
-| `raw` | all bytes between the two SYN exactly as received (hex, escaped) |
+| `raw` | all bytes between the two SYN exactly as received (escaped), only if they are not just the columns `qq` to `s_ack` one after the other: for telegrams with escape sequences, repetitions after NAK and broken ones |
 
-Single bytes are stored as integers, data bytes unescaped as lower-case hex text. Columns
-of parts that were not received are empty (`NULL`). If a part is repeated after a NAK, the
-columns hold the repetition and `raw` holds both.
+Single bytes are stored as integers, data bytes unescaped as binary (BLOB: `hex(dd)` shows
+them, `dd = x'0d2800'` compares them). Columns of parts that were not received are empty
+(`NULL`). If a part is repeated after a NAK, the columns hold the repetition and `raw` holds
+both. Telegrams that ebusd hands over at once share their arrival time; they get
+consecutive nanoseconds, so that `ts` stays unique.
 
-Indexes: `(ts)`, `(qq, zz, pb, sb, ts)`, `(zz, pb, sb, ts)` and `(pb, sb, ts)`.
+The table is ordered by `ts`, so time ranges are fast, and has one index `(pb, sb, zz, qq)`
+for telegrams of a command, optionally of one destination and source. A query that
+filters neither by time nor by command (e.g. only by `qq`) reads the whole table; add a
+time range to keep it fast.
 
-The view `telegram_hex` shows the same rows with readable UTC and local times, single
-bytes in hex, and the master and slave part in ebusd's `QQZZPBSBNNDD` / `NNDD` notation
-(as in `ebusctl grab` and ebusd's `received unknown MS cmd` log lines).
+The view `telegram_hex` shows the same rows with readable UTC and local times, bytes in
+hex, the `type` (`BC` broadcast, `MM` master-master, `MS` master-slave), the master and
+slave part in ebusd's `QQZZPBSBNNDD` / `NNDD` notation (as in `ebusctl grab` and ebusd's
+`received unknown MS cmd` log lines) and `raw` for all telegrams.
 
 **Timestamps** are taken by the logger with a nanosecond clock when ebusd hands over each
 byte, typically a few hundred microseconds after ebusd read it from the adapter.
@@ -345,15 +355,15 @@ In the built-in terminal (**Open Web UI**):
 
 ```bash
 sqlite3 -box /share/ebusd/telegrams.db \
-  "SELECT time_local, master, slave, status FROM telegram_hex ORDER BY id DESC LIMIT 20"
+  "SELECT time_local, master, slave, status FROM telegram_hex ORDER BY ts DESC LIMIT 20"
 ```
 
-Query the table with hex literals to use the indexes:
+Query the table with hex literals to use the index:
 
 ```sql
--- latest B5 09 telegrams from ebusd (31) to the heater (08)
-SELECT ts, dd, s_dd FROM telegram
-WHERE qq = 0x31 AND zz = 0x08 AND pb = 0xb5 AND sb = 0x09
+-- latest answers of the heater (08) to ebusd (31) reading register 0d 28 00 (B5 09)
+SELECT ts, hex(s_dd) FROM telegram
+WHERE qq = 0x31 AND zz = 0x08 AND pb = 0xb5 AND sb = 0x09 AND dd = x'0d2800'
 ORDER BY ts DESC LIMIT 20;
 
 -- telegrams per command during the last hour
@@ -370,6 +380,59 @@ For a Home Assistant sensor, add the **SQL** integration with the database URL
 `sqlite:////share/ebusd/telegrams.db` and e.g. the query
 `SELECT count(*) AS errors FROM telegram WHERE status != 'ok' AND ts > (strftime('%s', 'now') - 3600) * 1000000000`
 (column `errors`).
+
+### Logging what you did: `log`
+
+To find the telegrams of something that happened off the bus, e.g. a setting you changed
+on the heater or the defrosting you saw outside, note it with `log` in the built-in
+terminal (**Open Web UI**). It is stored in the same database:
+
+```bash
+log Modus auf Einschaltempfehlung geändert              # now, give or take 500 ms
+log 8:52:23 ~2s Modus auf Einschaltempfehlung geändert   # 8:52:21 to 8:52:25
+log 8:50 -10m Dampf vom Abtauen                          # 8:40 to 8:50: started before you saw it
+log 2026-10-26 22:15 Warmwasser auf 50 °C                # 22:15 to 22:16 (also 26.10.2026 or 26.10.)
+log                                                      # now, then asks what happened
+```
+
+- **Time** (optional): `8:52`, `8:52:23` or `8:52:23.5`, local time. Without a date, it is
+  the last time the clock showed it (yesterday for a time still to come today). Without a
+  time, it is the moment you press Enter: run `log` alone right when you press the
+  button, and type the message at the prompt (no quoting needed there for `'`, `"` or
+  `!`). The time is stored before the prompt; Enter alone keeps just the time, Ctrl+C
+  removes it again.
+- **Uncertainty** (optional), when it may have happened: `~1s` (or `+-1s`, `±1s`) before
+  or after, `-10m` up to 10 minutes before, `+30s` up to 30 seconds after, `-10m+30s` both.
+  Units `ms`, `s`, `m` (or `min`) and `h`. Without one, 500 ms before or after, or the
+  whole minute for a time without seconds (`8:52` is 8:52:00 to 8:53:00).
+- **Message**: the rest of the line. Put `--` before a message that starts like a time
+  (`log -- 10:30 Uhr Termin`).
+- `log --help` shows all of this; `log` needs **SQLite telegram log (database file)** to
+  be set.
+
+Events are not deleted after **SQLite telegram log retention** days, but the telegrams
+around them are. Table `event`:
+
+| Column | Content |
+|---|---|
+| `id` | row id |
+| `ts` | the time given (or when Enter was pressed), integer nanoseconds since 1970-01-01 UTC |
+| `ts_min`, `ts_max` | earliest and latest time it may have happened |
+| `message` | what happened; empty (`NULL`) if only the time was logged |
+| `logged` | when it was logged |
+
+The view `event_local` adds the local times `time_local`, `earliest_local`,
+`latest_local` and `logged_local`. Telegrams around the last event, with a minute more on
+each side:
+
+```bash
+sqlite3 -box /share/ebusd/telegrams.db "
+  SELECT t.time_local, t.master, t.slave, t.status
+  FROM event e JOIN telegram_hex t
+    ON t.ts BETWEEN e.ts_min - 60 * 1000000000 AND e.ts_max + 60 * 1000000000
+  WHERE e.id = (SELECT max(id) FROM event)
+  ORDER BY t.ts"
+```
 
 ---
 
@@ -416,8 +479,13 @@ The addon logs its decisions at startup. Here is what each message means:
 | `commandline_options entry '…' looks like multiple flags` | Two or more flags were put in a single entry — split them into separate entries |
 | `Duplicate flag in commandline_options: '…'` | The same flag appears more than once |
 | `DEPRECATED CONFIG FIELDS DETECTED` | Old (≤25.1) schema fields found — migrate them to `commandline_options` |
+| `SQLite telegram log: converting … to the compact format of this version` | First start after updating from 26.1.9 or 26.1.10: the database is converted once (typically under a minute; it shrinks to about a third). ebusd runs meanwhile, and the telegrams it receives are written afterwards |
 | `SQLite telegram log: writing telegrams to …` | The [SQLite telegram log](#sqlite-telegram-log) is running |
 | `sqlite_db is set, but commandline_options contains ebusd dump options` | Remove the `--dump…` flags — the telegram log needs ebusd's dump for itself |
 | `SQLite telegram log: unable to open database …` | The `sqlite_db` path is invalid or not writable; ebusd runs without the telegram log |
+| `SQLite telegram log: unable to convert database …, it is unchanged` | Converting the database of an earlier version failed (e.g. disk full, damaged data). The log keeps it under another name and starts a new one, see the next lines |
+| `SQLite telegram log: kept the database of the previous version as …` | The telegrams recorded so far are in that file (e.g. `telegrams.v1-20261027-091859.db`, readable as before); new telegrams go to a new database. Delete the file when you no longer need it |
+| `SQLite telegram log: unable to keep the database aside and start a new one, telegrams are not recorded until the app is restarted` | Usually another program has the database open (e.g. Home Assistant's SQL integration) or the disk is full. ebusd runs normally; fix the cause and restart the app |
+| `SQLite telegram log: database … is locked by another program, trying again in 60 s` | Another program is writing to the database; the logger tries again every minute, and telegrams received meanwhile are written afterwards |
 | `SQLite telegram log: no data from ebusd for 60 seconds` | No bus signal, or the dump was switched off with `ebusctl dump` (run it again to switch it on) |
 | `SQLite telegram log exited with code … — restarting in 10s` | The logger crashed and is restarted; telegrams in between are not recorded |

@@ -43,4 +43,5 @@ configuration:
     name: Doba uchování SQLite logu telegramů (dny)
     description: >
       Telegramy starší než tento počet dní jsou z SQLite logu telegramů smazány.
-      0 uchovává vše. Podle provozu na sběrnici přibližně 50-170 MB za den.
+      0 uchovává vše. Přibližně 9 MB za den při 120 000 telegramech denně, nejvýše
+      asi 75 MB při trvale vytížené sběrnici.
