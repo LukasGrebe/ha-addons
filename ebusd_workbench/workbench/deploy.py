@@ -3,7 +3,7 @@
 import os
 import time
 
-from .gitrepo import RepoError, safe_relative
+from .paths import PathError, safe_relative
 
 MAX_FILES = 1000
 MAX_SIZE = 4 * 1024 * 1024  # per file
@@ -18,7 +18,7 @@ MANIFEST = "workbench-setup.json"   # what was sourced where; ebusd ignores it
 def csv_relative(path):
     rel = safe_relative(path)
     if not rel.endswith(DEPLOY_SUFFIXES) and rel != MANIFEST:
-        raise RepoError(f"{path}: only .csv and .inc files (and {MANIFEST}) are deployed")
+        raise PathError(f"{path}: only .csv and .inc files (and {MANIFEST}) are deployed")
     return rel
 
 
@@ -29,9 +29,9 @@ def deploy(files, target_dir, subdir="", clean=False):
     so that ebusd does not pick up stale definitions. Returns the written and removed paths.
     """
     if not isinstance(files, dict) or not files:
-        raise RepoError("no files to deploy")
+        raise PathError("no files to deploy")
     if len(files) > MAX_FILES:
-        raise RepoError("too many files")
+        raise PathError("too many files")
     base = os.path.abspath(target_dir)
     if subdir:
         base = os.path.join(base, safe_relative(subdir))
@@ -40,7 +40,7 @@ def deploy(files, target_dir, subdir="", clean=False):
     for path, content in files.items():
         rel = csv_relative(path)
         if not isinstance(content, str) or len(content) > MAX_SIZE:
-            raise RepoError(f"{path}: invalid content")
+            raise PathError(f"{path}: invalid content")
         planned[rel] = content
     os.makedirs(base, exist_ok=True)
     for rel, content in sorted(planned.items()):

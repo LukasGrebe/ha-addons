@@ -180,5 +180,5 @@ export function defaultHeader(row, samples, { scan = {}, own = "31" } = {}) {
   return { type, circuit, name: "NewMessage", comment: `from the recording: ${qq || "--"} to ${zz || "--"} ${hex(row.pb)}${hex(row.sb)} ${row.id || ""}`.trim(), qq: "", zz, pbsb: `${hex(row.pb)}${hex(row.sb)}`, id: row.id || "" };
 }
 
-/** The key the decoder gives a definition of the own file, to pick it after it was added. */
-export const customKey = (header) => `custom.csv|${header.circuit}|${header.name}|${/w/.test(header.type) ? "w" : ""}${/u/.test(header.type) ? "u" : ""}`;
+/** The key the decoder gives a definition of the scratchpad, to pick it after it was added. */
+export { mineKey as customKey } from "./setup.js";

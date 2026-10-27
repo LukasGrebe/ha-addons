@@ -1,10 +1,16 @@
-// The setup of this installation: which definitions are included, which candidate a timeline
-// row uses, and the names they get in "my config" (circuits, messages and fields renamed from the
-// upstream names to whatever is clearer for this system). Shared by the timeline and the
-// definitions tab; stored in the app's settings so that every browser sees the same setup.
+// The setup of this installation: ebusd's own choice (what it does today with its own
+// definitions) plus your changes: definitions added from other sources or the hidden ones,
+// definitions taken out, the candidate picked for a message, and the names messages, fields and
+// circuits get in your config. Stored in the app's settings so that every browser sees the same
+// setup. Shared by the bus, the scratchpad and the setup column.
 import { api, app, bus, toast } from "./app.js";
 
 export const CSV_HEADER = "type,circuit,name,comment,qq,zz,pbsb,id,*name,part,type,divisor/values,unit,comment";
+/** The scratchpad (your own definitions) is a source of definitions like the others: this is its id and its one file. */
+export const MINE = "mine";
+export const MINE_FILE = "mine.csv";
+/** The key the decoder gives a definition of the scratchpad, from the header of its line (type, circuit, name). */
+export const mineKey = (header) => `${MINE}|${MINE_FILE}|${header.circuit}|${header.name}|${/w/.test(header.type) ? "w" : ""}${/u/.test(header.type) ? "u" : ""}`;
 const NAME_CHARS = /[^A-Za-z0-9_.-]/g;
 const FIELD_COLUMNS = 8;   // type,circuit,name,comment,qq,zz,pbsb,id then groups of 6 per field
 const FIELD_GROUP = 6;
@@ -32,7 +38,8 @@ export const sanitizeName = (name) => String(name || "").trim().replace(NAME_CHA
 
 class SetupModel {
   constructor() {
-    this.data = { included: null, circuits: {}, names: {}, chosen: {} };
+    this.data = { added: [], removed: [], circuits: {}, names: {}, chosen: {} };
+    this.legacy = null;   // the whole list of included definitions as earlier versions stored it
     this.timer = null;
   }
 
@@ -40,22 +47,46 @@ class SetupModel {
   load() {
     const s = app.settings?.setup || {};
     this.data = {
-      included: Array.isArray(s.included) ? s.included.slice() : null,
+      added: Array.isArray(s.added) ? s.added.slice() : [],
+      removed: Array.isArray(s.removed) ? s.removed.slice() : [],
       circuits: { ...(s.circuits || {}) },
       names: { ...(s.names || {}) },
       chosen: { ...(s.chosen || {}) },
     };
+    this.legacy = Array.isArray(s.included) ? s.included.slice() : null;
   }
 
-  get includedSet() { return new Set(this.data.included || []); }
+  /** The source whose choice is ebusd's: the decoder's primary source. */
+  get primary() { return app.decoder?.primary ?? "release"; }
 
-  /** Whether the user made a selection yet (otherwise ebusd's own choice is the setup). */
-  get customized() { return Array.isArray(this.data.included); }
+  /** ebusd's own choice: the definitions ebusd uses today with its own definitions. */
+  baselineKeys(entries) {
+    const primary = this.primary;
+    return (entries || []).filter((e) => e.status === "active" && e.source === primary).map((e) => e.key);
+  }
 
-  /** The keys of the included definitions; without a selection, what ebusd itself uses. */
+  /** Whether you changed anything (otherwise ebusd's own choice is the setup). */
+  get customized() {
+    const d = this.data;
+    return d.added.length > 0 || d.removed.length > 0 || Object.keys(d.chosen).length > 0 || Object.keys(d.names).length > 0 || Object.keys(d.circuits).length > 0;
+  }
+
+  /** The keys of the included definitions: ebusd's choice without what you took out, plus what you added. */
   includedKeys(entries) {
-    if (this.customized) return this.data.included.slice();
-    return (entries || []).filter((e) => e.status === "active").map((e) => e.key);
+    const base = this.baselineKeys(entries);
+    if (this.legacy && entries?.length) {
+      // an earlier version stored the whole list: its additions and removals against ebusd's choice are kept
+      const wanted = new Set(this.legacy), known = new Set(entries.map((e) => e.key)), baseSet = new Set(base);
+      this.data.added = this.legacy.filter((k) => !baseSet.has(k) && known.has(k));
+      this.data.removed = base.filter((k) => !wanted.has(k));
+      this.legacy = null;
+      this.save();
+    }
+    const removed = new Set(this.data.removed);
+    const out = base.filter((k) => !removed.has(k));
+    const seen = new Set(out);
+    for (const k of this.data.added) if (!seen.has(k)) { out.push(k); seen.add(k); }
+    return out;
   }
 
   includedEntries(entries) {
@@ -65,30 +96,59 @@ class SetupModel {
 
   isIncluded(key, entries) { return new Set(this.includedKeys(entries)).has(key); }
 
-  setIncluded(keys) {
-    this.data.included = [...new Set(keys)];
+  /** Put a definition into the setup or take it out, relative to ebusd's choice. */
+  include(key, on, entries, save = true) {
+    const base = new Set(this.baselineKeys(entries));
+    const d = this.data;
+    if (on) {
+      d.removed = d.removed.filter((k) => k !== key);
+      if (!base.has(key) && !d.added.includes(key)) d.added.push(key);
+    } else {
+      d.added = d.added.filter((k) => k !== key);
+      if (base.has(key) && !d.removed.includes(key)) d.removed.push(key);
+    }
+    if (save) this.save();
+  }
+
+  /** Exactly these definitions. */
+  setIncluded(keys, entries) {
+    const want = new Set(keys);
+    const base = this.baselineKeys(entries);
+    const baseSet = new Set(base);
+    this.data.removed = base.filter((k) => !want.has(k));
+    this.data.added = [...want].filter((k) => !baseSet.has(k));
     this.save();
   }
 
-  include(key, on, entries) {
-    const keys = new Set(this.includedKeys(entries));
-    if (on) keys.add(key); else keys.delete(key);
-    this.setIncluded([...keys]);
-  }
-
-  /** Pick a candidate for a timeline row: it joins the setup, the row's other candidates leave it. */
+  /** Pick a candidate for a message: it joins the setup, the message's other candidates leave it. */
   choose(rowKey, defKey, otherKeys = [], entries = null) {
     if (defKey) this.data.chosen[rowKey] = defKey; else delete this.data.chosen[rowKey];
     if (defKey) {
-      const keys = new Set(this.includedKeys(entries));
-      for (const other of otherKeys) if (other !== defKey) keys.delete(other);
-      keys.add(defKey);
-      this.data.included = [...keys];
+      for (const other of otherKeys) if (other !== defKey) this.include(other, false, entries, false);
+      this.include(defKey, true, entries, false);
     }
     this.save();
   }
 
   chosenFor(rowKey) { return this.data.chosen[rowKey] || null; }
+
+  /** Your changes against ebusd's choice, as definitions. */
+  changes(entries) {
+    const byKey = new Map((entries || []).map((e) => [e.key, e]));
+    return {
+      added: this.data.added.map((k) => byKey.get(k)).filter(Boolean),
+      removed: this.data.removed.map((k) => byKey.get(k)).filter(Boolean),
+      renamed: (entries || []).filter((e) => this.renamed(e)),
+      circuits: Object.entries(this.data.circuits),
+      unknownAdded: this.data.added.filter((k) => !byKey.has(k)).length,
+    };
+  }
+
+  /** Back to ebusd's own choice, names included. */
+  reset() {
+    this.data = { added: [], removed: [], circuits: {}, names: {}, chosen: {} };
+    this.save();
+  }
 
   // -- names in my config -----------------------------------------------------------------------
 
@@ -143,14 +203,14 @@ class SetupModel {
     return joinCsv(cells);
   }
 
-  /** CSV files for the eBUSd app: the included definitions, one file per circuit, conditions removed. */
-  files(entries, layers = []) {
+  /** CSV files for the eBUSd app: the included definitions, one file per circuit, conditions removed, each with its source. */
+  files(entries, sourceLabels = {}) {
     const groups = {};
     const sources = new Set();
     for (const m of this.includedEntries(entries)) {
       const name = `${(this.circuitOf(m) || "misc").toLowerCase().replace(/[^a-z0-9_.-]/g, "_")}.csv`;
       (groups[name] ??= []).push(m);
-      sources.add(m.file);
+      sources.add(`${m.source}:${m.file}`);
     }
     const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
     const out = {};
@@ -161,8 +221,7 @@ class SetupModel {
       for (const m of list) {
         if (m.source !== source) {
           source = m.source;
-          const layer = layers.find((l) => l.ref === source);
-          lines.push(source === "base" ? "# from the checkout" : `# from layer ${source}${layer?.head ? ` (${layer.head.subject})` : ""}`);
+          lines.push(`# from ${sourceLabels[source] || m.sourceLabel || source}${source === MINE ? "" : ` (${source})`}`);
         }
         if (this.renamed(m)) lines.push(`# upstream name: ${m.circuit} ${m.name}${Object.keys(this.data.names[m.key]?.fields || {}).length ? ` (fields ${Object.entries(this.data.names[m.key].fields).map(([a, b]) => `${a}→${b}`).join(", ")})` : ""}`);
         lines.push(this.csvOf(m));

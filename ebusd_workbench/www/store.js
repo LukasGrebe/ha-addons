@@ -3,8 +3,9 @@
 // Telegrams are stored once per distinct master/slave pair ("line", as in ebusd's hex notation)
 // with how often and when they were seen; the runs the timeline fetched are stored as
 // occurrences pointing at a line, so repeats cost a few bytes. Every decoding of a telegram with a
-// definition is stored with the definition's key, its source (checkout or community layer) and the
-// compile it came from, so that candidates can be compared and chosen without decoding again.
+// definition is stored with the definition's key, its source (the release, a pull request, the
+// scratchpad, …) and the files it came from, so that candidates can be compared and chosen without
+// decoding again.
 const DB_NAME = "ebusd-workbench";
 const DB_VERSION = 1;
 const STORES = {

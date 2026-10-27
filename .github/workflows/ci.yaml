@@ -38,7 +38,7 @@ jobs:
           path: ./ebusd_workbench
 
       - name: Shellcheck
-        run: shellcheck ebusd/run.sh ebusd_workbench/run.sh ebusd_workbench/git-askpass.sh ebusd_workbench/tools/wasm/build.sh tests/check_translations.sh
+        run: shellcheck ebusd/run.sh ebusd_workbench/run.sh ebusd_workbench/tools/wasm/build.sh tests/check_translations.sh
 
       - name: Check translations
         run: |

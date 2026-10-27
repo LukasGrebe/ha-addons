@@ -21,7 +21,7 @@ This Add-on runs [ebusd](http://ebusd.eu), a daemon for handling communication w
 
 ## [ebusd Config Workbench](https://github.com/LukasGrebe/ha-addons/tree/main/ebusd_workbench)
 
-A companion app for working on eBUS message definitions: a timeline of the telegrams recorded by the eBUSd app next to Home Assistant entity changes, decoded live with every fitting definition (including community pull requests) so that the right one can be picked and renamed per row, a git-backed editor for the TypeSpec sources compiled to CSV in the browser, and the resulting config files and Home Assistant entities for ebusd. See its [documentation](ebusd_workbench/DOCS.md).
+A companion app that finds the message definitions which fit your eBUS devices: a timeline of the telegrams recorded by the eBUSd app next to Home Assistant entity changes, decoded live with every fitting definition from every source (ebusd's own release, the upcoming release, open pull requests, your own scratchpad, fetched from GitHub without git) so that the right one can be compared, tuned, named and picked per message, and the resulting config files and Home Assistant entities for ebusd. See its [documentation](ebusd_workbench/DOCS.md).
 
 
 # Thanks ...

@@ -4,19 +4,18 @@ import json
 import os
 import threading
 
+from .sources import SourceError, parse_ref
+
 DEFAULTS = {
     "entities": [],               # Home Assistant entities whose state changes are logged
     "id_bytes": 1,                # message ID length (data bytes after PBSB) used to group telegrams
     "id_overrides": {"b509": 3, "b524": 6},  # per PBSB or ZZ+PBSB: Vaillant register access carries a longer ID
     "id_rules": {},               # per message: {"zzpbsb:prefix": ID length}: rows split or combined at a byte in the timeline
-    "compile": {"entry": "src/main.tsp", "translations": ""},
     "deploy_subdir": "",
-    "test_files": [],             # compiled files to load when testing; empty: all
-    "setup": {},                  # the definitions chosen for this installation (definitions tab)
-    "layers": [],                 # pull requests / branches compiled on top of the checkout: [{ref}]
-    "upstream_url": "https://github.com/john30/ebusd-configuration.git",  # where the pull requests live
+    "setup": {},                  # the definitions chosen for this installation, their names and the choices per row
+    "sources": [],                # where definitions come from: [{id: "release" | "next" | "pr/660" | "gh/owner/repo#branch", enabled}]
     "evidence_profile": "",       # ebus-evidence profile YAML last imported
-    "custom": "",                 # own definitions (ebusd CSV lines) decoded over the recording like any other candidate
+    "custom": "",                 # the scratchpad: own definitions (ebusd CSV lines) decoded over the recording like any other source
     "own_address": "31",          # ebusd's own address on this bus (--address), for raw logs and evidence checks
     "ui": {},
 }
@@ -96,17 +95,8 @@ class Settings:
                         raise ValueError(f"invalid ID rule {rule} (zzpbsb:prefix in hex)")
                     rules[f"{command}:{prefix}"] = max(0, min(16, int(length)))
                 base[key] = rules
-            elif key == "compile":
-                if not isinstance(value, dict):
-                    raise ValueError("compile must be an object")
-                base[key] = {"entry": str(value.get("entry", base[key]["entry"]))[:500],
-                             "translations": str(value.get("translations", base[key]["translations"]))[:500]}
             elif key == "deploy_subdir":
                 base[key] = str(value).strip("/ ")[:200]
-            elif key == "test_files":
-                if not isinstance(value, list):
-                    raise ValueError("test_files must be a list")
-                base[key] = [str(v)[:500] for v in value][:1000]
             elif key == "setup":
                 if not isinstance(value, dict):
                     raise ValueError("setup must be an object")
@@ -122,24 +112,24 @@ class Settings:
                 if len(address) != 2 or any(c not in "0123456789abcdef" for c in address):
                     raise ValueError("own_address must be a hex byte, e.g. 31")
                 base[key] = address
-            elif key == "layers":
+            elif key == "sources":
                 if not isinstance(value, list):
-                    raise ValueError("layers must be a list")
+                    raise ValueError("sources must be a list")
                 result, seen = [], set()
                 for item in value[:50]:
-                    ref = str(item.get("ref") if isinstance(item, dict) else item).strip()[:120]
-                    if ref and ref not in seen:
-                        seen.add(ref)
-                        result.append({"ref": ref})
+                    spec = item.get("id") if isinstance(item, dict) else item
+                    try:
+                        source_id = parse_ref(spec)["id"]
+                    except SourceError as err:
+                        raise ValueError(str(err))
+                    if source_id in seen:
+                        continue
+                    seen.add(source_id)
+                    result.append({"id": source_id, "enabled": not (isinstance(item, dict) and item.get("enabled") is False)})
                 base[key] = result
-            elif key == "upstream_url":
-                url = str(value).strip()[:500]
-                if url and not url.startswith(("https://", "http://", "git@", "ssh://")):
-                    raise ValueError("upstream_url must be a git URL")
-                base[key] = url
             elif key == "ui":
                 if not isinstance(value, dict):
                     raise ValueError("ui must be an object")
                 base[key] = value if len(json.dumps(value)) < 20000 else base[key]
-            # unknown keys are ignored
+            # unknown keys (also the ones of earlier versions: compile, layers, test_files, upstream_url) are ignored
         return base

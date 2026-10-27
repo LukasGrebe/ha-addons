@@ -5,28 +5,16 @@ configuration:
       Das SQLite-Telegrammprotokoll der eBUSd-App (deren Option "SQLite telegram log").
       Beide Apps müssen denselben Pfad verwenden, z. B. /share/ebusd/telegrams.db. Von der
       Workbench aufgezeichnete Zustandsänderungen von Home-Assistant-Entitäten werden in
-      derselben Datei gespeichert (Tabelle "event").
+      derselben Datei gespeichert (Tabelle "ha_state").
   deploy_path:
-    name: Zielordner für kompilierte CSV-Dateien
+    name: Zielordner für die CSV-Dateien deiner Konfiguration
     description: >
-      Ordner, in den die kompilierten und getesteten CSV-Nachrichtendefinitionen geschrieben
-      werden, z. B. /share/ebusd/config. In der eBUSd-App mit --configpath=/share/ebusd/config
+      Ordner, in den die Nachrichtendefinitionen deiner Konfiguration geschrieben werden,
+      z. B. /share/ebusd/config. In der eBUSd-App mit --configpath=/share/ebusd/config
       verwenden.
-  repo_url:
-    name: Git-Repository der Nachrichtendefinitionen
+  language:
+    name: Sprache der Definitionen
     description: >
-      HTTPS-URL des Git-Repositorys mit den TypeSpec-Quellen (.tsp), z. B. ein Fork von
-      https://github.com/john30/ebusd-configuration.git. Es wird beim ersten Start in den
-      App-Konfigurationsordner geklont; leer lassen, um aus der Workbench-Oberfläche zu klonen.
-  git_user_name:
-    name: Git-Benutzername
-    description: Name, der als Autor der in der Workbench erstellten Commits verwendet wird.
-  git_user_email:
-    name: Git-E-Mail-Adresse
-    description: E-Mail-Adresse, die als Autor der in der Workbench erstellten Commits verwendet wird.
-  git_token:
-    name: Git-Zugriffstoken
-    description: >
-      Persönliches Zugriffstoken zum Pushen in das Repository über HTTPS (z. B. ein
-      GitHub-Token mit Lese- und Schreibrecht auf "Contents" des Repositorys). Nur für Pull
-      und Push privater Repositorys und für Push allgemein nötig.
+      Sprache der Feldnamen und Kommentare in den Definitionen (der Ordner "en" oder "de"
+      von ebus.github.io). Dieselbe wie in der eBUSd-App verwenden (deren --configlang,
+      ohne Angabe Englisch).

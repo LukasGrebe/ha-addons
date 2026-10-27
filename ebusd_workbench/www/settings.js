@@ -2,8 +2,10 @@
 import { api, app, append, bus, fmt, h, toast, refreshStatus } from "./app.js";
 
 export class SettingsView {
-  constructor(root) {
+  /** @param options {entities, grouping, info}: which panels to show (all by default) */
+  constructor(root, options = {}) {
     this.root = root;
+    this.options = { entities: true, grouping: true, info: true, ...options };
     this.build();
     bus.on("status", () => this.renderInfo());
   }
@@ -15,14 +17,15 @@ export class SettingsView {
     el.entities = h("div", { class: "panel" });
     el.grouping = h("div", { class: "panel" });
     el.info = h("div", { class: "panel" });
-    this.root.appendChild(h("div", { class: "settings" }, el.entities, el.grouping, el.info));
+    const o = this.options;
+    this.root.appendChild(h("div", { class: "settings" }, o.entities ? el.entities : null, o.grouping ? el.grouping : null, o.info ? el.info : null));
     this.render();
   }
 
   render() {
-    this.renderEntities();
-    this.renderGrouping();
-    this.renderInfo();
+    if (this.options.entities) this.renderEntities();
+    if (this.options.grouping) this.renderGrouping();
+    if (this.options.info) this.renderInfo();
   }
 
   async saveSettings(changes) {
@@ -106,16 +109,16 @@ export class SettingsView {
   renderInfo() {
     const box = this.el.info;
     const s = app.status;
-    if (!s) return;
+    if (!s || !this.options.info) return;
     box.replaceChildren(h("h2", {}, "About"),
       h("dl", { class: "kv" },
         h("dt", {}, "version"), h("dd", {}, s.version),
         h("dt", {}, "database"), h("dd", {}, `${s.db.path} (${s.db.exists ? `${fmt.bytes(s.db.size)}, ${fmt.count(s.db.telegrams)} telegrams, ${fmt.count(s.db.events)} events` : "missing"})`),
         h("dt", {}, "recorded"), h("dd", {}, s.db.first_ms ? `${fmt.dateTime(s.db.first_ms)} – ${fmt.dateTime(s.db.last_ms)}` : "nothing yet"),
-        h("dt", {}, "repository"), h("dd", {}, `${s.repo.dir}${s.repo.remote ? ` (${s.repo.remote})` : ""}`),
+        h("dt", {}, "sources"), h("dd", {}, `${s.sources?.dir || ""} (${(s.sources?.sources || []).map((x) => x.id).join(", ") || "none"}; language ${s.sources?.language || "en"})`),
         h("dt", {}, "deploy folder"), h("dd", {}, s.deploy_dir || ""),
         h("dt", {}, "uptime"), h("dd", {}, fmt.duration(s.uptime_s * 1000))),
-      h("p", { class: "hint" }, "Compiling TypeSpec and decoding telegrams run in this browser tab, the app on the device only serves files and the database. ",
+      h("p", { class: "hint" }, "Compiling pull requests and decoding telegrams run in this browser tab; the app on the device serves the database and fetches the sources from GitHub. ",
         h("a", { href: "https://github.com/LukasGrebe/ha-addons/blob/main/ebusd_workbench/DOCS.md", target: "_blank" }, "Documentation")));
   }
 }

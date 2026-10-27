@@ -1,0 +1,5 @@
+{
+  "type": "module",
+  "private": true,
+  "description": "The browser modules of the ebusd Config Workbench are ES modules; this lets Node run the tests on them (tests/unit/workbench_js.test.mjs)."
+}

@@ -12,7 +12,8 @@ import urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "ebusd_workbench"))
 import workbench_fixtures as fx  # noqa: E402
 from workbench.db import Database  # noqa: E402
-from workbench.gitrepo import Repo  # noqa: E402
+from workbench.sources import Sources  # noqa: E402
+from test_workbench_sources import ROUTES, Fetcher  # noqa: E402
 from workbench.server import Context, make_server  # noqa: E402
 from workbench.settings import Settings  # noqa: E402
 
@@ -33,7 +34,9 @@ class Api(unittest.TestCase):
         os.makedirs(www)
         with open(os.path.join(www, "index.html"), "w") as f:
             f.write("<!doctype html><html><head><title>t</title></head><body>hi</body></html>")
-        ctx = Context(db, Settings(os.path.join(cls.tmp.name, "settings.json")), Repo(os.path.join(cls.tmp.name, "repo")),
+        settings = Settings(os.path.join(cls.tmp.name, "settings.json"))
+        cls.fetch = Fetcher(ROUTES)
+        ctx = Context(db, settings, Sources(cls.tmp.name, settings, fetch=cls.fetch),
                       deploy_dir=os.path.join(cls.tmp.name, "deploy"), www_dir=www)
         cls.server_ctx = ctx
         cls.server = make_server(ctx, "127.0.0.1", 0)
@@ -68,7 +71,7 @@ class Api(unittest.TestCase):
         status = self.get_json("/api/status")
         self.assertEqual(status["db"]["schema_version"], 2)
         self.assertGreater(status["db"]["telegrams"], 100)
-        self.assertFalse(status["repo"]["exists"])
+        self.assertIn("sources", status["sources"])
         code, headers, body = self.request("GET", "/", headers={"X-Ingress-Path": "/api/hassio_ingress/tok"})
         self.assertEqual(code, 200)
         self.assertIn(b'<base href="/api/hassio_ingress/tok/">', body)
@@ -127,10 +130,10 @@ class Api(unittest.TestCase):
         for note in self.get_json("/api/notes?limit=50")["notes"]:
             if note["message"] in ("Dampf vom Abtauen", None):
                 self.request("DELETE", f"/api/events/{note['id']}")
-        code, _, body = self.request("PUT", "/api/settings", {"id_overrides": {"08b509": 5}, "layers": ["660", {"ref": "upstream/master"}]})
+        code, _, body = self.request("PUT", "/api/settings", {"id_overrides": {"08b509": 5}, "sources": ["660", {"id": "next", "enabled": False}]})
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(body)["id_overrides"], {"08b509": 5})
-        self.assertEqual(json.loads(body)["layers"], [{"ref": "660"}, {"ref": "upstream/master"}])
+        self.assertEqual(json.loads(body)["sources"], [{"id": "pr/660", "enabled": True}, {"id": "next", "enabled": False}])
         self.assertEqual(self.request("PUT", "/api/settings", {"entities": "x"})[0], 400)
 
     def test_rawlog_export(self):
@@ -173,13 +176,29 @@ class Api(unittest.TestCase):
         finally:
             ctx.db.local.cancel = None
 
-    def test_repo_busy_state(self):
+    def test_sources(self):
         status = self.get_json("/api/status")
-        self.assertIn("busy", status["repo"])
-        self.assertIsNone(status["repo"]["busy"])
+        self.assertIn("sources", status["sources"])
+        self.assertEqual(self.request("POST", "/api/sources", {"ref": "ssh://x"})[0], 400)
+        code, _, body = self.request("POST", "/api/sources", {"ref": "660", "background": False})
+        self.assertEqual(code, 200, body)
+        added = json.loads(body)
+        self.assertEqual((added["id"], added["state"], added["tree"], added["title"]), ("pr/660", "ready", "tsp", "vaillant: consolidate HW5103"))
+        files = self.get_json("/api/sources/files?id=pr%2F660")
+        self.assertEqual((files["kind"], sorted(files["files"])), ("tsp", ["de.yaml", "main.tsp", "shared/x_inc.tsp", "vaillant/08.hmu.tsp", "vaillant/15.700.tsp", "vaillant/15.720.tsp", "vaillant/15.730.tsp", "vaillant/shared/x_inc.tsp"]))
+        self.assertEqual(self.request("GET", "/api/sources/files?id=release")[0], 400)
+        code, _, body = self.request("PUT", "/api/sources/enabled", {"id": "pr/660", "enabled": False})
+        self.assertEqual(code, 200, body)
+        self.assertFalse(json.loads(body)["enabled"])
+        self.assertIn("pr/660", [s["id"] for s in self.get_json("/api/sources")["sources"]])
+        self.assertEqual([p["number"] for p in self.get_json("/api/sources/suggest")["pulls"]], [702, 701])
+        code, _, body = self.request("POST", "/api/sources/refresh", {"id": "pr/660", "background": False})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(self.request("DELETE", "/api/sources?id=pr%2F660")[0], 200)
+        self.assertNotIn("pr/660", [s["id"] for s in self.get_json("/api/sources")["sources"]])
 
-    def test_repo_and_deploy(self):
-        self.assertEqual(self.request("GET", "/api/repo/file?path=x")[0], 400)
+    def test_deploy(self):
+        self.assertEqual(self.request("GET", "/api/repo/file?path=x")[0], 404)
         code, _, body = self.request("POST", "/api/deploy", {"files": {"a.csv": "type,circuit\n", "sub/b.inc": "x\n"}})
         self.assertEqual(code, 200, body)
         self.assertEqual(json.loads(body)["written"], ["a.csv", "sub/b.inc"])

@@ -9,10 +9,10 @@ import threading
 
 from . import __version__
 from .db import Database
-from .gitrepo import Repo, RepoError
 from .ha import HAClient
 from .server import Context, make_server
 from .settings import Settings
+from .sources import Sources
 
 log = logging.getLogger("workbench")
 
@@ -23,13 +23,13 @@ def parse_args(argv=None):
     parser.add_argument("--port", type=int, default=int(env("WORKBENCH_PORT", "8099")))
     parser.add_argument("--bind", default=env("WORKBENCH_BIND", "0.0.0.0"))
     parser.add_argument("--db", default=env("WORKBENCH_DB", "/share/ebusd/telegrams.db"), help="SQLite telegram log")
-    parser.add_argument("--repo", default=env("WORKBENCH_REPO_DIR", "/config/repo"), help="git checkout of the definitions")
-    parser.add_argument("--repo-url", default=env("WORKBENCH_REPO_URL", ""), help="clone this URL if the checkout is missing")
-    parser.add_argument("--deploy", default=env("WORKBENCH_DEPLOY_PATH", "/share/ebusd/config"), help="folder for compiled CSV files")
-    parser.add_argument("--data", default=env("WORKBENCH_DATA_DIR", "/data"), help="folder for settings.json")
+    parser.add_argument("--deploy", default=env("WORKBENCH_DEPLOY_PATH", "/share/ebusd/config"), help="folder for the CSV files of the setup")
+    parser.add_argument("--data", default=env("WORKBENCH_DATA_DIR", "/data"), help="folder for settings.json and the fetched sources")
+    parser.add_argument("--language", default=env("WORKBENCH_LANGUAGE", "en"), help="language of the definitions (en, de)")
     parser.add_argument("--www", default=env("WORKBENCH_WWW", os.path.join(os.path.dirname(__file__), "..", "www")))
     parser.add_argument("--allow-any", action="store_true", help="accept requests from any client (development)")
     parser.add_argument("--no-ha", action="store_true", help="do not connect to Home Assistant")
+    parser.add_argument("--no-fetch", action="store_true", help="do not fetch the default sources at start (development, tests)")
     parser.add_argument("--log-level", default=env("WORKBENCH_LOG_LEVEL", "info"))
     return parser.parse_args(argv)
 
@@ -46,26 +46,20 @@ def main(argv=None):
     except OSError as err:
         log.error("unable to open the database %s: %s", args.db, err)
     settings = Settings(os.path.join(args.data, "settings.json"))
-    repo = Repo(args.repo)
+    sources = Sources(args.data, settings, language=args.language)
     ha = None
     if not args.no_ha:
         ha = HAClient(db, settings)
         ha.start()
-    if args.repo_url and not repo.exists():
-        def clone():
-            try:
-                log.info("cloning %s into %s", args.repo_url, args.repo)
-                repo.clone(args.repo_url)
-                log.info("cloned %s", args.repo_url)
-            except RepoError as err:
-                log.error("unable to clone %s: %s", args.repo_url, err)
-        threading.Thread(target=clone, name="clone", daemon=True).start()
+    if not args.no_fetch:
+        # the first start: ebusd's own definitions and the upcoming release, about a megabyte, in the background
+        sources.ensure_defaults()
 
-    ctx = Context(db, settings, repo, ha=ha, deploy_dir=args.deploy, www_dir=os.path.abspath(args.www),
+    ctx = Context(db, settings, sources, ha=ha, deploy_dir=args.deploy, www_dir=os.path.abspath(args.www),
                   allow_any=args.allow_any)
     server = make_server(ctx, args.bind, args.port)
-    log.info("listening on %s:%d (database %s, repository %s, deploy folder %s)", args.bind, args.port, args.db,
-             args.repo, args.deploy)
+    log.info("listening on %s:%d (database %s, sources in %s, deploy folder %s)", args.bind, args.port, args.db,
+             sources.dir, args.deploy)
 
     def stop(*_):
         log.info("shutting down")

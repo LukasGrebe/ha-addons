@@ -7,7 +7,7 @@ const hex2 = (n) => n.toString(16).padStart(2, "0");
 /** The query for the series of a timeline row. */
 export function seriesQuery(row, fromMs, toMs, max = 20000) {
   const a = (v) => (v === null || v === undefined ? "--" : hex2(v));
-  return `api/telegrams/series?from=${Math.floor(fromMs)}&to=${Math.ceil(toMs)}&qq=${a(row.qq)}&zz=${a(row.zz)}&pb=${a(row.pb)}&sb=${a(row.sb)}&id=${encodeURIComponent(row.id || "")}&max=${max}`;
+  return `api/telegrams/series?from=${Math.floor(fromMs)}&to=${Math.ceil(toMs)}&qq=${row.anyQq ? "*" : a(row.qq)}&zz=${a(row.zz)}&pb=${a(row.pb)}&sb=${a(row.sb)}&id=${encodeURIComponent(row.id || "")}&max=${max}`;
 }
 
 /** The field names a definition decoded over a series (the first telegram it decoded tells). */

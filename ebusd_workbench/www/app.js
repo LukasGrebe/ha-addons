@@ -1,9 +1,17 @@
-// ebusd Config Workbench UI: shell, API helper, status bar, tabs.
+// ebusd Config Workbench UI: one page, no modes. The bus (recorded telegrams on a timeline) on the
+// left, the scratchpad below it (every definition that fits the selected message, from every
+// source, to compare, tune and pick), the setup of this installation on the right (what is
+// chosen, how it looks in Home Assistant, save for ebusd), the sources at the top and the less
+// frequent things (settings, research) at the bottom. This module is the shell: API helper,
+// status bar with the activity of the app, the views and the event bus between them.
 import { Timeline } from "./timeline.js";
-import { Definitions } from "./definitions.js";
-import { SettingsView } from "./settings.js";
+import { MessagesView } from "./messages.js";
 import { Decoder } from "./decoder.js";
 import { setup } from "./setup.js";
+import { Builder, SourcesStrip } from "./sources.js";
+import { Scratchpad } from "./scratchpad.js";
+import { SetupPanel } from "./setup-panel.js";
+import { Extras } from "./extras.js";
 
 // All URLs are relative: the app is served through Home Assistant ingress under a prefix.
 export const api = {
@@ -106,18 +114,51 @@ export const fmt = {
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} kB`;
     return `${(n / 1024 / 1024).toFixed(1)} MB`;
   },
-  count: (n) => n.toLocaleString(),
+  count: (n) => Number(n || 0).toLocaleString(),
 };
 
-// a tiny event bus for the views (timeline <-> definitions)
+// a tiny event bus for the views (bus <-> scratchpad <-> setup)
 export const bus = {
   handlers: {},
   on(name, fn) { (this.handlers[name] ??= []).push(fn); },
   emit(name, data) { for (const fn of this.handlers[name] ?? []) fn(data); },
 };
 
-export const app = { status: null, settings: null, views: {}, decoder: null };
+export const app = { status: null, settings: null, views: {}, decoder: null, builder: null, compileState: null, api };
 window.workbench = app;  // for debugging and tests
+
+/** What the app is busy with, in one place: fetching sources, compiling, reading the recording, decoding, loading the window. */
+export function activity() {
+  const parts = [];
+  let fraction = null;
+  for (const s of app.status?.sources?.sources || []) if (s.busy) parts.push(`${s.busy.what}… ${fmt.duration(Date.now() - s.busy.since * 1000)}`);
+  if (app.compileState?.busy) parts.push(app.compileState.text);
+  const st = app.decoder?.status();
+  if (st?.progress) { parts.push(st.progress); fraction = st.fraction; }
+  const tl = app.views.timeline;
+  if (tl?.loading) parts.push(`loading telegrams ${fmt.time(tl.loading.from).slice(0, 5)}–${fmt.time(tl.loading.to).slice(0, 5)}`);
+  const error = st?.error || app.compileState?.error || null;
+  return { parts, fraction, st, error };
+}
+
+export function updateActivity() {
+  const el = document.getElementById("activity");
+  if (!el) return;
+  const { parts, fraction, st, error } = activity();
+  el.replaceChildren();
+  el.className = "activity";
+  if (parts.length) {
+    el.classList.add("busy");
+    const bar = h("div", { class: `progress ${fraction === null || fraction === undefined ? "indeterminate" : ""}` }, h("div", { style: fraction === null || fraction === undefined ? "" : `width:${Math.max(3, Math.round(fraction * 100))}%` }));
+    append(el, h("span", { class: "spinner" }), h("span", { class: "text" }, parts.join(" · ")), bar);
+  } else if (error) {
+    el.classList.add("err");
+    append(el, h("span", { class: "text", title: error }, error));
+  } else if (st?.build) {
+    append(el, h("span", { class: "text muted", title: `${st.build.summary}\n${st.decoded} of ${st.telegrams} distinct telegrams decoded with every source; store: ${st.store}` },
+      `${fmt.count(st.definitions)} definitions fit your bus · ${fmt.count(st.known)} of ${fmt.count(st.telegrams)} telegrams known to ebusd`));
+  }
+}
 
 function updateStatusBar() {
   const s = app.status;
@@ -127,14 +168,13 @@ function updateStatusBar() {
   const db = s.db;
   const dbState = !db.exists ? "err" : db.has_telegram_table ? "ok" : "warn";
   const dbText = !db.exists ? "no database" : db.has_telegram_table ? `${fmt.count(db.telegrams)} telegrams` : "no telegrams yet";
-  bar.appendChild(h("span", { class: `chip ${dbState}`, title: `${db.path}\n${fmt.bytes(db.size)}` }, dbText));
+  bar.appendChild(h("span", { class: `chip ${dbState}`, title: `${db.path}\n${fmt.bytes(db.size)}${db.first_ms ? `\nrecorded ${fmt.dateTime(db.first_ms)} – ${fmt.dateTime(db.last_ms)}` : ""}` }, dbText));
   const ha = s.ha;
   const haState = !ha.configured ? "warn" : ha.connected ? "ok" : "err";
   const haText = !ha.configured ? "HA: not available" : ha.connected ? `HA: ${ha.entities.length} entities` : "HA: disconnected";
-  bar.appendChild(h("span", { class: `chip ${haState}`, title: ha.last_error || "" }, haText));
-  const repo = s.repo;
-  const repoText = repo.busy ? `${repo.busy.what}…` : !repo.exists ? "no repository" : `${repo.branch || "?"}${repo.changes?.length ? ` · ${repo.changes.length} changed` : ""}${repo.ahead ? ` ↑${repo.ahead}` : ""}${repo.behind ? ` ↓${repo.behind}` : ""}`;
-  bar.appendChild(h("span", { class: `chip ${repo.busy ? "busy" : repo.exists ? (repo.changes?.length ? "warn" : "ok") : ""}`, title: repo.dir || "" }, repoText));
+  bar.appendChild(h("span", { class: `chip ${haState}`, title: ha.last_error || "state changes of the entities picked in the settings are drawn as flags in the events lane" }, haText));
+  bar.appendChild(h("a", { class: "help", href: "https://github.com/LukasGrebe/ha-addons/blob/main/ebusd_workbench/DOCS.md", target: "_blank", rel: "noopener", title: "documentation" }, "?"));
+  updateActivity();
 }
 
 export async function refreshStatus() {
@@ -149,31 +189,65 @@ export async function refreshStatus() {
   return app.status;
 }
 
-function showTab(name) {
-  for (const button of document.querySelectorAll("#tabs button")) button.classList.toggle("active", button.dataset.tab === name);
-  for (const section of document.querySelectorAll("main .tab")) section.classList.toggle("active", section.id === `tab-${name}`);
-  if (location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
-  app.views[name]?.onShow?.();
+/** The two views of the bus: the list of messages (the default) and the timeline. The choice is remembered. */
+function bindBusViews() {
+  const buttons = document.querySelectorAll("#bus-views button");
+  const show = (name) => {
+    for (const b of buttons) b.classList.toggle("active", b.dataset.view === name);
+    document.getElementById("messages").style.display = name === "table" ? "" : "none";
+    document.getElementById("timeline").style.display = name === "timeline" ? "" : "none";
+    try { localStorage.setItem("workbench.busView", name); } catch { /* ignore */ }
+    if (name === "timeline") app.views.timeline?.onShow?.(); else app.views.messages?.schedule?.();
+  };
+  for (const b of buttons) b.addEventListener("click", () => show(b.dataset.view));
+  let saved = "table";
+  try { saved = localStorage.getItem("workbench.busView") || "table"; } catch { /* ignore */ }
+  show(saved === "timeline" ? "timeline" : "table");
+}
+
+/** The handle between the bus and the scratchpad: drag it to give either more room; the height is remembered. */
+function bindPadResize() {
+  const pad = document.getElementById("pad"), handle = document.getElementById("pad-handle"), left = handle.parentElement;
+  try { const saved = Number(localStorage.getItem("workbench.padHeight")); if (saved >= 120) pad.style.setProperty("--pad-h", `${saved}px`); } catch { /* storage may be unavailable */ }
+  let drag = null;
+  handle.addEventListener("mousedown", (e) => { drag = { y: e.clientY, h: pad.offsetHeight }; e.preventDefault(); });
+  window.addEventListener("mousemove", (e) => {
+    if (!drag) return;
+    const max = Math.max(160, left.clientHeight - 160);
+    const height = Math.round(Math.max(120, Math.min(max, drag.h + drag.y - e.clientY)));
+    pad.style.setProperty("--pad-h", `${height}px`);
+    drag.last = height;
+    app.views.timeline?.render();
+  });
+  window.addEventListener("mouseup", () => {
+    if (drag?.last) { try { localStorage.setItem("workbench.padHeight", String(drag.last)); } catch { /* ignore */ } }
+    drag = null;
+  });
 }
 
 async function main() {
   await refreshStatus();
   setup.load();
   app.decoder = new Decoder();
-  app.views.timeline = new Timeline(document.getElementById("tab-timeline"));
-  app.views.definitions = new Definitions(document.getElementById("tab-definitions"));
-  app.views.settings = new SettingsView(document.getElementById("tab-settings"));
-  document.getElementById("tabs").addEventListener("click", (e) => {
-    const button = e.target.closest("button[data-tab]");
-    if (button) showTab(button.dataset.tab);
-  });
-  bus.on("show-tab", showTab);
-  showTab(["timeline", "definitions", "settings"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "timeline");
-  const poll = async () => { await refreshStatus(); setTimeout(poll, app.status?.repo?.busy ? 2000 : 10_000); };
+  app.builder = new Builder();
+  app.views.sources = new SourcesStrip(document.getElementById("sources"));
+  app.views.messages = new MessagesView(document.getElementById("messages"));
+  app.views.timeline = new Timeline(document.getElementById("timeline"));
+  app.views.pad = new Scratchpad(document.getElementById("pad"), app.views.messages);
+  bindBusViews();
+  app.views.setup = new SetupPanel(document.getElementById("setup"));
+  app.views.extras = new Extras(document.getElementById("extras"));
+  bindPadResize();
+  bus.on("status", (status) => { setup.load(); app.builder.onStatus(status); updateActivity(); });
+  bus.on("compile-state", (state) => { app.compileState = state; updateActivity(); });
+  bus.on("decodes-changed", () => updateActivity());
+  bus.on("activity", () => updateActivity());
+  const poll = async () => { await refreshStatus(); setTimeout(poll, (app.status?.sources?.sources || []).some((s) => s.busy) ? 2000 : 10_000); };
   setTimeout(poll, 10_000);
   // the browser-side copy of the recording and its decodings; the views listen to "decodes-changed"
-  app.decoder.init().catch((err) => { console.error(err); toast(`store failed: ${err.message}`, "err", 8000); });
+  app.decoder.init().then(() => app.builder.onStatus(app.status)).catch((err) => { console.error(err); toast(`store failed: ${err.message}`, "err", 8000); });
+  setInterval(updateActivity, 1000);
 }
 
 // the page (not a test importing the modules in Node)
-if (document.getElementById("tabs")) main().catch((err) => { console.error(err); toast(`failed to start: ${err.message}`, "err", 10000); });
+if (document.getElementById("bus")) main().catch((err) => { console.error(err); toast(`failed to start: ${err.message}`, "err", 10000); });

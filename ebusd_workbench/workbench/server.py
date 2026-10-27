@@ -22,7 +22,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import __version__, deploy
 from .db import NO_VALUE
-from .gitrepo import RepoError, safe_relative
+from .paths import PathError, safe_relative
+from .sources import SourceError
 
 log = logging.getLogger("http")
 
@@ -54,10 +55,10 @@ class ApiError(Exception):
 
 
 class Context:
-    def __init__(self, db, settings, repo, ha=None, deploy_dir=None, www_dir=None, allow_any=False):
+    def __init__(self, db, settings, sources, ha=None, deploy_dir=None, www_dir=None, allow_any=False):
         self.db = db
         self.settings = settings
-        self.repo = repo
+        self.sources = sources
         self.ha = ha
         self.deploy_dir = deploy_dir
         self.www_dir = www_dir
@@ -97,7 +98,7 @@ def api_status(ctx, req):
         "uptime_s": int(time.time() - ctx.started),
         "db": ctx.db.info(),
         "ha": ctx.ha.status() if ctx.ha else {"configured": False, "connected": False, "entities": []},
-        "repo": ctx.repo.status(),
+        "sources": ctx.sources.status(),
         "deploy_dir": ctx.deploy_dir,
         "settings": ctx.settings.as_dict(),
     }
@@ -148,7 +149,8 @@ def api_telegrams(ctx, req):
     from_ms, to_ms = window(req.query)
     q = req.query
     def addr(name):
-        return NO_VALUE if q.get(name) == "--" else int_or_none(q.get(name), 16)
+        value = q.get(name)
+        return NO_VALUE if value == "--" else None if value in (None, "", "*") else int(value, 16)
 
     return {"telegrams": ctx.db.telegrams(
         from_ms, to_ms, qq=addr("qq"), zz=addr("zz"), pb=addr("pb"), sb=addr("sb"), id_prefix=q.get("id") or None,
@@ -162,7 +164,8 @@ def api_series(ctx, req):
     from_ms, to_ms = window(q, 31 * 86400_000)
 
     def addr(name):
-        return NO_VALUE if q.get(name) == "--" else int_or_none(q.get(name), 16)
+        value = q.get(name)
+        return NO_VALUE if value == "--" else None if value in (None, "", "*") else int(value, 16)
 
     result = ctx.db.series(from_ms, to_ms, qq=addr("qq"), zz=addr("zz"), pb=addr("pb"), sb=addr("sb"), id_prefix=q.get("id") or None,
                            max_points=int(q.get("max", 20000)))
@@ -245,126 +248,43 @@ def api_ha_entities(ctx, req):
     return {"entities": states[:200], "total": len(states)}
 
 
-@route("GET", "/api/repo")
-def api_repo(ctx, req):
-    return ctx.repo.status()
+@route("GET", "/api/sources")
+def api_sources(ctx, req):
+    return ctx.sources.status()
 
 
-@route("POST", "/api/repo/clone")
-def api_repo_clone(ctx, req):
+@route("POST", "/api/sources")
+def api_sources_add(ctx, req):
+    """Add a source (release, next, a pull request number, owner/repo#branch) and fetch it in the background."""
+    return ctx.sources.add(req.json().get("ref", ""), background=req.json().get("background", True) is not False)
+
+
+@route("GET", "/api/sources/suggest")
+def api_sources_suggest(ctx, req):
+    """The open pull requests of the upstream repository, to pick sources from."""
+    return ctx.sources.suggest()
+
+
+@route("GET", "/api/sources/files")
+def api_sources_files(ctx, req):
+    """The definition files of a fetched source: CSV ready for ebusd, or TypeSpec to compile in the browser."""
+    return ctx.sources.files(req.query.get("id", ""))
+
+
+@route("POST", "/api/sources/refresh")
+def api_sources_refresh(ctx, req):
+    return ctx.sources.refresh(req.json().get("id", ""), background=req.json().get("background", True) is not False)
+
+
+@route("PUT", "/api/sources/enabled")
+def api_sources_enabled(ctx, req):
     body = req.json()
-    if body.get("background"):
-        ctx.repo.clone_background(body.get("url", ""), body.get("branch") or None)
-    else:
-        ctx.repo.clone(body.get("url", ""), body.get("branch") or None)
-    return ctx.repo.status()
+    return ctx.sources.set_enabled(body.get("id", ""), bool(body.get("enabled")))
 
 
-@route("POST", "/api/repo/init")
-def api_repo_init(ctx, req):
-    ctx.repo.init()
-    return ctx.repo.status()
-
-
-@route("POST", "/api/repo/(?P<action>fetch|pull|push)")
-def api_repo_remote(ctx, req):
-    return getattr(ctx.repo, req.params["action"])()
-
-
-@route("POST", "/api/repo/commit")
-def api_repo_commit(ctx, req):
-    body = req.json()
-    return ctx.repo.commit(body.get("message", ""), body.get("paths") or None)
-
-
-@route("POST", "/api/repo/discard")
-def api_repo_discard(ctx, req):
-    return ctx.repo.discard(req.json().get("path", ""))
-
-
-@route("POST", "/api/repo/checkout")
-def api_repo_checkout(ctx, req):
-    body = req.json()
-    return ctx.repo.checkout(body.get("branch", ""), bool(body.get("create")))
-
-
-@route("GET", "/api/repo/branches")
-def api_repo_branches(ctx, req):
-    return {"branches": ctx.repo.branches()}
-
-
-@route("GET", "/api/repo/log")
-def api_repo_log(ctx, req):
-    return {"log": ctx.repo.log(int(req.query.get("limit", 30)))}
-
-
-@route("GET", "/api/repo/diff")
-def api_repo_diff(ctx, req):
-    return {"diff": ctx.repo.diff(req.query.get("path") or None, req.query.get("staged") == "1")}
-
-
-@route("GET", "/api/repo/tree")
-def api_repo_tree(ctx, req):
-    if not ctx.repo.exists():
-        return {"entries": []}
-    return {"entries": ctx.repo.tree()}
-
-
-@route("GET", "/api/repo/file")
-def api_repo_file(ctx, req):
-    return {"path": req.query.get("path"), "content": ctx.repo.read_file(req.query.get("path", ""))}
-
-
-@route("PUT", "/api/repo/file")
-def api_repo_file_put(ctx, req):
-    ctx.repo.write_file(req.query.get("path", ""), req.text())
-    return {"ok": True}
-
-
-@route("DELETE", "/api/repo/file")
-def api_repo_file_delete(ctx, req):
-    ctx.repo.delete_file(req.query.get("path", ""))
-    return {"ok": True}
-
-
-@route("GET", "/api/repo/sources")
-def api_repo_sources(ctx, req):
-    layers = [l for l in (req.query.get("layers") or "").split(",") if l]
-    if not layers:
-        return {"files": ctx.repo.sources(req.query.get("dir", "")), "origins": {}, "conflicts": [], "layers": []}
-    return ctx.repo.sources_with_layers(req.query.get("dir", ""), layers)
-
-
-@route("GET", "/api/repo/layers")
-def api_repo_layers(ctx, req):
-    settings = ctx.settings.as_dict()
-    layers = [ctx.repo.layer_info(l["ref"], req.query.get("dir", "")) for l in settings.get("layers", [])] if ctx.repo.exists() else []
-    return {"upstream": settings.get("upstream_url"), "layers": layers}
-
-
-@route("GET", "/api/repo/layers/files")
-def api_repo_layer_files(ctx, req):
-    """The sources of one layer (to tell which definitions it adds)."""
-    return {"files": ctx.repo.layer_files(req.query.get("ref", ""), req.query.get("dir", ""))}
-
-
-@route("POST", "/api/repo/layers")
-def api_repo_layers_post(ctx, req):
-    body = req.json()
-    settings = ctx.settings.as_dict()
-    layer = ctx.repo.fetch_layer(body.get("ref", ""), settings.get("upstream_url") or None)
-    refs = [l["ref"] for l in settings.get("layers", [])]
-    if layer["ref"] not in refs:
-        ctx.settings.update({"layers": settings.get("layers", []) + [{"ref": layer["ref"]}]})
-    return layer
-
-
-@route("DELETE", "/api/repo/layers/(?P<ref>.+)")
-def api_repo_layers_delete(ctx, req):
-    ref = ctx.repo.layer_ref(req.params["ref"])
-    ctx.repo.remove_layer(ref)
-    settings = ctx.settings.as_dict()
-    ctx.settings.update({"layers": [l for l in settings.get("layers", []) if l["ref"] != ref]})
+@route("DELETE", "/api/sources")
+def api_sources_delete(ctx, req):
+    ctx.sources.remove(req.query.get("id", ""))
     return {"ok": True}
 
 
@@ -473,7 +393,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_static(path, head)
         except ApiError as err:
             self.send_json({"error": str(err)}, err.status)
-        except RepoError as err:
+        except (PathError, SourceError) as err:
             self.send_json({"error": str(err)}, HTTPStatus.BAD_REQUEST)
         except (ValueError, TypeError, KeyError) as err:
             self.send_json({"error": f"invalid request: {err}"}, HTTPStatus.BAD_REQUEST)
@@ -547,7 +467,7 @@ class Handler(BaseHTTPRequestHandler):
         rel = "index.html" if path in ("", "/") else path.lstrip("/")
         try:
             rel = safe_relative(rel)
-        except RepoError:
+        except PathError:
             raise ApiError("not found", HTTPStatus.NOT_FOUND)
         full = os.path.join(www, rel)
         root = os.path.realpath(www)

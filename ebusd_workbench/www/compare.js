@@ -87,14 +87,16 @@ export function fieldNames(csv) {
   return names;
 }
 
-/** The recorded telegrams (store records) of a timeline row: same source, destination, command and message ID. */
+/** The recorded telegrams (store records) of a row: same destination, command and message ID (and source, for a timeline row). */
 export function rowTelegrams(decoder, row) {
-  const prefix = `${hex2(row.qq)}${hex2(row.zz)}${hex2(row.pb)}${hex2(row.sb)}`;
+  if ([row.zz, row.pb, row.sb].some((v) => v === null || v === undefined) || (!row.anyQq && (row.qq === null || row.qq === undefined))) return [];
+  const prefix = `${hex2(row.zz)}${hex2(row.pb)}${hex2(row.sb)}`;   // the sender is not part of a message (the table), unless the row says so (the timeline)
+  const sender = row.anyQq ? null : hex2(row.qq);
   const id = row.id || "";
   const out = [];
   for (const t of decoder.telegrams.values()) {
     const master = t.master;
-    if (!master || !master.startsWith(prefix) || !master.slice(10).startsWith(id)) continue;
+    if (!master || master.slice(2, 8) !== prefix || (sender && !master.startsWith(sender)) || !master.slice(10).startsWith(id)) continue;
     out.push(t);
     if (out.length >= MAX_LINES) break;
   }

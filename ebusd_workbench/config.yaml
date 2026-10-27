@@ -1,10 +1,10 @@
 name: ebusd Config Workbench
-version: "0.4.3"
+version: "0.5.0"
 slug: ebusd_workbench
 description: >
-  Work on ebusd message definitions: browse the recorded eBUS telegrams of the eBUSd app
-  on a timeline next to Home Assistant entity changes, edit TypeSpec sources in a git
-  repository, compile them to CSV and test them against real telegrams in the browser.
+  Find the ebusd message definitions that fit your eBUS devices: the telegrams the eBUSd app
+  records, every definition that decodes them (release, upcoming release, pull requests, your
+  own), tuned, named and saved as the configuration of the eBUSd app and Home Assistant.
 url: https://github.com/LukasGrebe/ha-addons/tree/main/ebusd_workbench
 arch:
   - aarch64
@@ -23,14 +23,8 @@ map:
 options:
   database: /share/ebusd/telegrams.db
   deploy_path: /share/ebusd/config
-  repo_url: ""
-  git_user_name: ""
-  git_user_email: ""
-  git_token: ""
+  language: en
 schema:
   database: str
   deploy_path: str
-  repo_url: "str?"
-  git_user_name: "str?"
-  git_user_email: "str?"
-  git_token: "password?"
+  language: list(en|de)

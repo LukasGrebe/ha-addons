@@ -1,12 +1,14 @@
 # Home Assistant App: ebusd Config Workbench
 
-The ebusd Config Workbench (the Workbench for short) is for working on eBUS message definitions. It reads the telegrams recorded by
-the [eBUSd app](../ebusd/DOCS.md#sqlite-telegram-log), shows them next to Home Assistant
-entity changes, and lets you edit, compile, test and deploy definitions from the browser. The
-device only serves files and the database: the TypeSpec compiler and ebusd's message decoder
-run in your browser.
+The ebusd Config Workbench (the Workbench for short) finds the message definitions that fit
+*your* eBUS devices. It reads the telegrams recorded by the
+[eBUSd app](../ebusd/DOCS.md#sqlite-telegram-log), decodes them with every definition from every
+source you add (ebusd's own definitions, the upcoming release, pull requests, your own), shows
+for each message what fits and how well, lets you tune and name a definition, and saves the
+result as the configuration of the eBUSd app and of Home Assistant. The device only serves the
+database and fetches the sources; compiling and decoding run in your browser.
 
-> This is a first version. Expect rough edges and please report what you find in
+> This is an early version. Expect rough edges and please report what you find in
 > [issues](https://github.com/LukasGrebe/ha-addons/issues).
 
 ---
@@ -17,190 +19,160 @@ run in your browser.
 
 In the eBUSd app configuration set **SQLite telegram log (database file)** to
 `/share/ebusd/telegrams.db` (and optionally the retention in days), then restart it. Every
-telegram on the bus is now stored, also unknown and broken ones.
+telegram on the bus is now stored, also unknown and broken ones. Leave `--scanconfig` on: the
+identification telegrams (`0704`) are what tells the Workbench which file ebusd loads for a
+device.
 
 ### 2. Install and configure the Workbench
 
 | Option | Meaning |
 |---|---|
 | **Telegram database** | The same path as `sqlite_db` of the eBUSd app, default `/share/ebusd/telegrams.db`. Both layouts of the telegram log are read (schema version 2 of eBUSd 26.1.11 and later, and version 1). The Workbench adds its own table `ha_state` for entity changes and shows the notes of the eBUSd terminal's `log` command (table `event`); it creates the file if the eBUSd app has not yet. |
-| **Deploy folder for compiled CSV files** | Where the compiled definitions are written, default `/share/ebusd/config`. |
-| **Git repository of the message definitions** | HTTPS URL of your fork of [ebusd-configuration](https://github.com/john30/ebusd-configuration), cloned into the app config folder (`/addon_configs/…_ebusd_workbench/repo`) at start when it is not there yet. Can also be done from the UI. |
-| **Git user name / email** | Author of the commits made in the Workbench. |
-| **Git access token** | Token for `git push` (and for pulling private repositories) over HTTPS, e.g. a GitHub fine-grained token with *Contents: read and write* on the fork. It is handed to git on each request and never written to disk. |
+| **Deploy folder for the CSV files of your setup** | Where the definitions of your setup are written, default `/share/ebusd/config`. |
+| **Language of the definitions** | `en` or `de`: the language of the field names and comments, as the `en`/`de` folders of ebus.github.io. Use the same as the eBUSd app (`--configlang`, English unless set). |
 
-Start the app and click **Open Web UI** (the Workbench is also in the sidebar).
+Start the app and click **Open Web UI** (the Workbench is also in the sidebar). On the first
+start it fetches ebusd's own definitions and the upcoming release from GitHub (about a megabyte)
+and starts decoding the recording.
 
-### 3. Use the compiled definitions in the eBUSd app
+### 3. Use the definitions in the eBUSd app
 
-Once you have deployed definitions, add to `commandline_options` of the eBUSd app:
+Once you have deployed your setup, add to `commandline_options` of the eBUSd app:
 
 ```
 --configpath=/share/ebusd/config
 ```
 
-and restart it (also after every new deploy). Keep `--scanconfig` to let ebusd pick the right
-file per device by its identification, as with the online configuration.
+and restart it (also after every new deploy). The files of the setup are loaded as they are, for
+every device; remove `--scanconfig` or keep it (there is no manufacturer folder in the deploy
+folder, so the scan loads nothing else).
 
 ---
 
-## Timeline
+## The page
 
-Every telegram is grouped into a row by **source → destination, command (PB SB) and message
-ID**. The message ID is the first data bytes of the master part (default 1 byte; 3 bytes for
-`b509`, the Vaillant register read/write). The remaining data bytes and the answer of the
-slave are the **value**.
+Everything is on one page; nothing opens in a tab, a popover or a dialog.
 
-- A **bar** spans the time the value did not change, labelled with the value, the number of
-  repetitions and the typical interval: `0d2800 / 03a1  ×120 every 30 s`. A dotted line
-  continues to the next, different value.
-- A single telegram is a **tick**.
-- Rows are sorted by address; use *most changes* to find what varied, *only changed* to hide
-  constant rows, and the filter for addresses, commands or names.
-- **ID bytes** sets the default message ID length; per command (or device and command)
-  lengths are set from the details panel or in *Settings*, and **ID lengths from
-  definitions** applies the lengths of the decoded definitions after a decode run. Rows that
-  seem to change with every telegram (a date/time broadcast for example) do so because the
-  whole payload is the value; rows mixing several registers need more ID bytes.
+| Region | What it is |
+|---|---|
+| **Top bar** | What the app is doing right now (fetching, compiling, reading the recording, decoding), the database and the Home Assistant connection. |
+| **Definitions from** | The sources: each one with how many of its definitions fit your bus, what it adds compared with ebusd's own definitions, a checkbox to leave it out, ↻ to fetch it again. **+ add** lists the open pull requests of ebusd-configuration, the ones that mention your devices first, and takes a pull request number, `owner/repo#branch` or a GitHub URL. |
+| **Messages on the bus** | The devices on the bus, each with what ebusd loads for it and how much of its traffic it understands, and the messages as a list that leads with what needs a look. The same messages as a **timeline** on request. Click a message for the scratchpad. |
+| **Scratchpad** | Below the bus: for the selected message every definition that fits it, as cards that fold open in place; your own definitions; a definition read off the bytes. |
+| **My setup** | On the right: ebusd's own choice plus your changes, everything else that fits the bus, how it shows up in Home Assistant, and saving for the eBUSd app. |
+| **Advanced** | One folded line at the bottom: research with ebus-evidence, the browser store, pasted telegrams, about this app. |
+
+The handle between the bus and the scratchpad gives either more room; the height is remembered.
+
+### How to go about it
+
+1. Look at the **devices**: is every device identified, does ebusd load a file for it (a device with
+   *no file* is one ebusd understands nothing of), how much of its traffic is understood?
+2. Work through **needs a look**: the messages ebusd does not understand today, the ones with the
+   most traffic first. A message *other sources know* is one click away from your setup; a message
+   *unknown everywhere* can be read off its bytes in the scratchpad.
+3. For a message, compare the **cards** in the scratchpad: do the values look right over the whole
+   recording (a temperature of 21.5 °C is plausible, 6553.5 °C is not), does the definition decode
+   every recorded variant, which of several namings do you prefer? Pick one, rename if you like.
+4. **Save** the setup for the eBUSd app and copy the Home Assistant YAML.
+
+---
+
+## Sources
+
+A source is a complete set of definition files, exactly what ebusd would load with
+`--configpath` pointing at it. Every source decodes the recording on its own, so a definition is
+attributed to its source exactly, the same message from two sources shows up as two candidates
+(grouped when they decode the same values), and "ebusd's choice" means what ebusd does today
+with its own definitions.
+
+| Source | What it is |
+|---|---|
+| **ebusd's definitions** (`release`) | The CSV files at [ebus.github.io](https://ebus.github.io), what the eBUSd app loads by default. Ready to use, no compile. |
+| **upcoming release** (`next`) | The `next/` folder of the same site: the definitions of the next ebusd release, compiled from the current master of ebusd-configuration. |
+| **PR 660** (`pr/660`) | The head of a pull request of [ebusd-configuration](https://github.com/john30/ebusd-configuration/pulls): TypeSpec sources, compiled to CSV in your browser with the official [eBUS TypeSpec library](https://github.com/john30/ebus-typespec), once per commit. Definitions for a heating system often sit in open pull requests for a long time (for a Vaillant aroTHERM with HMU HW5103, for example). |
+| **owner/repo#branch** | A branch of another GitHub repository: TypeSpec sources (`src/`) compiled like a pull request, or CSV files used as they are. |
+| **my definitions** | The scratchpad: ebusd CSV lines of your own (see below). |
+
+The device fetches a source as one snapshot (a tarball) from GitHub over HTTPS: no git, no
+token, no clone with history. A pull request's title and commit come from the GitHub API, which
+allows 60 requests per hour without a token; the list of open pull requests is cached for an
+hour. Only public repositories work. Symbolic links in the repositories (ebusd-configuration
+shares definitions between devices that way) are followed.
+
+A source says what it adds compared with ebusd's definitions: `+17 new, 12 changed` means
+17 definitions that the release does not have at all and 12 that differ (by file, circuit, name
+and direction). Hover for the commit and when it was fetched. Untick a source to leave it out
+(its decodings are kept, so ticking it again is instant); ↻ fetches it again when the pull
+request was updated; ✕ removes it.
+
+---
+
+## Messages on the bus
+
+### Devices
+
+One chip per destination address on the bus: its identification (manufacturer, model, hardware
+version), the file ebusd loads for it (or **no file**, red: ebusd understands nothing of this
+device until a source brings a file for its identification), how many messages it has and how much
+of its traffic is understood, how many messages only other sources understand (`+10 with other
+sources`) and how many are unknown everywhere. Click a device to see only its messages. The
+addresses that only ask (the controller, remote controls, ebusd itself) are listed after the
+devices. A device without identification means the scan telegram (`0704`) is not in the recording:
+check that `--scanconfig` is on in the eBUSd app.
+
+### The list
+
+One row per message, the way a definition sees it: destination, command and message ID, whoever
+asked. Rows are built from the browser store, so filtering is instant.
+
+| Column | Meaning |
+|---|---|
+| message | the name of the definition it is shown with (the one you picked, else ebusd's choice, else one in your setup, else what another source would use) with its kind; without one, the address, command and ID in hex and **＋ define** |
+| understood by | `ebusd` when ebusd's own definitions decode it today; the other sources that would; *fits, but ebusd would not use it* when definitions match but are hidden (another device variant, an unmet condition); *nothing* when no definition anywhere fits |
+| latest value | decoded with the row's definition (hovering a card in the scratchpad shows that card's decoding instead), else the hex |
+| telegrams, values, last seen | how much traffic, how many distinct telegrams (values), when the last one was recorded |
+| fits | how many definitions from every source fit the message: click to compare |
+| setup | whether the row's definition is in your setup |
+
+**needs a look** (the default) lists what ebusd does not understand, most traffic first, with the
+messages other sources understand (blue) before the unknown ones (orange); **unknown everywhere**
+and **other sources know them** are the two halves of it; **all messages** lists everything by
+device, and folds commands with many messages (the registers of `b524`) into one line; **in my
+setup** what you chose. The filter box matches names, circuits, addresses and commands.
+
+### The timeline
+
+**timeline** in the head of the bus shows the same telegrams over time: one row per source →
+destination, command and message ID (the ID is the first data bytes after the command: 1 byte by
+default, 3 for `b509`, 6 for `b524`), a bar for every stretch where the value stayed the same,
+labelled with the decoded value, the number of repetitions and the typical interval, a tick for
+a single telegram, broken telegrams in red. It is the view for correlating: Home Assistant entity
+changes and your notes are flags in the events lane above the rows.
+
 - Controls like the browser's developer tools: the wheel **scrolls the rows**; **Ctrl/⌘ + wheel**
   or a trackpad pinch zooms the time axis around the pointer; **Shift + wheel** or a sideways
   swipe moves in time; dragging the chart moves, a double click zooms in. `+`/`-`/`←`/`→` work
-  as well, `N` returns to **live** mode in which the right edge follows the current time.
-  The strip at the top shows the whole recording (red: telegrams with errors): **drag the
-  edges of the blue window to resize it, drag inside to move it, drag outside to select a new
-  one**; the wheel over it zooms (Ctrl/⌘) or moves.
-- The status button in the toolbar and the bar under it show what the app is doing: loading
-  telegrams of the window, reading the recording into the browser (day n of m), decoding (x of
-  y telegrams), compiling, cloning the repository. A notice appears when there is no definitions
-  source (nothing to decode with: rows show raw hex) or the definitions are not compiled yet.
-- Clicking a bar lists its telegrams with timestamp, master part (`QQ ZZ PB SB NN DD`), slave
-  part (`NN DD`), status and the decoded values of the row's definition.
-- Broken telegrams (`crc`, `nak`, `timeout`, …) are red.
-
-A window with more than 200 000 telegrams is not cut: it is **summed up in steps of time**
-(about one per pixel; a note says how long a step is). A row's value that did not change stays
-one bar; where a row had several values within steps, one lavender bar says how many different
-values (at least) and how many telegrams. Zoom in for every value.
-
-### Decoded values, candidates and the setup — without leaving the timeline
-
-As soon as definitions are compiled (automatically at start when a repository is there), the
-browser keeps every distinct telegram of the recording and decodes each one with **every
-definition that fits it** (see [Decoded recording](#decoded-recording)). The timeline shows the
-result in place:
-
-- A row is **named** after the definition that decodes it and its bars show the **decoded
-  values** (`temp=23.5 °C;pumpstate=on ×954 every 5 s`) instead of the hex; the tooltip has both,
-  and the other candidates' readings.
-- **Click a value** (or the name, or the badge `4▾` next to it) and the **details** open below
-  the timeline. They stay put while you move the window, and the handle above them resizes them
-  (the height is remembered); Esc closes them. They are one view of the message, for one
-  definition at a time. **Tabs** switch between the definitions that decode the row, compared
-  **over every recorded telegram of the row, not only the visible window**: definitions that
-  decode the same values (a copy in another file or circuit) are one tab (`×4` files). A tab shows
-  the plain kind (active read, passive write, …), `ebusd` for ebusd's choice, `mine` for your
-  own, `differs` when it decodes different values than the row's definition, and ⚠ when it fails
-  on some recorded telegram. Hovering a tab previews its decoding in the row's bars. The last
-  tabs are **＋ new definition** and, when some fail, **N failing**. Every tab says in a second
-  line how it relates to the row's definition (*same values*, *same values, defined differently*,
-  *differs in temp, flow*), and its tooltip lists the differences. The panel keeps its tab,
-  scroll positions and drafts while new telegrams arrive. Below the tabs:
-  - **Source**: *use for this row* (it joins the setup of this installation, the row's other
-    definitions leave it), *in setup*, *rename*, the TypeSpec source at its line, what kind it is,
-    where it comes from, when it applies (conditions in words), why ebusd does not use it, and the
-    files it is in.
-  - **Compared with another definition**: this tab beside the row's definition (or any other tab
-    you choose): a verdict (identical, same values but defined differently, different values and in
-    which fields), then kind, message ID, every field with its type, divisor and unit, the latest
-    values, how many variants decode and the files. Differences are highlighted; rows that differ
-    only in a name are in italics. Identical copies in other files are listed.
-  - **History**: a chart of the definition's values over the whole recording by the timestamp of
-    every telegram (hover for a value, click to move the timeline there; the blue band is the
-    window), and the values as a list of runs of the same value, newest first, the clicked run
-    highlighted (*every telegram* lists them one by one).
-  - **Edit**: the definition as a form and as raw CSV, both ways. While you type, ebusd's own
-    decoder reads the draft against every recorded variant (how many decode, the latest text,
-    the errors), and the chart and list show the **draft**. **Save as my version** never changes
-    the source: it adds your own version (kind `mine`) to your own definitions, decodes the whole
-    recording with it and picks it for the row. Editing your own definition updates it.
-- **Pivot over the fields**: a row that is one whole message of a definition with several fields
-  (like `hmu SetMode`: `hcmode`, `flowtempdesired`, `hwctempdesired`, …) has a **+** that shows
-  the **values as rows of their own** below it, one per field, each with its value over time;
-  **−** folds them away. Clicking a field's value opens the details of the message with that field
-  charted. It is only a view: ebusd uses one definition per message ID (a second definition with
-  the same ID is shadowed), so the definition itself stays one CSV line, and the Home Assistant
-  entities are made per field anyway. Rows whose definition identifies the message by more ID
-  bytes than the row shows still split at the next ID byte with **+**.
+  as well, `N` returns to **live** mode in which the right edge follows the current time, Esc
+  clears the selection. The strip at the top shows the whole recording (red: telegrams with
+  errors): drag the edges of the blue window to resize it, drag inside to move it, drag outside
+  to select a new one.
+- A window with more than 200 000 telegrams is **summed up in steps of time** (about one per
+  pixel); a lavender bar says how many different values a row had within steps. Zoom in for
+  every value.
 - **Pivot**: the **+** and **−** buttons next to a row split it at its next message ID byte or
-  combine it with the rows that share all but its last byte (all rows of the command when no
-  ID byte is left), like expanding and collapsing a pivot table. Only the telegrams that start
-  with that prefix are regrouped (the rules are in *Settings → Telegram grouping*, where they can
-  be cleared or reset to the defaults). **rows like the definitions** (or the notice above the
-  timeline) sets the rules from the decoded definitions: one row per message they know.
-- **Collapse a whole command**: commands with many messages (the registers of `b524`, the
-  parameters of `b516`) get a header row, *→08 b524 · 312 rows*, with **⊟ one row**: all telegrams
-  of that command become one row per source and destination, and **⊞ expand** next to the name
-  brings one row per message ID back (the grouping rules of the command are replaced either way).
-  The header shows where a command has six or more rows (sorted by address).
-- **Thousands of rows**: only the rows in view exist, as labels and on the canvas, so a window
-  with thousands of rows scrolls like a short one (browsers draw nothing on canvases taller than
-  about 16 000 pixels, which is what long lists ran into).
-- **hide failing** in the details (and in the Choose step) hides candidates that fail to decode
-  some recorded telegram.
-- **source ↗** opens the TypeSpec source of a definition at its line in the editor (read only
-  for what only a community layer changes); for an own definition it opens the own definitions.
-- **Many candidates on one row** usually means the row groups telegrams by fewer ID bytes
-  than the definitions use (for `b51a` the register is 3 bytes, the default row key 1): the
-  "candidates" are then different messages (registers), each in the file ebusd loads and again
-  in the files of other device variants. The details say so, and a notice above the timeline
-  offers **Split rows like the definitions** (also in the details for one command).
-- **rename** opens a small form: the message name, and a table of the message's fields (upstream
-  name, name in my config, latest value). It gives a message and its fields the names they should
-  have in *your* config (`Z1RoomTemp → Zone1RoomTemperature`, `temp → temperature`): the timeline, the exported CSV
-  files and the Home Assistant entities use the new names, the upstream names stay in the CSV
-  comments and in the definitions table. Names are limited to `A–Z a–z 0–9 _ . -` (they become
-  MQTT topics and JSON keys).
-- **Setup (N)** opens the drawer on the right: the included definitions by circuit (circuit
-  names can be changed there too, e.g. `vwz → vwzio`), each with its status, source and an
-  example value, ✎ to rename, ✕ to take it out, and the exports: **Deploy to eBUSd** writes the
-  CSV files of the setup to the deploy folder, **Download CSV**, **copy HA YAML** (the
-  `climate`/`water_heater` entities) and **copy ebusd options**. Until you change anything, the
-  setup is what ebusd itself would use.
-
-The state button in the toolbar (`600 definitions · 11,885 of 44,175 telegrams known to
-ebusd · pr/660, …`) shows what is loaded and decoding progress; it opens the definitions tab.
-
-### Home Assistant events
-
-In *Settings* pick the entities whose state changes you want to see (the circulation pump,
-a thermostat, a window sensor, …). The Workbench subscribes to them through the Home
-Assistant API and stores every change in the table `ha_state` of the telegram database, with
-the previous state and the attributes. They appear as **flags in the events lane** between the
-time axis and the rows (like log annotations, not as rows): hover for the change, click a flag
-for the entity's history of the window. Only state changes are stored, attribute-only changes
-are ignored.
-
-### Notes: what the terminal's `log` command does
-
-Notes ("set hot water to 50 °C", with the time it happened and how exact that time is) are
-drawn as orange flags in the events lane with the uncertainty as a band across the rows. They
-are made with the `log` command of the eBUSd app's terminal or with **＋ event** in the
-timeline, which does the same:
-
-- **What happened** (optional: without a message only the time is noted).
-- **When**: now, or at a date and time, or **pick on the timeline** and click the moment.
-- **How exact**: up to *x* before and *y* after (units ms, s, min, h), with presets: ±500 ms,
-  ±2 s, ±10 s, the whole minute, up to 10 min / 1 h before. The band is drawn on the timeline
-  while you fill the form.
-- The equivalent terminal command is shown (`log 8:50:00 -10m Dampf vom Abtauen`) and can be
-  copied.
-- **Recent notes** lists the latest notes (click the time to go there, ✕ to delete); a click
-  on a note's flag opens the form with that note highlighted.
-
-Notes and entity changes live in the table `event` (layout of the eBUSd app) and `ha_state`
-of the telegram database.
-
-### Tables
+  combine it with the rows that share all but its last byte; a row that is one whole message of
+  a definition with several fields shows the **values as rows of their own** with **+** instead.
+  Commands with many messages get a header row with **⊟ one row**. A notice offers to **group
+  like the definitions** once the recording is decoded; the scratchpad sets the ID length per
+  command.
+- **⚙ events and grouping** in the timeline's toolbar: the Home Assistant entities whose state
+  changes are shown (the circulation pump, a thermostat, a window sensor, …; the Workbench
+  subscribes to them through the Home Assistant API and stores every change in the table
+  `ha_state` of the telegram database), and the ID lengths per command.
+- **＋ event** notes what you did or saw ("set hot water to 50 °C", with the time and how exact
+  it is), like the `log` command of the eBUSd app's terminal: orange flags with the uncertainty as
+  a band across the rows; the terminal command is shown and can be copied.
 
 | Table | Content |
 |---|---|
@@ -209,192 +181,144 @@ of the telegram database.
 
 ---
 
-## Definitions
+## Scratchpad
 
-The page follows the way you work, in steps (tabs):
+Click a message in the list (or a row of the timeline): the scratchpad shows everything about
+it. The head says the message, how many recorded variants and telegrams it has and who asked for
+it (in the timeline view also the **ID bytes** of its command and **rows like the definitions**).
 
-1. **Sources**: where definitions come from. The default definitions
-   ([john30/ebusd-configuration](https://github.com/john30/ebusd-configuration), cloned in the
-   background with a progress indicator), a repository of your own, community pull requests and
-   other repositories (layers), definitions you write yourself, and **Compile**. The same panel
-   is in the timeline (**Sources** button), and the timeline offers it as a notice when there are
-   no definitions yet.
-2. **Live decoding**: every distinct telegram of the recording as it is decoded, newest first.
-3. **Choose**: all definitions that matched, to tick and rename.
-4. **Edit**: the TypeSpec sources with their tree; saving recompiles and decodes the recording
-   again.
-5. **Summary & save**: what you chose with its sources and how each definition fared, and the
-   files for ebusd.
+Then one **card per definition that fits** the message, compared **over every recorded telegram
+of the message, not only the visible window**. Definitions that decode the same values (a copy
+in another file, circuit or source) are one card (`×4`). Each card says in one line: ● when it is
+used for this row, the message, its kind (active read, passive write, …), its sources, `ebusd's
+choice` for what ebusd uses today, ✓ when it decodes every recorded variant or ⚠ with the
+count when it fails on some, how it relates to the row's definition (*same values*, *same values,
+defined differently*, *differs in temp, flow*) and the latest decoded value. Hovering a card
+previews its decoding in the bus row. **copy** puts the definition into your scratchpad (see
+below). Click the line and the card folds open with four columns:
 
-*Evidence* (ebus-evidence profile checks and the raw log export) is a step of its own.
+- **Source and use**: *use for this row* (it joins your setup, the row's other definitions
+  leave it), *in my setup*, the kind in words, every copy with its source, file and status, when
+  it applies (conditions in words), why ebusd does not use it, and **In Home Assistant**: the
+  message name and every field with the name it gets in your config and the entity ebusd's
+  MQTT discovery makes of it, next to the latest value. Rename here (`Z1RoomTemp → Zone1RoomTemperature`,
+  `temp → temperature`): the bus, the exported CSV files and the Home Assistant entities use the
+  new names, the upstream names stay in the file's comments. Names are limited to
+  `A–Z a–z 0–9 _ . -` (they become MQTT topics and JSON keys).
+- **Compared with another definition**: this card beside the row's definition (or any other
+  card): a verdict (identical, same values but defined differently, different values and in
+  which fields), then source, kind, message ID, every field with its type, divisor and unit, the
+  latest values, how many variants decode and the files. Differences are highlighted; rows that
+  differ only in a name are in italics. Two definitions with the same values and different names
+  or comments: pick the one you prefer, or rename.
+- **History over the recording**: a chart of the definition's values by the timestamp of every
+  telegram (hover for a value, click to move the bus there; the blue band is the window) and the
+  values as a list of runs of the same value, newest first, the clicked run highlighted.
+- **Tune it**: the definition as a form (kind, circuit, name, comment, every field with where it
+  is, its type in plain words, divisor or value names, unit) and as raw CSV, both ways. While you
+  type, ebusd's own decoder reads the draft against every recorded variant (how many decode, the
+  latest text, the errors), and the chart and list show the **draft**. **Save as my version**
+  never changes the source: it adds your own version to your scratchpad, decodes the whole
+  recording with it and picks it for the row.
 
-### Your own definitions
-
-Definitions you write or paste (ebusd CSV lines, one per message) are decoded over the whole
-recording at once and appear as candidates of kind *own definition* next to the compiled ones,
-for rows with or without other candidates. They are never chosen automatically; pick one in the
-timeline. Three ways to make one:
-
-- **Define a message that no definition decodes**: click such a row in the timeline (it shows
-  *＋ define*). The editor is prefilled from what the recording shows: the kind (active read or
-  write when ebusd itself polls or sends, passive read or write for what other devices
-  exchange, passive read for broadcasts; the CSV shorthand `r`, `w`, `u`, `uw` is shown last in
-  every dropdown, after the plain name and its explanation), circuit (from the
-  identification of the device), address, command and ID, and the data bytes. Click a byte to
-  see what it could be, every number type (UCH, D1C, D2C, FLT, EXP, …) with its latest value and
-  its range over the whole history, and apply one; the rest stays raw (HEX). Name the fields,
-  add a divisor or unit; the history of the selected field is charted. ebusd's own decoder
-  checks the line against every recorded variant while you work (how many it decodes, the
-  latest decoded text, the errors). **Save as my version** decodes the recording with it and
-  picks it for the row (the editor is the *＋ new definition* tab of the details).
-- **Edit a definition**: the *Edit* column of the details shows its CSV line as a form and as
-  text; change it and **Save as my version**.
-- **Paste**: write or paste lines in the Sources step or the timeline's Sources popover.
-
-The text is stored in the app's settings; the files of the setup contain these definitions with
-the comment `# from layer custom`.
-
-### Repository
-
-1. **Load the default definitions** or **use another repository** (your fork of
-   ebusd-configuration; set a token in the app configuration to push), or *Start empty*. The tree shows the
-   `.tsp` sources; symlinked files (ebusd-configuration shares definitions between devices
-   that way) are read-only, edit their target.
-2. **Edit** a file and **Save** (Ctrl+S). Changed files are marked in the tree and listed with
-   *diff* and *discard*; enter a message and **Commit** the selected ones. **Pull** is
-   fast-forward only, **Push** needs the access token.
-
-### Community layers
-
-Definitions for a heating system often sit in open pull requests of
-[ebusd-configuration](https://github.com/john30/ebusd-configuration/pulls) for a long time
-(for a Vaillant aroTHERM with HMU HW5103 and VWZIO, for example, #660, #598 and #604 add a lot).
-Instead of merging them into your fork, add them as **layers**: enter the pull request number
-(a branch such as `upstream/master`, or the URL of another repository, optionally with a
-branch: `https://github.com/<you>/ebusd-configuration.git#my-branch`) and the Workbench
-fetches its head from the upstream
-repository (`https://github.com/john30/ebusd-configuration.git`, changeable in the settings
-file) into `refs/workbench/`, without touching your checkout. Compiling then applies the
-files each enabled layer changes on top of your sources, in the listed order; a file changed
-by several layers is merged three-way like git does, and conflicts show up as compile errors
-with git's markers. Every decoded definition is attributed to the layer that added it, and the
-setup files record it (`# from layer pr/660`). ↻ re-fetches a layer when the pull request was
-updated, ✕ removes it.
-
-### Compile
-
-Pick the entry (`src/main.tsp` compiles everything, a single file only that file and what it
-imports) and optionally a translation file (`src/de.yaml`). Errors link to the line in the
-editor. Unsaved changes of the open file are compiled as they are.
-
-### Decoded recording
-
-The browser keeps a copy of the recording in its own store (IndexedDB): every **distinct
-telegram** (master and slave part) once, with how often and when it was seen, and the bars the
-timeline fetched as pointers to those telegrams. It is filled from the database at start (a
-three-week recording with 44 000 distinct telegrams takes a few seconds) and kept up to date
-every few seconds, so the Workbench sees new telegrams as they arrive.
-
-Every telegram is decoded with the compiled files in a Web Worker running ebusd's message
-library, and **every definition that fits it** is stored next to it with the definition's
-source (checkout or layer), file, condition and the decoded values: the one ebusd itself
-would use (file chosen by the scan identification of the device, condition met, longest ID)
-and the hidden candidates. New telegrams are decoded as they arrive; conditional definitions
-(`[Ehp_heatpumptype=3]…` in the CSV, `@condition` in TypeSpec) are evaluated against the
-telegrams decoded before, so an incremental run always starts with the identification telegrams
-and the ones a condition refers to. A new compile decodes everything again; **decode again**
-does the same by hand, **reset store** forgets the browser-side copy (the database is not
-touched). Telegrams pasted into the text box (`QQZZPBSBNNDD/NNDD`, as in `ebusctl grab` or
-the telegram log's `master`/`slave` columns) are decoded like recorded ones and counted as not
-seen.
-
-The **Decoded** tab lists the telegrams with the definition ebusd uses, its values and the
-other candidates, coloured as in the timeline (filters: unknown to ebusd, with other
-candidates, decode errors, in the timeline window). Everything decoded is also what the
-timeline shows, so there is no separate test step: the picture updates by itself.
-
-### Setup: the definitions of this installation
-
-Upstream hides many definitions from an installation: a file is loaded only for the device
-identification it is named after (`08.hmu.HW5103.csv` but not `08.hmu.csv`), conditions
-refer to register values the controller may never request, and some pull requests are not
-merged. The **Setup** tab lists every definition that matched a recorded telegram, grouped by
-device with its identification and the file ebusd loads for it, with a status:
+Statuses of a definition:
 
 | Status | Meaning |
 |---|---|
-| active | ebusd uses it for this installation |
+| active | ebusd's choice with this source for this installation (file chosen by the scan, condition met) |
 | variant | from a file of another device variant; ebusd would not load it, but it decodes the recorded telegrams |
 | conditional | its condition was not met by the recorded telegrams, but it decodes them |
 | hidden | in the file ebusd loads, but another definition takes precedence |
 | error | matches the telegram but does not decode it (wrong length or values) |
 | companion | not seen on the bus: the counterpart of a seen definition, usually the write definition |
+| custom | your own definition, never chosen automatically |
 
-Tick the definitions for your setup: **include what ebusd uses** is the safe baseline,
-**+ plausible hidden ones** adds every hidden definition that decoded all its telegrams
-without error, **+ counterparts of included** adds the write definitions belonging to included
-ones. The example column shows decoded values, so you can judge whether a hidden definition
-fits (a temperature of 21.5 °C is plausible, 6553.5 °C is not). Write definitions are marked
-red: writing to a device with a definition of another variant can be harmful, so include only
-what you are sure about, and test reading first. Until you tick anything, the setup is what
-ebusd itself uses. The **name in my config** column renames a message for the export (fields
-are renamed in the timeline's details below the timeline or setup drawer, where their values are
-visible). The selection, the choices made per timeline row and the names are stored in the
-app's data folder, so every browser sees the same setup.
+**hide failing** hides cards that fail to decode some recorded telegram; they stay reachable in
+the *N failing* card at the end, each with the reason. In the timeline view **many cards on one
+row** usually means the row groups telegrams by fewer ID bytes than the definitions use (for
+`b51a` the register is 3 bytes, the default row key 1): the "candidates" are then different
+messages (registers). A notice says so and **Split this row like the definitions** fixes the
+grouping; the list groups messages like the definitions by itself.
 
-### Export
+### Your own definitions
 
-- **Definitions of this installation**: one CSV file per circuit with the included
-  definitions, conditions removed, under the names of my config, with comments naming the
-  source file and layer of each definition and the upstream name of renamed ones. Circuit
-  names can be changed first (`vwz → vwzio` if your entities use that topic). **Deploy setup** writes them to the deploy folder (optionally a subfolder, removing
-  other definition files there if ticked); ebusd then needs `--configpath` pointing there and
-  loads them at startup without scan-based file selection (remove `--scanconfig`, or keep it
-  with no `vaillant/` folder present). **Download** saves the files locally.
-- **All compiled files**: the complete tree as ebusd's scan expects it.
-- **Home Assistant climate and water heater**: `mqtt:` YAML for `configuration.yaml` with a
-  `climate` per zone (`Z1RoomTemp`, `Z1DayTemp`, `Z1OpMode`, `RoomHumidity`; the action from
-  `RunDataStatuscode` when present) and a `water_heater` (`HwcTempDesired`, `HwcOpMode`, the
-  storage temperature from `HwcStorageTemp` or a message with the field `hwcstoragetemp`),
-  built from the setup's messages and their field names; renamed messages and fields keep their
-  role (the YAML knows that `Zone1RoomTemperature` is the room temperature) and appear under the
-  new topics. ebusd's own `mqtt-hassio.cfg` creates a sensor, number or select per field; these
-  composite entities it cannot. A note at the top
-  lists what is missing (usually the write definitions). Next to it, the eBUSd app options for
-  the setup: `--configpath` and `--mqttvar=filter-name=…` so that MQTT discovery publishes the
-  setup's messages, including writable ones.
-- **ebusd raw log for ebus-evidence**: the recorded telegrams of a time range as ebusd
-  message-mode raw log (`--lograwdata`), the input of
-  [ebus-evidence](https://github.com/MarcelT87/ebus-evidence). Telegrams sent by ebusd itself
-  (its own address, `--address` of the eBUSd app, 31 unless changed; set it here once) are
-  written with the direction changes ebusd logs. Run
-  `ebus-evidence doctor --raw FILE --profile hw5103-open-evidence`, `import --raw FILE` and
-  `export` on another computer to get a verified `evidence.zip` for cross-installation
-  research (see
-  [ebusd-configuration#690](https://github.com/john30/ebusd-configuration/issues/690)).
+Your definitions are ebusd CSV lines, one per message, stored in the app's settings (every
+browser sees them). They are a source like the others: decoded over the whole recording as soon
+as they change, shown as cards of kind *mine* wherever they fit, never ebusd's choice. Three
+ways to make one:
 
-### Evidence
+- **copy** on a card (or *Save as my version* in its editor): a copy to change fields, types,
+  divisors, units, names.
+- **＋ write a definition from the bytes**, the last card of every message (it opens by itself
+  for a message no definition decodes): prefilled from the recording with the kind (active read
+  or write when ebusd itself polls or sends, passive read or write for what other devices
+  exchange, passive read for broadcasts), circuit (from the identification of the device),
+  address, command and ID, and the data bytes. Click a byte to see what it could be, every
+  number type (UCH, D1C, D2C, FLT, EXP, …) with its latest value and its range over the whole
+  history, and apply one; the rest stays raw (HEX). Name the fields, add a divisor or unit; the
+  history of the selected field is charted and ebusd's decoder checks the line against every
+  recorded variant while you work.
+- **Paste** lines (from a forum post, an issue, a file) into the scratchpad when nothing is
+  selected.
 
-Paste an ebus-evidence profile (YAML) or load the bundled example
-(`hw5103-open-evidence`, MIT License, MarcelT87) and **Run checks on the timeline window**:
-for every check the matching telegrams of the window are counted, the first and last
-occurrence shown and the value the check describes decoded (u8, u16le, float32le, …). This
-shows what your bus carries for what the research is looking at; **Download summary** saves
-it as JSON for discussion. The verified bundle must come from ebus-evidence itself, from the
-exported raw log.
+Without a selection the scratchpad lists your lines with how each fares over the recording; each
+folds open into its editor.
 
-**Addresses** maps the addresses a profile names to the ones on your bus, `f1=31` by default:
-the eBUS specification prescribes which address a kind of device takes (`03`/`08` the first
-burner control unit, `10`/`15` the heating controller, `30`/`35`, `70`/`75`, `f0`/`f5` the
-heating circuit controllers, `01`, `11`, `31`, `71`, `f1` remote controls and bus interfaces;
-a slave address is its master address plus 5), so the same device sits at the same address in
-every installation of its kind, but a second device of the same kind must take another one,
-and the address of ebusd itself is whatever `--address` says — `31` in the eBUSd app, `f1` in
-the profile author's installation. A check with `source: f1` therefore matches nothing until
-it is mapped. Unassigned addresses may be used freely, so map device addresses only when your
-installation differs.
+---
 
-The compiler and the decoder are loaded into the browser on first use (about 1.8 MB).
+## My setup
+
+What this installation uses: **ebusd's own choice** (every definition of ebusd's own definitions
+that decodes a message of your bus the way ebusd does today, folded away by circuit) **plus your
+changes**, listed one by one with a way back: definitions you added from other sources or from
+the hidden ones (+), definitions you took out (−), messages and fields you renamed (✎), circuits
+you renamed. Picking a card in the scratchpad adds it (and takes the row's other definitions out);
+**reset** goes back to ebusd's own choice. Circuit names can be changed (`vwz → vwzio` if your
+entities use that topic). ebusd's choice follows the recording: a message seen for the first time
+tomorrow is understood tomorrow, your changes stay.
+
+**Also fits your bus** lists every other definition that decoded a recorded telegram, from every
+source: hidden ones, other device variants, unmet conditions, other sources, counterparts for
+writing, each with its status and an example value so you can judge whether it fits (a
+temperature of 21.5 °C is plausible, 6553.5 °C is not). One click adds one; **ebusd's choice
+only** is the safe baseline, **+ plausible** adds every hidden definition that decoded all its
+telegrams without error, **+ counterparts** adds the write definitions belonging to included
+ones. Write definitions are marked: writing to a device with a definition of another variant can
+be harmful, so include only what you are sure about, and test reading first.
+
+**In Home Assistant** shows the entities ebusd's MQTT discovery (`mqtt-hassio.cfg` of the eBUSd
+app) will make of the setup, named after circuit, message and field as renamed here, and the
+`climate` / `water_heater` YAML for `configuration.yaml`: a climate per zone (`Z1RoomTemp`,
+`Z1DayTemp`, `Z1OpMode`, `RoomHumidity`; the action from `RunDataStatuscode` when present) and a
+water heater (`HwcTempDesired`, `HwcOpMode`, the storage temperature from `HwcStorageTemp` or a
+message with the field `hwcstoragetemp`). Renamed messages and fields keep their role and appear
+under the new topics. A note at the top lists what is missing (usually the write definitions).
+
+**Save for the eBUSd app**: one CSV file per circuit with the included definitions, conditions
+removed, under the names of your config, with comments naming the source and file of each
+definition and the upstream name of renamed ones, plus `workbench-setup.json` (the sources with
+their commits, the devices, your own lines, how each definition fared on your recording).
+**Deploy to eBUSd** writes them to the deploy folder (optionally a subfolder, removing other
+definition files there if ticked); **Download** saves them; **copy eBUSd options** gives
+`--configpath` and the `--mqttvar=filter-name=…` so that MQTT discovery publishes exactly the
+setup's messages, writable ones included. Then restart the eBUSd app.
+
+---
+
+## Research with ebus-evidence
+
+Paste an [ebus-evidence](https://github.com/MarcelT87/ebus-evidence) profile (YAML) or load the
+bundled example (`hw5103-open-evidence`, MIT License, MarcelT87) and **Run checks on the bus
+window**: for every check the matching telegrams of the window are counted, the first and last
+occurrence shown and the value the check describes decoded. **Download summary** saves it as
+JSON for discussion. **Addresses** maps the addresses a profile names to the ones on your bus,
+`f1=31` by default (ebusd's own address is whatever `--address` says: `31` in the eBUSd app,
+`f1` in the profile author's installation).
+
+**ebusd raw log**: the recorded telegrams of a time range as ebusd message-mode raw log
+(`--lograwdata`), the input of ebus-evidence. Run `ebus-evidence doctor --raw FILE --profile
+hw5103-open-evidence`, `import --raw FILE` and `export` on another computer to get a verified
+`evidence.zip`.
 
 ---
 
@@ -403,23 +327,28 @@ The compiler and the decoder are loaded into the browser on first use (about 1.8
 | Container path | Host path | Content |
 |---|---|---|
 | `/share/ebusd/telegrams.db` | `/share/ebusd/telegrams.db` | telegram database (eBUSd app and Workbench) |
-| `/share/ebusd/config` | `/share/ebusd/config` | deployed CSV files for the eBUSd app |
-| `/config/repo` | `/addon_configs/…_ebusd_workbench/repo` | git repository with `refs/workbench/*` for the layers (in backups) |
-| `/data/settings.json` | – | Workbench settings (entities, ID lengths, layers, setup with its names and choices, own address, …; in backups) |
-| browser store `ebusd-workbench` | – | IndexedDB of the browser: the distinct telegrams of the recording, the timeline's bars as pointers to them, every decoding per definition, the last compile. Rebuilt from the database when the recording changes or with *reset store*. |
+| `/share/ebusd/config` | `/share/ebusd/config` | the CSV files of your setup for the eBUSd app |
+| `/data/settings.json` | – | Workbench settings (entities, ID lengths, sources, setup with its names and choices, your own definitions, own address, …; in backups) |
+| `/data/sources/` | – | the fetched sources, one folder each (`files.json`, `meta.json`), and the cached list of open pull requests; fetched again on demand |
+| browser store `ebusd-workbench` | – | IndexedDB of the browser: the distinct telegrams of the recording, every decoding per source and definition, the compiled pull requests. Rebuilt from the database and the sources when they change or with *reset store*. |
+
+The compiler and the decoder are loaded into the browser on first use (about 1.8 MB).
 
 ---
 
-## Limitations of this first version
+## Limitations of this version
 
-- The editor is a plain text area (no syntax highlighting or completion).
-- Telegrams are grouped by address and ID bytes; the ID lengths of the decoded definitions can
-  be applied with one click, but rows are not merged by message definition yet.
-- Compiling happens on the main thread of the browser (the full ebusd-configuration with three
-  layers takes about five seconds); decoding runs in a Web Worker. Browsers without IndexedDB
-  (some private windows) keep the store in memory for the tab's lifetime.
-- The setup is stored in the app, the decodings in the browser: another browser decodes the
-  recording again (a few seconds) but sees the same setup.
-- Only HTTPS remotes with a token are supported for push.
+- Only public GitHub repositories and pull requests of john30/ebusd-configuration are sources
+  (no token, no other hosts). Other definitions come in by pasting their lines.
+- Pull requests are compiled in the browser (the full ebusd-configuration takes a few seconds)
+  and every source decodes the whole recording (a week with 47 000 distinct telegrams takes about
+  two minutes per source, once); ten sources are fine, dozens are not. Leave sources you are done
+  with unticked.
+- The decodings live in the browser: another browser decodes the recording again (a few seconds
+  per source) but sees the same setup and the same definitions of your own.
+- There is no editor for TypeSpec sources any more: a definition of your own is an ebusd CSV
+  line. To contribute it upstream, open a pull request of ebusd-configuration with the TypeSpec
+  equivalent (the [ebus notebook](https://marketplace.visualstudio.com/items?itemName=ebusd.ebus-notebook)
+  helps).
 - No prebuilt image yet: Supervisor builds the app on the device at installation (a minute
   or two).
