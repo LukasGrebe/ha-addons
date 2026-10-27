@@ -1,5 +1,6 @@
 """Unit tests of the SQLite telegram log (ebusd/ebus_sqlite.py)."""
 
+import glob
 import os
 import sqlite3
 import sys
@@ -313,10 +314,25 @@ class Database(unittest.TestCase):
         self.assertEqual(e.upgrade_db(db, self.path), 0)
         db.close()
 
-    def test_failed_upgrade_leaves_database_unchanged(self):
+    def create_unconvertible_v1(self):
         rows = [v1_row(1, *e.decode_frame(part("10feb5050100"), None)),
                 ("2", "BC", 0x10, 0xFE, 0xB5, 0x05, 1, "zz", 0, None, None, None, None, None, "ok", "10fe")]
-        self.create_v1(rows).close()
+        db = self.create_v1(rows)
+        db.execute("PRAGMA journal_mode=WAL")  # as the previous version left it
+        db.close()
+
+    def assert_unchanged_v1(self):
+        db = sqlite3.connect(self.path)
+        self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(db.execute("SELECT count(*) FROM telegram_hex WHERE id").fetchone()[0], 2)
+        db.close()
+        self.assertEqual(self.backups(), [])
+
+    def backups(self):
+        return glob.glob(os.path.join(os.path.dirname(self.path), "telegrams.v1-*"))
+
+    def test_failed_upgrade_leaves_database_unchanged(self):
+        self.create_unconvertible_v1()
         db = e.open_db(self.path)
         with self.assertRaises(ValueError):
             e.upgrade_db(db, self.path)
@@ -324,6 +340,44 @@ class Database(unittest.TestCase):
         self.assertEqual(db.execute("SELECT count(*) FROM telegram_hex WHERE id").fetchone()[0], 2)
         self.assertEqual(db.execute("SELECT count(*) FROM sqlite_master WHERE name = 'telegram_v1'").fetchone()[0], 0)
         db.close()
+
+    def test_unconvertible_database_kept_aside(self):
+        self.create_unconvertible_v1()
+        db = e.upgrade_or_replace_db(e.open_db(self.path), self.path)
+        e.insert(db, [e.make_row(3, *e.decode_frame(part("10feb5050100"), None))])
+        db.commit()
+        self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], e.SCHEMA_VERSION)
+        self.assertEqual(db.execute("SELECT count(*) FROM telegram").fetchone()[0], 1)
+        db.close()
+        backups = self.backups()
+        self.assertEqual(len(backups), 1, backups)  # no -wal or -shm beside it
+        old = sqlite3.connect(backups[0])
+        self.assertEqual(old.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(old.execute("SELECT count(*) FROM telegram_hex WHERE id").fetchone()[0], 2)
+        old.close()
+
+    def test_not_kept_aside_while_open_elsewhere(self):
+        self.create_unconvertible_v1()
+        reader = sqlite3.connect(self.path)  # e.g. Home Assistant's SQL integration
+        reader.execute("SELECT count(*) FROM telegram").fetchone()
+        with self.assertRaises(OSError):
+            e.upgrade_or_replace_db(e.open_db(self.path), self.path)
+        reader.close()
+        self.assert_unchanged_v1()
+
+    def test_locked_database_tried_again_later(self):
+        self.create_unconvertible_v1()
+        writer = sqlite3.connect(self.path, isolation_level=None)
+        writer.execute("BEGIN IMMEDIATE")
+        db = e.open_db(self.path)
+        db.execute("PRAGMA busy_timeout=0")
+        with self.assertRaises(sqlite3.OperationalError) as caught:
+            e.upgrade_or_replace_db(db, self.path)
+        self.assertTrue(e.is_locked(caught.exception))
+        writer.rollback()
+        writer.close()
+        db.close()
+        self.assert_unchanged_v1()
 
     def test_retention_purges_in_chunks(self):
         db = e.open_db(self.path)

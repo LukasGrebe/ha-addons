@@ -301,6 +301,9 @@ sqlite_retention_days: 10
   `ebusctl dump`: it switches the dump off until you run it again.
 - Don't open the database over the Samba share while the app is running (SQLite locking
   does not work over network shares). Copy the file or use the built-in terminal.
+- Versions 26.1.9 and 26.1.10 of the app cannot use a database written by a newer version:
+  their telegram log stays off (`unable to open database … has schema version 2`), ebusd
+  runs normally. To go back to one of them, give it another `sqlite_db` file.
 
 ### Table `telegram`
 
@@ -426,6 +429,9 @@ The addon logs its decisions at startup. Here is what each message means:
 | `SQLite telegram log: writing telegrams to …` | The [SQLite telegram log](#sqlite-telegram-log) is running |
 | `sqlite_db is set, but commandline_options contains ebusd dump options` | Remove the `--dump…` flags — the telegram log needs ebusd's dump for itself |
 | `SQLite telegram log: unable to open database …` | The `sqlite_db` path is invalid or not writable; ebusd runs without the telegram log |
-| `SQLite telegram log: unable to convert database …, it is unchanged` | Converting the database of an earlier version failed (e.g. disk full); fix the cause and restart the app, or delete the file to start a new one |
+| `SQLite telegram log: unable to convert database …, it is unchanged` | Converting the database of an earlier version failed (e.g. disk full, damaged data). The log keeps it under another name and starts a new one, see the next lines |
+| `SQLite telegram log: kept the database of the previous version as …` | The telegrams recorded so far are in that file (e.g. `telegrams.v1-20261027-091859.db`, readable as before); new telegrams go to a new database. Delete the file when you no longer need it |
+| `SQLite telegram log: unable to keep the database aside and start a new one, telegrams are not recorded` | Usually another program has the database open (e.g. Home Assistant's SQL integration) or the disk is full. ebusd runs on without the telegram log; fix the cause and restart the app |
+| `SQLite telegram log: database … is locked by another program, trying again` | Another program is writing to the database; the logger is restarted and tries again |
 | `SQLite telegram log: no data from ebusd for 60 seconds` | No bus signal, or the dump was switched off with `ebusctl dump` (run it again to switch it on) |
 | `SQLite telegram log exited with code … — restarting in 10s` | The logger crashed and is restarted; telegrams in between are not recorded |

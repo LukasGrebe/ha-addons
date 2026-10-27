@@ -383,6 +383,57 @@ def upgrade_db(db, path):
     return count
 
 
+def is_locked(err):
+    """Whether err says that another program holds the write lock of the database."""
+    return isinstance(err, sqlite3.OperationalError) and "locked" in str(err)
+
+
+def move_aside(db, path):
+    """Close the database and rename its files, so that a new one can be started at path.
+
+    Only while no other program has it open: its -wal and -shm files would end up
+    with the new database otherwise. Returns the new name.
+    """
+    try:  # leaving WAL mode needs the database for itself
+        mode = db.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
+    except sqlite3.OperationalError:
+        mode = None
+    db.close()
+    if mode != "delete":
+        raise OSError(f"{path} is open in another program (e.g. Home Assistant's SQL integration)")
+    stem, ext = os.path.splitext(path)
+    backup = f"{stem}.v1-{time.strftime('%Y%m%d-%H%M%S')}{ext}"
+    if os.path.exists(backup):
+        raise OSError(f"{backup} exists")
+    os.rename(path, backup)
+    if os.path.exists(path + "-wal"):  # SQLite removes it when leaving WAL mode
+        os.rename(path + "-wal", backup + "-wal")
+    if os.path.exists(path + "-shm"):  # only an index of the -wal file, no data
+        os.remove(path + "-shm")
+    return backup
+
+
+def upgrade_or_replace_db(db, path):
+    """Convert a database of an older version, or keep it aside and start a new one.
+
+    Returns the database to write to. Raises sqlite3.OperationalError if another
+    program has the database locked (the conversion has not written anything then,
+    so trying again later is cheap), and OSError or sqlite3.Error if the old
+    database cannot be kept aside or a new one cannot be started.
+    """
+    try:
+        upgrade_db(db, path)
+        return db
+    except (OSError, sqlite3.Error, ValueError) as err:
+        if is_locked(err):
+            raise
+        log.error("unable to convert database %s, it is unchanged: %s", path, err)
+    backup = move_aside(db, path)
+    log.warning("kept the database of the previous version as %s (it is not deleted automatically), "
+                "writing telegrams to a new database", backup)
+    return open_db(path)
+
+
 def open_fifo(path):
     if not stat.S_ISFIFO(os.stat(path).st_mode):
         raise OSError(f"{path} is not a FIFO")
@@ -495,9 +546,12 @@ def main():
         open(args.ready_file, "w").close()
     # after ebusd was started, so that converting a large database does not delay it
     try:
-        upgrade_db(db, args.db)
-    except (OSError, sqlite3.Error, ValueError) as err:
-        log.error("unable to convert database %s, it is unchanged: %s", args.db, err)
+        db = upgrade_or_replace_db(db, args.db)
+    except (OSError, sqlite3.Error) as err:
+        if is_locked(err):
+            log.warning("database %s is locked by another program, trying again: %s", args.db, err)
+            return 1  # run.sh starts the logger again
+        log.error("unable to keep the database aside and start a new one, telegrams are not recorded: %s", err)
         return EXIT_CONFIG
     log.info("writing telegrams to %s (retention: %s)", args.db,
              f"{args.retention_days} days" if args.retention_days else "keep all")
