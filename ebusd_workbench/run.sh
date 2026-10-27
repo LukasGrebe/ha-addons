@@ -1,7 +1,7 @@
 #!/usr/bin/with-contenv bashio
 # shellcheck shell=bash
 
-bashio::log.info "eBUSd Workbench version $(bashio::app.version)"
+bashio::log.info "ebusd Config Workbench version $(bashio::app.version)"
 
 export WORKBENCH_DB
 export WORKBENCH_DEPLOY_PATH

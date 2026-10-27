@@ -1,6 +1,6 @@
-# Home Assistant App: eBUSd Workbench
+# Home Assistant App: ebusd Config Workbench
 
-The Workbench is for working on eBUS message definitions. It reads the telegrams recorded by
+The ebusd Config Workbench (the Workbench for short) is for working on eBUS message definitions. It reads the telegrams recorded by
 the [eBUSd app](../ebusd/DOCS.md#sqlite-telegram-log), shows them next to Home Assistant
 entity changes, and lets you edit, compile, test and deploy definitions from the browser. The
 device only serves files and the database: the TypeSpec compiler and ebusd's message decoder
@@ -105,6 +105,19 @@ result in place:
   into the setup of this installation (the row's other candidates leave it). *ebusd's choice*
   undoes a pick. *in setup* includes or excludes a definition without changing what the row
   shows.
+- **History**: each card charts the definition's values over the whole recording by the
+  timestamp of every telegram (numbers as a line with the min–max band, other values as lanes);
+  hover for a value, click to move the timeline there. The blue band is the timeline's window.
+- **Pivot**: the **+** and **−** buttons next to a row split it at its next message ID byte or
+  combine it with the rows that share all but its last byte (all rows of the command when no
+  ID byte is left), like expanding and collapsing a pivot table. Only the telegrams that start
+  with that prefix are regrouped (the rules are in *Settings → Telegram grouping*, where they can
+  be cleared or reset to the defaults). **rows like the definitions** (or the notice above the
+  timeline) sets the rules from the decoded definitions: one row per message they know.
+- **hide failing** in the picker (and in the Choose step) hides candidates that fail to decode
+  some recorded telegram.
+- **source ↗** opens the TypeSpec source of a definition at its line in the editor (read only
+  for what only a community layer changes); for an own definition it opens the own definitions.
 - **Many candidates on one row** usually means the row groups telegrams by fewer ID bytes
   than the definitions use (for `b51a` the register is 3 bytes, the default row key 1): the
   "candidates" are then different messages (registers), each in the file ebusd loads and again
@@ -131,15 +144,30 @@ ebusd · pr/660, …`) shows what is loaded and decoding progress; it opens the 
 In *Settings* pick the entities whose state changes you want to see (the circulation pump,
 a thermostat, a window sensor, …). The Workbench subscribes to them through the Home
 Assistant API and stores every change in the table `ha_state` of the telegram database, with
-the previous state and the attributes. They appear as rows at the top of the timeline. Only
-state changes are stored, attribute-only changes are ignored.
+the previous state and the attributes. They appear as **flags in the events lane** between the
+time axis and the rows (like log annotations, not as rows): hover for the change, click a flag
+for the entity's history of the window. Only state changes are stored, attribute-only changes
+are ignored.
 
-### Notes and markers
+### Notes: what the terminal's `log` command does
 
-Notes made with the `log` command in the eBUSd app's terminal ("set hot water to 50 °C",
-with the time it happened and how exact that time is) are drawn as orange markers with the
-uncertainty as a band. **+ marker** in the timeline adds such a note at the current time.
-Both live in the table `event` of the telegram database, in the layout of the eBUSd app.
+Notes ("set hot water to 50 °C", with the time it happened and how exact that time is) are
+drawn as orange flags in the events lane with the uncertainty as a band across the rows. They
+are made with the `log` command of the eBUSd app's terminal or with **＋ event** in the
+timeline, which does the same:
+
+- **What happened** (optional: without a message only the time is noted).
+- **When**: now, or at a date and time, or **pick on the timeline** and click the moment.
+- **How exact**: up to *x* before and *y* after (units ms, s, min, h), with presets: ±500 ms,
+  ±2 s, ±10 s, the whole minute, up to 10 min / 1 h before. The band is drawn on the timeline
+  while you fill the form.
+- The equivalent terminal command is shown (`log 8:50:00 -10m Dampf vom Abtauen`) and can be
+  copied.
+- **Recent notes** lists the latest notes (click the time to go there, ✕ to delete); a click
+  on a note's flag opens the form with that note highlighted.
+
+Notes and entity changes live in the table `event` (layout of the eBUSd app) and `ha_state`
+of the telegram database.
 
 ### Tables
 
@@ -152,12 +180,51 @@ Both live in the table `event` of the telegram database, in the layout of the eB
 
 ## Definitions
 
-The left column is the git repository, the middle the workspace (editor, decoded telegrams,
-setup, export, evidence), the right the build steps.
+The page follows the way you work, in steps (tabs):
+
+1. **Sources**: where definitions come from. The default definitions
+   ([john30/ebusd-configuration](https://github.com/john30/ebusd-configuration), cloned in the
+   background with a progress indicator), a repository of your own, community pull requests and
+   other repositories (layers), definitions you write yourself, and **Compile**. The same panel
+   is in the timeline (**Sources** button), and the timeline offers it as a notice when there are
+   no definitions yet.
+2. **Live decoding**: every distinct telegram of the recording as it is decoded, newest first.
+3. **Choose**: all definitions that matched, to tick and rename.
+4. **Edit**: the TypeSpec sources with their tree; saving recompiles and decodes the recording
+   again.
+5. **Summary & save**: what you chose with its sources and how each definition fared, and the
+   files for ebusd.
+
+*Evidence* (ebus-evidence profile checks and the raw log export) is a step of its own.
+
+### Your own definitions
+
+Definitions you write or paste (ebusd CSV lines, one per message) are decoded over the whole
+recording at once and appear as candidates of kind *own definition* next to the compiled ones,
+for rows with or without other candidates. They are never chosen automatically; pick one in the
+timeline. Three ways to make one:
+
+- **Define a message that no definition decodes**: click such a row in the timeline (it shows
+  *＋ define*). The editor is prefilled from what the recording shows: kind (`r`/`w` when ebusd
+  itself polls, `u`/`uw` for what other devices exchange, `u` for broadcasts), circuit (from the
+  identification of the device), address, command and ID, and the data bytes. Click a byte to
+  see what it could be, every number type (UCH, D1C, D2C, FLT, EXP, …) with its latest value and
+  its range over the whole history, and apply one; the rest stays raw (HEX). Name the fields,
+  add a divisor or unit; the history of the selected field is charted. ebusd's own decoder
+  checks the line against every recorded variant while you work (how many it decodes, the
+  latest decoded text, the errors). **Add as my definition** decodes the recording with it and
+  picks it for the row.
+- **Edit a candidate**: **raw** in a candidate card shows the CSV line(s) as ebusd reads them;
+  change them and add the result as your own definition.
+- **Paste**: write or paste lines in the Sources step or the timeline's Sources popover.
+
+The text is stored in the app's settings; the files of the setup contain these definitions with
+the comment `# from layer custom`.
 
 ### Repository
 
-1. **Clone** your fork of ebusd-configuration (or *Start empty*). The tree shows the
+1. **Load the default definitions** or **use another repository** (your fork of
+   ebusd-configuration; set a token in the app configuration to push), or *Start empty*. The tree shows the
    `.tsp` sources; symlinked files (ebusd-configuration shares definitions between devices
    that way) are read-only, edit their target.
 2. **Edit** a file and **Save** (Ctrl+S). Changed files are marked in the tree and listed with
@@ -170,7 +237,9 @@ Definitions for a heating system often sit in open pull requests of
 [ebusd-configuration](https://github.com/john30/ebusd-configuration/pulls) for a long time
 (for a Vaillant aroTHERM with HMU HW5103 and VWZIO, for example, #660, #598 and #604 add a lot).
 Instead of merging them into your fork, add them as **layers**: enter the pull request number
-(or a branch such as `upstream/master`) and the Workbench fetches its head from the upstream
+(a branch such as `upstream/master`, or the URL of another repository, optionally with a
+branch: `https://github.com/<you>/ebusd-configuration.git#my-branch`) and the Workbench
+fetches its head from the upstream
 repository (`https://github.com/john30/ebusd-configuration.git`, changeable in the settings
 file) into `refs/workbench/`, without touching your checkout. Compiling then applies the
 files each enabled layer changes on top of your sources, in the listed order; a file changed

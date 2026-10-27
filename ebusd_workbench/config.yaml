@@ -1,5 +1,5 @@
-name: eBUSd Workbench
-version: "0.2.1"
+name: ebusd Config Workbench
+version: "0.3.0"
 slug: ebusd_workbench
 description: >
   Work on ebusd message definitions: browse the recorded eBUS telegrams of the eBUSd app
@@ -15,7 +15,7 @@ startup: application
 ingress: true
 ingress_port: 8099
 panel_icon: mdi:chart-timeline
-panel_title: eBUSd Workbench
+panel_title: ebusd Config Workbench
 homeassistant_api: true
 map:
   - app_config:rw

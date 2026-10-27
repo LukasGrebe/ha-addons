@@ -21,6 +21,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import __version__, deploy
+from .db import NO_VALUE
 from .gitrepo import RepoError, safe_relative
 
 log = logging.getLogger("http")
@@ -138,17 +139,35 @@ def api_runs(ctx, req):
                 pbsb, length = item.split(":", 1)
                 overrides[pbsb.strip().lower()] = int(length)
     max_rows = max(1000, min(2_000_000, int(req.query.get("max", 300_000))))
-    return ctx.db.runs(from_ms, to_ms, id_bytes=id_bytes, id_overrides=overrides, max_rows=max_rows)
+    return ctx.db.runs(from_ms, to_ms, id_bytes=id_bytes, id_overrides=overrides, max_rows=max_rows,
+                       id_rules=settings.get("id_rules") or {})
 
 
 @route("GET", "/api/telegrams")
 def api_telegrams(ctx, req):
     from_ms, to_ms = window(req.query)
     q = req.query
+    def addr(name):
+        return NO_VALUE if q.get(name) == "--" else int_or_none(q.get(name), 16)
+
     return {"telegrams": ctx.db.telegrams(
-        from_ms, to_ms, qq=int_or_none(q.get("qq"), 16), zz=int_or_none(q.get("zz"), 16),
-        pb=int_or_none(q.get("pb"), 16), sb=int_or_none(q.get("sb"), 16), id_prefix=q.get("id") or None,
+        from_ms, to_ms, qq=addr("qq"), zz=addr("zz"), pb=addr("pb"), sb=addr("sb"), id_prefix=q.get("id") or None,
         limit=int(q.get("limit", 500)), order=q.get("order", "DESC"))}
+
+
+@route("GET", "/api/telegrams/series")
+def api_series(ctx, req):
+    """Timestamps and telegrams of one row (source, destination, command, message ID) for a value history chart."""
+    q = req.query
+    from_ms, to_ms = window(q, 31 * 86400_000)
+
+    def addr(name):
+        return NO_VALUE if q.get(name) == "--" else int_or_none(q.get(name), 16)
+
+    result = ctx.db.series(from_ms, to_ms, qq=addr("qq"), zz=addr("zz"), pb=addr("pb"), sb=addr("sb"), id_prefix=q.get("id") or None,
+                           max_points=int(q.get("max", 20000)))
+    result.update({"from_ms": from_ms, "to_ms": to_ms})
+    return result
 
 
 @route("GET", "/api/telegrams/distinct")
@@ -167,15 +186,28 @@ def api_events(ctx, req):
 
 @route("POST", "/api/events")
 def api_events_post(ctx, req):
+    """Note an event (what the terminal's `log` command does): message (optional), ms (when, default now),
+    uncertainty_ms (symmetric) or ms_min and ms_max (the range it may have happened in)."""
     body = req.json()
     message = str(body.get("message") or body.get("note") or "").strip()[:500]
-    if not message:
-        raise ApiError("a message is required")
     ts_ms = body.get("ms")
-    uncertainty = max(0, min(86400_000, int(body.get("uncertainty_ms", 500))))
-    event_id = ctx.db.add_marker(message, ts_ns=int(ts_ms) * 1_000_000 if ts_ms else None,
-                                 uncertainty_ns=uncertainty * 1_000_000)
+    kwargs = {}
+    if body.get("ms_min") is not None or body.get("ms_max") is not None:
+        if ts_ms is None:
+            raise ApiError("ms (the time) is required with ms_min / ms_max")
+        kwargs["ts_min_ns"] = int(body.get("ms_min", ts_ms)) * 1_000_000
+        kwargs["ts_max_ns"] = int(body.get("ms_max", ts_ms)) * 1_000_000
+    else:
+        kwargs["uncertainty_ns"] = max(0, min(7 * 86400_000, int(body.get("uncertainty_ms", 500)))) * 1_000_000
+    if ts_ms is not None and not (0 < int(ts_ms) < 4102444800000):
+        raise ApiError("invalid time")
+    event_id = ctx.db.add_marker(message, ts_ns=int(ts_ms) * 1_000_000 if ts_ms is not None else None, **kwargs)
     return {"id": event_id}
+
+
+@route("GET", "/api/notes")
+def api_notes(ctx, req):
+    return {"notes": ctx.db.notes(int(req.query.get("limit", 50)))}
 
 
 @route("DELETE", "/api/events/(?P<id>[0-9]+)")
@@ -221,7 +253,10 @@ def api_repo(ctx, req):
 @route("POST", "/api/repo/clone")
 def api_repo_clone(ctx, req):
     body = req.json()
-    ctx.repo.clone(body.get("url", ""), body.get("branch") or None)
+    if body.get("background"):
+        ctx.repo.clone_background(body.get("url", ""), body.get("branch") or None)
+    else:
+        ctx.repo.clone(body.get("url", ""), body.get("branch") or None)
     return ctx.repo.status()
 
 

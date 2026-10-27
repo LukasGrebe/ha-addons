@@ -12,10 +12,13 @@ MAX_SIZE = 4 * 1024 * 1024  # per file
 DEPLOY_SUFFIXES = (".csv", ".inc")  # ebusd loads .csv files; .inc files are pulled in by !load/!include
 
 
+MANIFEST = "workbench-setup.json"   # what was sourced where; ebusd ignores it
+
+
 def csv_relative(path):
     rel = safe_relative(path)
-    if not rel.endswith(DEPLOY_SUFFIXES):
-        raise RepoError(f"{path}: only .csv and .inc files are deployed")
+    if not rel.endswith(DEPLOY_SUFFIXES) and rel != MANIFEST:
+        raise RepoError(f"{path}: only .csv and .inc files (and {MANIFEST}) are deployed")
     return rel
 
 

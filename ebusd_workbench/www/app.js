@@ -1,4 +1,4 @@
-// eBUSd Workbench UI: shell, API helper, status bar, tabs.
+// ebusd Config Workbench UI: shell, API helper, status bar, tabs.
 import { Timeline } from "./timeline.js";
 import { Definitions } from "./definitions.js";
 import { SettingsView } from "./settings.js";

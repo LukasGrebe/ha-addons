@@ -28,7 +28,7 @@ system belong to the [ebusd project](https://github.com/john30/ebusd/discussions
    from forks once a maintainer has read the diff and added the label `preview` (remove
    and add it again to update the preview).
 
-## eBUSd Workbench
+## ebusd Config Workbench
 
 The second app in this repository, `ebusd_workbench/`, follows the same rules (changelog in
 `ebusd_workbench/CHANGELOG.md`, options in its `config.yaml`, translations and `DOCS.md`). Its

@@ -1,8 +1,27 @@
-# 0.2.1 (unreleased)
+# 0.3.0 (unreleased)
 
 The timeline becomes the place where definitions are compared, chosen and named.
 
 ## Features
+* Definitions page as steps: Sources, Live decoding (newest first), Choose, Edit, Summary &
+  save. Start in the timeline: a notice offers the default definitions (cloned in the
+  background with progress), your own repository or your own definitions; the Sources popover
+  stays available, with pull requests and other repositories (by URL and branch) as layers
+* Own definitions: a CSV text decoded over the whole recording at once, shown as candidates
+  of kind "own definition"; a row without a definition opens an editor prefilled from the
+  recording (kind, circuit, address, command, ID, data bytes), with every number type for a byte
+  and its range over the history, a chart of the field, and ebusd's decoder checking the line
+  against every recorded variant; candidates have a raw view to copy and change
+* Candidate cards say what kind a definition is (read, write, passive read, passive write), tell
+  groups with the same values apart by how they differ as definitions, chart the history by
+  timestamp, link to the TypeSpec source at its line, and can hide candidates that fail
+* Pivot rows: + and − next to a row split or combine at a message ID byte (prefix rules);
+  "rows like the definitions" sets them from the decoded definitions
+* Events: ＋ event does what the terminal's log command does (message, when, how exact, the
+  command line, recent notes); Home Assistant entity changes are flags in an events lane
+* Summary with sources of every chosen definition; deploy writes workbench-setup.json
+  (repository and commit, pull requests, own definitions, devices, coverage) next to the CSV files
+* The app is called ebusd Config Workbench
 * Browser store (IndexedDB): the distinct telegrams of the recording are kept once with their
   counts and times, the timeline's bars as pointers to them, and every decoding of a telegram
   with every fitting definition next to it, with the definition's source (checkout or

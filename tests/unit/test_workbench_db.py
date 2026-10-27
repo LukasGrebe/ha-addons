@@ -78,6 +78,46 @@ class TelegramQueries(unittest.TestCase):
         zero = self.db.runs(from_ms, to_ms, id_bytes=0, id_overrides={})
         self.assertTrue(all(r["id"] == "" for r in zero["rows"]))
 
+    def test_runs_id_rules_split_and_combine_per_message(self):
+        from_ms, to_ms = self.window(1)
+        # default: both registers of b509 collapse into the row "0d"
+        base = self.db.runs(from_ms, to_ms, id_bytes=1, id_overrides={})
+        ids = {r["id"] for r in base["rows"] if (r["pb"], r["sb"]) == (0xB5, 0x09)}
+        self.assertEqual(ids, {"0d"})
+        # a rule splits only the telegrams that start with the prefix: register 0d0f00 gets its own row, the rest stays together
+        split = self.db.runs(from_ms, to_ms, id_bytes=1, id_overrides={}, id_rules={"08b509:0d0f": 3})
+        ids = {r["id"] for r in split["rows"] if (r["pb"], r["sb"]) == (0xB5, 0x09)}
+        self.assertEqual(ids, {"0d0f00", "0d"})
+        total = lambda result, rid: sum(r["n"] for r in result["rows"] if (r["pb"], r["sb"], r["id"]) == (0xB5, 0x09, rid))
+        self.assertEqual(total(split, "0d0f00") + total(split, "0d"), total(base, "0d"))
+        # the longest matching prefix wins, and a rule can also combine: ID length 1 for a command a override splits by 3
+        both = self.db.runs(from_ms, to_ms, id_bytes=1, id_overrides={"b509": 3}, id_rules={"08b509:0d": 1, "08b509:0d0f": 2})
+        ids = {r["id"] for r in both["rows"] if (r["pb"], r["sb"]) == (0xB5, 0x09)}
+        self.assertIn("0d", ids)
+        self.assertIn("0d0f", ids)
+        self.assertNotIn("0d0f00", ids)
+        # rules for other commands do not touch this one; garbage is ignored
+        other = self.db.runs(from_ms, to_ms, id_bytes=1, id_overrides={}, id_rules={"08b51a:04": 3, "zz": 1, "08b509:0": 1})
+        ids = {r["id"] for r in other["rows"] if (r["pb"], r["sb"]) == (0xB5, 0x09)}
+        self.assertEqual(ids, {"0d"})
+
+    def test_series_of_a_row(self):
+        from_ms, to_ms = self.window(1)
+        series = self.db.series(from_ms, to_ms, qq=0x10, zz=0x08, pb=0xB5, sb=0x10, id_prefix="00")
+        self.assertEqual(series["total"], 360)
+        self.assertEqual(series["stride"], 1)
+        self.assertEqual(len(series["points"]), 360)
+        self.assertLess(len(series["lines"]), 20)            # repeated telegrams are stored once
+        times = [p[0] for p in series["points"]]
+        self.assertEqual(times, sorted(times))
+        self.assertTrue(all(0 <= i < len(series["lines"]) for _, i in series["points"]))
+        self.assertTrue(series["lines"][0].startswith("1008b5100"))
+        thinned = self.db.series(from_ms, to_ms, qq=0x10, zz=0x08, pb=0xB5, sb=0x10, id_prefix="00", max_points=100)
+        self.assertEqual(thinned["stride"], 4)
+        self.assertLessEqual(len(thinned["points"]), 91)
+        self.assertEqual(thinned["points"][-1][0], series["points"][-1][0])
+        self.assertEqual(self.db.series(from_ms, to_ms, qq=0x99)["points"], [])
+
     def test_runs_truncation(self):
         from_ms, to_ms = self.window(6)
         result = self.db.runs(from_ms, to_ms, max_rows=1000)

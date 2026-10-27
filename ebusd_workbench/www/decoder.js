@@ -8,11 +8,14 @@
 // the identification telegrams and the ones that decoded to a message a condition refers to.
 import { api, app, bus, fmt } from "./app.js";
 import { openStore } from "./store.js";
+import { CSV_HEADER } from "./setup.js";
+import { idLengthOf } from "./colors.js";
 
 const SYNC_INTERVAL = 5000;
 const SYNC_CHUNK = 86400e3;
 const BATCH = 1500;
 
+export const CUSTOM_FILE = "custom.csv";
 export const defKeyOf = (c) => `${c.file}|${c.circuit}|${c.name}|${c.write ? "w" : ""}${c.passive ? "u" : ""}`;
 const hex2 = (n) => n.toString(16).padStart(2, "0");
 const byFirst = (a, b) => (a.first_ms ?? Infinity) - (b.first_ms ?? Infinity) || a.line.localeCompare(b.line);
@@ -28,6 +31,7 @@ export function lineOfRun(row, run) {
 
 /** Where a decoded definition comes from: "base" (the checkout) or the layer that added it. */
 export function originOf(compile, file, name) {
+  if (file === CUSTOM_FILE) return "custom";
   if (!compile || !compile.layers?.length) return "base";
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const base = compile.baseOutputs?.[file];
@@ -49,6 +53,8 @@ export function originOf(compile, file, name) {
   const inDir = [...new Set(Object.entries(compile.origins || {}).filter(([p]) => p.startsWith(dir)).map(([, l]) => l))];
   return inDir.length === 1 ? inDir[0] : "layers";
 }
+
+const fnvText = (text) => { let h = 2166136261; for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16); };
 
 const compactFields = (fields) => {
   if (!fields || typeof fields !== "object") return null;
@@ -75,6 +81,9 @@ export class Decoder {
     this.error = null;
     this.worker = null;
     this.workerFailed = false;
+    this.workers = {};
+    this.custom = "";            // own definitions: ebusd CSV lines, decoded like the compiled ones
+    this.customStatus = null;
     this.requests = new Map();
     this.reqId = 0;
     this.dirtyDefs = new Set();
@@ -85,6 +94,7 @@ export class Decoder {
 
   async init() {
     this.store = await openStore();
+    this.custom = app.settings?.custom || "";
     const db = app.status?.db || {};
     const source = `${db.path || ""}|${db.first_ms || 0}`;
     let meta = null;
@@ -113,6 +123,8 @@ export class Decoder {
     this.rebuildEntries(false);
     this.markReady();
     this.emit("loaded");
+    // own definitions work without a definitions repository
+    if (!this.compile && this.custom.trim()) this.setCompile(this.customOnlyCompile());
     setInterval(() => { if (document.visibilityState === "visible") this.sync(); }, SYNC_INTERVAL);
     this.sync();
   }
@@ -135,7 +147,7 @@ export class Decoder {
     return {
       store: this.store?.kind || "none", compile: this.compile ? { id: this.compile.id, at: this.compile.at, summary: this.compile.summary, entry: this.compile.entry, layers: this.compile.layers, loaded: this.compile.loaded } : null,
       telegrams: this.telegrams.size, decoded, known, definitions: this.entries.length, active: this.entries.filter((e) => e.status === "active").length,
-      syncing: this.syncing, decoding: this.decoding, progress: this.progress, fraction: this.fraction, lastSync: this.meta.lastSync, error: this.error,
+      custom: this.customStatus, syncing: this.syncing, decoding: this.decoding, progress: this.progress, fraction: this.fraction, lastSync: this.meta.lastSync, error: this.error,
     };
   }
 
@@ -274,8 +286,80 @@ export class Decoder {
   files() {
     if (!this.compile?.outputs) return null;
     const selected = this.compile.selected;
-    if (!selected) return this.compile.outputs;
-    return Object.fromEntries(Object.entries(this.compile.outputs).filter(([name]) => selected.includes(name) || name.endsWith(".inc")));
+    const base = !selected ? this.compile.outputs
+      : Object.fromEntries(Object.entries(this.compile.outputs).filter(([name]) => selected.includes(name) || name.endsWith(".inc")));
+    const custom = this.customFile();
+    return custom ? { ...base, [CUSTOM_FILE]: custom } : base;
+  }
+
+  /** The own definitions as a CSV file (the header is added when the text has none). */
+  customFile() {
+    const text = this.custom.trim();
+    if (!text) return null;
+    return `${/^\s*type\s*,/i.test(text) ? "" : CSV_HEADER + "\n"}${text}\n`;
+  }
+
+  customOnlyCompile() {
+    return { id: "custom", at: new Date().toISOString(), entry: "", root: "", layers: [], outputs: {}, selected: null, baseOutputs: null, baseFiles: null, layerFiles: {},
+      origins: {}, originLayers: {}, conflicts: [], summary: "own definitions only (no definitions repository)", warnings: 0, loaded: null };
+  }
+
+  /** New text of the own definitions: decoded over the whole recording at once, shown like any other candidate. */
+  async setCustom(text) {
+    await this.ready;
+    this.custom = String(text || "");
+    if (!this.compile) {
+      if (this.custom.trim()) await this.setCompile(this.customOnlyCompile());
+      return;
+    }
+    await this.redecodeCustom();
+  }
+
+  async redecodeCustom() {
+    if (!this.compile) return;
+    const dropped = [];
+    for (const map of this.decodes.values()) {
+      for (const [key, d] of map) if (key.startsWith(`${CUSTOM_FILE}|`)) { dropped.push(d.id); map.delete(key); }
+    }
+    for (const key of [...this.defs.keys()]) if (key.startsWith(`${CUSTOM_FILE}|`)) this.defs.delete(key);
+    try { await this.store.deleteKeys("decodes", dropped); } catch (err) { console.warn(err); }
+    this.customStatus = null;
+    const file = this.customFile();
+    if (file) {
+      this.progress = "decoding own definitions over the recording";
+      this.fraction = null;
+      this.emit("progress");
+      try {
+        const lines = this.telegramList().filter((t) => t.master).map((t) => t.line);
+        const result = await this.run({ files: { [CUSTOM_FILE]: file }, filesId: `custom|${fnvText(file)}`, args: ["--candidates", `--file=${CUSTOM_FILE}`], stdin: lines.join("\n") + "\n", worker: "custom" });
+        const loaded = result.results.find((r) => r.loaded) || {};
+        this.customStatus = { messages: loaded.messages || 0, errors: loaded.errors || 0, stderr: result.stderr.slice(0, 20) };
+        const now = Date.now();
+        const put = [];
+        for (const r of result.results) {
+          if (!("input" in r) || !r.candidates) continue;
+          let map = this.decodes.get(r.input);
+          if (!map) this.decodes.set(r.input, (map = new Map()));
+          for (const c of r.candidates) {
+            if (c.file !== CUSTOM_FILE) continue;
+            const key = defKeyOf(c);
+            this.noteDef(c);
+            const d = { id: `${r.input}|${key}`, line: r.input, defKey: key, result: c.result || "unknown", text: c.text || "", fields: compactFields(c.fields),
+              available: true, selected: false, used: false, compileId: this.compile.id, at: now };
+            map.set(key, d);
+            put.push(d);
+          }
+        }
+        await this.store.putAll("decodes", put);
+      } catch (err) {
+        console.error(err);
+        this.customStatus = { messages: 0, errors: 1, stderr: [err.message] };
+      } finally {
+        this.progress = null;
+      }
+    }
+    this.rebuildEntries(true);
+    this.emit("decodes");
   }
 
   // -- decoding ------------------------------------------------------------------------------
@@ -342,8 +426,8 @@ export class Decoder {
     const ordered = [...all.values()].sort(byFirst);
     const files = this.files();
     const args = ["--candidates"];
-    if (compile.selected) for (const name of compile.selected) if (name.endsWith(".csv")) args.push(`--file=${name}`);
-    const result = await this.run({ files, filesId: `${compile.id}|${(compile.selected || []).join(",")}`, args, stdin: ordered.map((t) => t.line).join("\n") + "\n" });
+    if (compile.selected) for (const name of [...compile.selected, ...(files[CUSTOM_FILE] ? [CUSTOM_FILE] : [])]) if (name.endsWith(".csv")) args.push(`--file=${name}`);
+    const result = await this.run({ files, filesId: `${compile.id}|${(compile.selected || []).join(",")}|${fnvText(files[CUSTOM_FILE] || "")}`, args, stdin: ordered.map((t) => t.line).join("\n") + "\n" });
     const loaded = result.results.find((r) => r.loaded);
     if (loaded) compile.loaded = { messages: loaded.messages, errors: loaded.errors, files: loaded.files?.length || 0, stderr: result.stderr.slice(0, 50) };
     if (result.exitCode && !result.results.some((r) => "input" in r)) throw new Error(result.stderr[0] || `ebusd-check exited with ${result.exitCode}`);
@@ -363,7 +447,8 @@ export class Decoder {
         seen.add(key);
         candidates.push(c);
       }
-      const usable = candidates.filter((c) => c.available && this.inScanFile(c.file, c.zz));
+      // what ebusd would use: own definitions are never ebusd's choice, they are picked by hand
+      const usable = candidates.filter((c) => c.available && c.file !== CUSTOM_FILE && this.inScanFile(c.file, c.zz));
       const used = usable.length ? usable.reduce((best, c) => (c.idlen > best.idlen ? c : best), usable[0]) : null;
       const map = new Map();
       for (const c of candidates) {
@@ -376,6 +461,7 @@ export class Decoder {
       }
       this.decodes.set(r.input, map);
       t.compileId = compile.id;
+      t.decodedAt = now;
       t.error = r.error || null;
       tput.push(t);
     }
@@ -445,7 +531,7 @@ export class Decoder {
       delete def.fieldSet; delete def.companionSet;
       if (!def.seen && !def.companionOf.length) { this.defs.delete(key); continue; }
       def.companion = !def.seen;
-      def.status = def.companion ? "companion" : def.used > 0 ? "active" : def.ok === 0 ? "error" : !def.available ? "conditional" : !def.inScanFile ? "variant" : "hidden";
+      def.status = def.companion ? "companion" : def.source === "custom" ? "custom" : def.used > 0 ? "active" : def.ok === 0 ? "error" : !def.available ? "conditional" : !def.inScanFile ? "variant" : "hidden";
     }
     for (const def of this.defs.values()) {
       if (def.companion && !def.fields.length) def.fields = [...new Set(def.companionOf.flatMap((k) => this.defs.get(k)?.fields || []))];
@@ -475,6 +561,11 @@ export class Decoder {
 
   /** The telegrams sorted by first appearance (manual ones last). */
   telegramList() { return [...this.telegrams.values()].sort(byFirst); }
+
+  /** The telegrams newest decoding first; the ones still waiting for a decoding at the end. */
+  decodedList() {
+    return [...this.telegrams.values()].sort((a, b) => (b.decodedAt || 0) - (a.decodedAt || 0) || (b.first_ms ?? -Infinity) - (a.first_ms ?? -Infinity) || a.line.localeCompare(b.line));
+  }
 
   /** The decoding ebusd itself would use for a telegram. */
   usedDecode(line) {
@@ -506,6 +597,38 @@ export class Decoder {
     return out;
   }
 
+  /**
+   * Prefix rules that make the timeline's rows follow the definitions: for every telegram a
+   * definition of ebusd's choice decodes, the data bytes the definition uses as message ID.
+   * Only rules that change the current grouping are returned: Map("zzpbsb:prefix" -> ID length).
+   */
+  idRules(settings) {
+    const rules = new Map();
+    for (const t of this.telegrams.values()) {
+      const d = this.usedDecode(t.line);
+      if (!d || !t.master) continue;
+      const def = this.defs.get(d.defKey);
+      if (!def) continue;
+      if (idLengthOf(t.master, settings) === def.idlen) continue;
+      rules.set(`${t.master.slice(2, 8)}:${t.master.slice(10, 10 + def.idlen * 2)}`, def.idlen);
+    }
+    return rules;
+  }
+
+  /** The same for the telegrams of one row and every candidate there (used by "split like the definitions" in the picker). */
+  idRulesFor(telegrams, settings) {
+    const rules = new Map();
+    for (const t of telegrams) {
+      for (const d of this.decodes.get(t.line)?.values() || []) {
+        const def = this.defs.get(d.defKey);
+        if (!def || d.result !== "ok" || !t.master || def.idlen <= 0) continue;
+        if (idLengthOf(t.master, settings) >= def.idlen) continue;
+        rules.set(`${t.master.slice(2, 8)}:${t.master.slice(10, 10 + def.idlen * 2)}`, def.idlen);
+      }
+    }
+    return rules;
+  }
+
   /** Message ID lengths per device and command (ZZPBSB) as the used definitions define them. */
   idLengths() {
     const lengths = {};
@@ -523,10 +646,10 @@ export class Decoder {
 
   // -- running ebusd-check -----------------------------------------------------------------------
 
-  async run({ files, filesId, args, stdin }) {
+  async run({ files, filesId, args, stdin, worker: workerName = "main" }) {
     if (!this.workerFailed) {
       try {
-        const worker = this.ensureWorker();
+        const worker = this.ensureWorker(workerName);
         if (worker.filesId !== filesId) {
           await this.request(worker, { type: "files", id: filesId, files });
           worker.filesId = filesId;
@@ -535,7 +658,8 @@ export class Decoder {
       } catch (err) {
         console.warn("decode worker failed, decoding on the main thread:", err);
         this.workerFailed = true;
-        if (this.worker) { try { this.worker.terminate(); } catch { /* ignore */ } this.worker = null; }
+        for (const w of Object.values(this.workers)) { try { w.terminate(); } catch { /* ignore */ } }
+        this.workers = {};
       }
     }
     if (!this.inline) {
@@ -545,8 +669,8 @@ export class Decoder {
     return this.inline({ files, args, stdin });
   }
 
-  ensureWorker() {
-    if (this.worker) return this.worker;
+  ensureWorker(name = "main") {
+    if (this.workers[name]) return this.workers[name];
     const worker = new Worker(new URL("./decode-worker.js", import.meta.url), { type: "module" });
     worker.filesId = null;
     worker.onmessage = (e) => {
@@ -560,7 +684,7 @@ export class Decoder {
       for (const pending of this.requests.values()) pending.reject(err);
       this.requests.clear();
     };
-    this.worker = worker;
+    this.workers[name] = worker;
     return worker;
   }
 

@@ -8,6 +8,7 @@ DEFAULTS = {
     "entities": [],               # Home Assistant entities whose state changes are logged
     "id_bytes": 1,                # message ID length (data bytes after PBSB) used to group telegrams
     "id_overrides": {"b509": 3, "b524": 6},  # per PBSB or ZZ+PBSB: Vaillant register access carries a longer ID
+    "id_rules": {},               # per message: {"zzpbsb:prefix": ID length}: rows split or combined at a byte in the timeline
     "compile": {"entry": "src/main.tsp", "translations": ""},
     "deploy_subdir": "",
     "test_files": [],             # compiled files to load when testing; empty: all
@@ -15,6 +16,7 @@ DEFAULTS = {
     "layers": [],                 # pull requests / branches compiled on top of the checkout: [{ref}]
     "upstream_url": "https://github.com/john30/ebusd-configuration.git",  # where the pull requests live
     "evidence_profile": "",       # ebus-evidence profile YAML last imported
+    "custom": "",                 # own definitions (ebusd CSV lines) decoded over the recording like any other candidate
     "own_address": "31",          # ebusd's own address on this bus (--address), for raw logs and evidence checks
     "ui": {},
 }
@@ -84,6 +86,16 @@ class Settings:
                         raise ValueError(f"invalid command {pbsb} (PBSB or ZZPBSB in hex)")
                     result[pbsb] = max(0, min(8, int(length)))
                 base[key] = result
+            elif key == "id_rules":
+                if not isinstance(value, dict) or len(value) > 5000:
+                    raise ValueError("id_rules must be an object with at most 5000 entries")
+                rules = {}
+                for rule, length in value.items():
+                    command, colon, prefix = str(rule).lower().partition(":")
+                    if not colon or len(command) != 6 or len(prefix) % 2 or len(prefix) > 32 or any(c not in "0123456789abcdef" for c in command + prefix):
+                        raise ValueError(f"invalid ID rule {rule} (zzpbsb:prefix in hex)")
+                    rules[f"{command}:{prefix}"] = max(0, min(16, int(length)))
+                base[key] = rules
             elif key == "compile":
                 if not isinstance(value, dict):
                     raise ValueError("compile must be an object")
@@ -102,6 +114,8 @@ class Settings:
                     raise ValueError("setup too large")
                 base[key] = value
             elif key == "evidence_profile":
+                base[key] = str(value)[:200_000]
+            elif key == "custom":
                 base[key] = str(value)[:200_000]
             elif key == "own_address":
                 address = str(value).strip().lower()

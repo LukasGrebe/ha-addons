@@ -14,7 +14,8 @@ import time
 GIT_TIMEOUT = 60
 CLONE_TIMEOUT = 600
 UPSTREAM_URL = "https://github.com/john30/ebusd-configuration.git"
-LAYER_REF = re.compile(r"^(pr/[0-9]{1,6}|upstream/[A-Za-z0-9._/-]{1,100}|origin/[A-Za-z0-9._/-]{1,100})$")
+LAYER_REF = re.compile(r"^(pr/[0-9]{1,6}|upstream/[A-Za-z0-9._/-]{1,100}|origin/[A-Za-z0-9._/-]{1,100}|ext/[A-Za-z0-9._-]{1,150})$")
+LAYER_URL = re.compile(r"^https://[A-Za-z0-9._~%:/@+-]{3,300}(#[A-Za-z0-9._/-]{1,100})?$")
 SOURCE_SUFFIXES = (".tsp", ".yaml", ".yml", ".json", ".csv", ".md")
 SKIP_DIRS = {".git", "node_modules"}
 MAX_TREE_ENTRIES = 5000
@@ -38,18 +39,26 @@ class Repo:
     def __init__(self, directory):
         self.dir = os.path.abspath(directory)
         self.busy = None              # {"what", "since"} while a slow operation runs
+        self.error = None             # why the last background operation (clone) failed
         self._busy_lock = threading.Lock()
 
     # -- git --------------------------------------------------------------------
 
     def exists(self):
+        # a clone creates .git at once but is not usable before it is done
+        busy = self.busy
+        if busy and busy["what"].startswith("cloning"):
+            return False
         return os.path.isdir(os.path.join(self.dir, ".git"))
 
     @contextlib.contextmanager
     def working(self, what):
         """Mark a slow operation (cloning, fetching) so that the UI can show it while it runs."""
         with self._busy_lock:
+            if self.busy:
+                raise RepoError(f"busy: {self.busy['what']}")
             self.busy = {"what": what, "since": time.time()}
+            self.error = None
         try:
             yield
         finally:
@@ -71,21 +80,52 @@ class Repo:
             raise RepoError((proc.stderr.strip() or proc.stdout.strip() or f"git {args[0]} failed"))
         return proc
 
-    def clone(self, url, branch=None):
+    def _clone_args(self, url, branch):
         if not isinstance(url, str) or not url.strip() or url.strip().startswith("-"):
             raise RepoError("invalid repository URL")
-        if self.exists():
+        if os.path.isdir(os.path.join(self.dir, ".git")):
             raise RepoError("the repository folder is already a git repository")
         if os.path.isdir(self.dir) and os.listdir(self.dir):
             raise RepoError(f"{self.dir} is not empty")
-        parent = os.path.dirname(self.dir)
-        os.makedirs(parent, exist_ok=True)
         args = ["clone"]
         if branch:
             args += ["--branch", branch]
-        args += ["--", url.strip(), self.dir]
+        return args + ["--", url.strip(), self.dir]
+
+    def clone(self, url, branch=None):
+        args = self._clone_args(url, branch)
+        parent = os.path.dirname(self.dir)
+        os.makedirs(parent, exist_ok=True)
         with self.working(f"cloning {url.strip()}"):
             self.run(*args, timeout=CLONE_TIMEOUT, cwd=parent)
+
+    def clone_background(self, url, branch=None):
+        """Clone in a thread and return at once; status() reports busy, then exists or error.
+
+        A full clone of ebusd-configuration takes minutes on a small device, longer than a browser
+        request through the Home Assistant proxy should be kept open.
+        """
+        args = self._clone_args(url, branch)
+        parent = os.path.dirname(self.dir)
+        os.makedirs(parent, exist_ok=True)
+        with self._busy_lock:
+            if self.busy:
+                raise RepoError(f"busy: {self.busy['what']}")
+            self.busy = {"what": f"cloning {url.strip()}", "since": time.time()}
+            self.error = None
+
+        def work():
+            try:
+                self.run(*args, timeout=CLONE_TIMEOUT, cwd=parent)
+            except RepoError as err:
+                self.error = f"cloning {url.strip()} failed: {err}"
+            finally:
+                with self._busy_lock:
+                    self.busy = None
+
+        thread = threading.Thread(target=work, name="clone", daemon=True)
+        thread.start()
+        return thread
 
     def init(self):
         if self.exists():
@@ -96,10 +136,10 @@ class Repo:
     def status(self):
         busy = self.busy
         if not self.exists():
-            return {"exists": False, "dir": self.dir, "busy": busy}
+            return {"exists": False, "dir": self.dir, "busy": busy, "error": self.error}
         proc = self.run("status", "--porcelain=v2", "--branch", "--untracked-files=all")
         result = {"exists": True, "dir": self.dir, "branch": None, "upstream": None, "ahead": 0, "behind": 0,
-                  "changes": [], "remote": None, "head": None, "busy": busy}
+                  "changes": [], "remote": None, "head": None, "busy": busy, "error": self.error}
         for line in proc.stdout.splitlines():
             if line.startswith("# branch.head "):
                 result["branch"] = line[14:]
@@ -219,13 +259,23 @@ class Repo:
     # -- layers: pull requests and branches compiled on top of the checkout -------------
 
     @staticmethod
+    def url_slug(spec):
+        """ext/<slug> name of a layer taken from another repository: host, path and branch."""
+        url, _, branch = spec.partition("#")
+        rest = re.sub(r"^https://", "", url)
+        rest = re.sub(r"\.git$", "", rest.rstrip("/"))
+        return re.sub(r"[^A-Za-z0-9._-]+", "-", f"{rest}{'-' + branch if branch else ''}")[:150].strip("-.")
+
+    @staticmethod
     def layer_ref(spec):
         """Normalise a layer given as "660", "#660", "pr/660", "upstream/master" or "origin/next"."""
         spec = str(spec or "").strip()
         if re.fullmatch(r"#?[0-9]{1,6}", spec):
             spec = "pr/" + spec.lstrip("#")
+        if LAYER_URL.match(spec):
+            spec = "ext/" + Repo.url_slug(spec)
         if not LAYER_REF.match(spec) or ".." in spec or spec.endswith("/") or spec.endswith(".lock"):
-            raise RepoError("a layer is a pull request number (660) or a branch (upstream/master, origin/next)")
+            raise RepoError("a layer is a pull request number (660), a branch (upstream/master, origin/next) or the HTTPS URL of another repository, optionally with #branch")
         return spec
 
     def ensure_upstream(self, url=None):
@@ -243,8 +293,24 @@ class Repo:
 
     def fetch_layer(self, spec, upstream_url=None):
         """Fetch a pull request head or branch into refs/workbench/<layer> and describe it."""
+        spec = str(spec or "").strip()
         ref = self.layer_ref(spec)
         kind, _, rest = ref.partition("/")
+        if kind == "ext":
+            # another repository (a fork, a branch of someone else): the URL is kept in the repository's config
+            if LAYER_URL.match(spec):
+                url, _, branch = spec.partition("#")
+                self.run("config", "--local", f"workbench-layer.{ref}.url", url)
+                self.run("config", "--local", f"workbench-layer.{ref}.branch", branch or "HEAD")
+            else:
+                url = self.run("config", "--local", "--get", f"workbench-layer.{ref}.url", check=False).stdout.strip()
+                branch = self.run("config", "--local", "--get", f"workbench-layer.{ref}.branch", check=False).stdout.strip() or "HEAD"
+                if not url:
+                    raise RepoError(f"the repository of layer {ref} is not known: add it again with its URL")
+            source = branch if branch == "HEAD" else f"refs/heads/{branch}"
+            with self.working(f"fetching {url}"):
+                self.run("fetch", "--quiet", "--force", url, f"{source}:refs/workbench/{ref}", timeout=CLONE_TIMEOUT)
+            return self.layer_info(ref)
         if kind == "pr":
             remote = self.ensure_upstream(upstream_url)
             source = f"refs/pull/{rest}/head"

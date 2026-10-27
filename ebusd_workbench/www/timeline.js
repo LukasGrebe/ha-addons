@@ -11,14 +11,17 @@
 // place: hovering one previews its decoding in the row, picking one puts it into the setup of
 // this installation, whose drawer on the right exports the config files and entities.
 import { api, app, append, bus, fmt, h, toast } from "./app.js";
-import { idLength, messageColors, valueColors } from "./colors.js";
+import { hashColor, idLength, messageColors, valueColors } from "./colors.js";
 import { lineOfRun } from "./decoder.js";
 import { setup } from "./setup.js";
 import { generateEbusdOptions, generateHaYaml } from "./hayaml.js";
-import { coverage, groupCandidates, rowTelegrams, summarizeFields, whyNot } from "./compare.js";
+import { defineEditor, customKey } from "./define-ui.js";
+import { PRESETS as LOG_PRESETS, durationText, eventRange, fromMs, logCommand, timeText, toMs } from "./log.js";
+import { drawChart, nearestPoint, seriesFields, seriesQuery, seriesValues } from "./chart.js";
+import { KIND_HELP, accessKind, coverage, describeDifference, groupCandidates, rowTelegrams, summarizeFields, whyNot } from "./compare.js";
 
 const ROW = 24;
-const STATUS_ORDER = { active: 0, hidden: 1, conditional: 2, variant: 3, error: 4, companion: 5 };
+const STATUS_ORDER = { active: 0, custom: 1, hidden: 2, conditional: 3, variant: 4, error: 5, companion: 6 };
 const STATUS_HELP = {
   active: "ebusd uses this definition for this installation (file chosen by the scan, condition met)",
   variant: "from a file of another device variant: ebusd would not load it, but it decodes these telegrams",
@@ -26,6 +29,7 @@ const STATUS_HELP = {
   hidden: "in the file ebusd loads, but another definition takes precedence",
   error: "matches the telegram but cannot decode it (wrong length or values)",
   companion: "not seen on the bus: the counterpart of a seen definition (usually for writing)",
+  custom: "your own definition: decoded over the whole recording, never chosen automatically",
 };
 const MIN_SPAN = 10_000;
 const MAX_SPAN = 31 * 86400_000;
@@ -60,9 +64,12 @@ export class Timeline {
     this.remembered = null;     // the time range whose runs were stored as occurrences
     this.loadToken = 0;
     this.loading = null;        // {from, to} while the runs of a window are being fetched
+    this.seriesCache = new Map();    // value history of a row over the whole recording (candidate picker charts)
+    this.seriesLoading = new Map();
     this.firstLoad = new Promise((resolve) => { this.markFirstLoad = resolve; });
     this.build();
     bus.on("decodes-changed", (reason) => { this.onDecodes(reason); });
+    bus.on("goto-time", (ms) => { this.setFollowSilently(false); this.setWindow(ms - this.span / 2, ms + this.span / 2); });
     bus.on("setup-changed", () => { this.buildRows(); this.render(); this.renderPicker(); this.renderDrawer(); });
     bus.on("compile-state", (state) => { this.compileState = state; this.updateDecodeState(); });
     bus.on("settings-changed", () => { this.syncSettings(); this.load(true); });
@@ -90,12 +97,16 @@ export class Timeline {
     el.onlyChanges = h("input", { type: "checkbox", onchange: () => { this.onlyChanges = el.onlyChanges.checked; this.buildRows(); this.render(); } });
     el.sort = h("select", { onchange: () => { this.sort = el.sort.value; this.buildRows(); this.render(); } },
       h("option", { value: "address" }, "by address"), h("option", { value: "name" }, "by name"), h("option", { value: "activity" }, "most telegrams"), h("option", { value: "changes" }, "most changes"), h("option", { value: "candidates" }, "most candidates"));
-    el.applyIds = h("button", { class: "small", style: "display:none", title: "set the message ID lengths per device and command as the decoded definitions define them", onclick: () => this.applyIdLengths() }, "ID lengths from definitions");
+    el.applyIds = h("button", { class: "small", style: "display:none", title: "split and combine rows so that every message the definitions know is one row (only the telegrams of known messages change)", onclick: () => this.applyIdLengths() }, "rows like the definitions");
     el.info = h("span", { class: "hint" });
     el.decodeState = h("button", { class: "small state", title: "the definitions decoding this timeline (click for the definitions tab)", onclick: () => bus.emit("show-tab", "definitions") }, "definitions…");
     el.help = h("span", { class: "help", title: "Scroll: the rows\nCtrl/⌘ + scroll or pinch: zoom the time axis\nShift + scroll or sideways swipe: move in time\nDrag the chart: move in time; double click: zoom in\nOverview strip: drag the edges to resize the window, drag inside to move it, drag outside to select a new one\nKeys: ← → move, + − zoom, N live, Esc close" }, "?");
     el.progress = h("div", { class: "tl-progress", style: "display:none" }, h("div"));
     el.notice = h("div", { class: "tl-notice", style: "display:none" });
+    el.logButton = h("button", { title: "note what you did or saw, like the log command of the eBUSd terminal: it appears as a flag in the events lane", onclick: () => this.toggleLog() }, "＋ event");
+    el.logPop = h("div", { class: "tl-sources tl-log", style: "display:none" });
+    el.sourcesButton = h("button", { class: "small", title: "where definitions come from: repository, pull requests, your own definitions", onclick: () => this.toggleSources() }, "Sources");
+    el.sourcesPop = h("div", { class: "tl-sources", style: "display:none" });
     el.setupButton = h("button", { class: "small", title: "the definitions chosen for this installation: names, config files, Home Assistant entities", onclick: () => this.toggleDrawer() }, "Setup");
     el.toolbar = h("div", { class: "toolbar" },
       el.presets,
@@ -104,14 +115,16 @@ export class Timeline {
       h("span", { class: "group" }, el.filter),
       h("label", { class: "group" }, el.onlyChanges, " only changed"),
       h("span", { class: "group" }, el.sort),
-      h("span", { class: "group" }, h("button", { onclick: () => this.addMarker() }, "+ marker")),
-      h("span", { class: "group", style: "margin-left:auto" }, el.decodeState, el.setupButton, el.help),
+      h("span", { class: "group" }, el.logButton),
+      h("span", { class: "group", style: "margin-left:auto" }, el.decodeState, el.sourcesButton, el.setupButton, el.help),
       el.info);
     el.overviewCanvas = h("canvas");
     el.overview = h("div", { class: "tl-overview", title: "all recorded telegrams; click or drag to move the window" }, el.overviewCanvas);
     el.corner = h("div", { class: "corner" });
     el.axisCanvas = h("canvas");
     el.axis = h("div", { class: "tl-axis" }, el.corner, el.axisCanvas);
+    el.annotCanvas = h("canvas");
+    el.annot = h("div", { class: "tl-annot", title: "Home Assistant state changes and notes: hover for details, click an entity's flag for its history" }, h("div", { class: "corner" }, "events"), el.annotCanvas);
     el.labels = h("div", { class: "tl-labels" });
     el.plotCanvas = h("canvas");
     el.plot = h("div", { class: "tl-plot" }, el.plotCanvas);
@@ -121,16 +134,17 @@ export class Timeline {
     el.stage = h("div", { class: "tl-stage" }, el.body, el.popover, el.drawer);
     el.tooltip = h("div", { class: "tl-tooltip" });
     el.details = h("div", { class: "tl-details" });
-    this.root.appendChild(h("div", { class: "tl" }, el.toolbar, el.progress, el.notice, el.overview, el.axis, el.stage, el.details, el.tooltip));
+    this.root.appendChild(h("div", { class: "tl" }, el.toolbar, el.progress, el.notice, el.overview, el.axis, el.annot, el.stage, el.details, el.tooltip, el.sourcesPop, el.logPop));
     this.bindMouse();
     document.addEventListener("mousedown", (e) => { if (this.picker && !el.popover.contains(e.target) && !e.target.closest(".tl-label")) this.closePicker(); });
+    document.addEventListener("mousedown", (e) => { if (el.sourcesPop.style.display !== "none" && !el.sourcesPop.contains(e.target) && !e.target.closest(".toolbar")) this.toggleSources(false); });
     this.updateDecodeState();
   }
 
   // -- decodings from the browser store ------------------------------------------------------
 
   onDecodes(reason) {
-    this.idLengths = app.decoder?.idLengths() || null;
+    if (reason !== "progress") this.pendingRules = app.decoder?.idRules(this.settings || app.settings) || new Map();
     this.updateIdButton();
     this.updateDecodeState();
     if (reason === "progress") return;
@@ -175,24 +189,40 @@ export class Timeline {
     this.updateNotice(st);
   }
 
-  /** A notice above the timeline while there is nothing to decode with. */
+  /** A notice above the timeline while there is nothing to decode with: offers the way to get definitions right there. */
   updateNotice(st) {
     const el = this.el.notice;
     const repo = app.status?.repo;
-    let content = null;
-    if (!repo) content = null;
-    else if (repo.busy && !repo.exists) content = [h("span", {}, `The definitions repository is being fetched (${repo.busy.what}). Until it is there nothing decodes the telegrams: rows show raw hex.`)];
-    else if (!repo.exists) content = [h("span", {}, "No definitions source set: there are no rules to decode with, so rows show raw hex. Clone your ebusd-configuration fork (or john30's) in the Definitions tab."),
-      h("button", { class: "small primary", onclick: () => bus.emit("show-tab", "definitions") }, "Set up definitions")];
-    else if (!st?.compile && this.compileState?.error) content = [h("span", { class: "err" }, `Compiling the definitions failed: ${this.compileState.error}`), h("button", { class: "small", onclick: () => bus.emit("show-tab", "definitions") }, "Open Definitions")];
-    else if (!st?.compile && !this.compileState?.busy) content = [h("span", {}, "The definitions are not compiled yet, so rows show raw hex."), h("button", { class: "small primary", onclick: () => app.views.definitions?.compile() }, "Compile")];
-    else if (this.pendingIdLengths().length && !this.activity().parts.length) {
-      const n = this.pendingIdLengths().length;
-      content = [h("span", {}, `${n} command${n > 1 ? "s are" : " is"} grouped by fewer ID bytes than the definitions use, so different messages (registers) share a row and appear as many "candidates" of one row.`),
-        h("button", { class: "small primary", onclick: () => this.applyIdLengths() }, "Split rows like the definitions")];
+    let key = null, build = null;
+    const pending = this.pendingIdLengths().length;
+    const idle = !this.activity().parts.length;
+    if (!repo) key = null;
+    else if (repo.busy && !repo.exists) {
+      key = `busy:${repo.busy.what}`;
+      build = () => [h("span", { class: "spinner" }), h("span", {}, `${repo.busy.what}… until the definitions are there nothing decodes the telegrams: rows show raw hex.`)];
+    } else if (!repo.exists && !st?.compile) {
+      key = `none:${repo.error || ""}`;
+      build = () => {
+        const url = h("input", { type: "text", placeholder: "or the URL of your own repository", size: 30, value: this.noticeUrl || "", oninput: () => { this.noticeUrl = url.value; } });
+        return [repo.error ? h("span", { class: "err" }, repo.error) : null,
+          h("span", {}, "No definitions yet: nothing decodes the telegrams, rows show raw hex. Start with"),
+          h("button", { class: "small primary", onclick: () => app.views.definitions?.cloneRepo(app.settings?.upstream_url || "https://github.com/john30/ebusd-configuration.git") }, "the default definitions"),
+          url, h("button", { class: "small", onclick: () => app.views.definitions?.cloneRepo(url.value) }, "use it"),
+          h("span", {}, "or"), h("button", { class: "small", onclick: () => this.toggleSources(true) }, "paste my own definitions")];
+      };
+    } else if (!st?.compile && this.compileState?.error) {
+      key = `error:${this.compileState.error}`;
+      build = () => [h("span", { class: "err" }, `Compiling the definitions failed: ${this.compileState.error}`), h("button", { class: "small", onclick: () => bus.emit("show-tab", "definitions") }, "Open Definitions")];
+    } else if (!st?.compile && !this.compileState?.busy && repo.exists) {
+      key = "notcompiled";
+      build = () => [h("span", {}, "The definitions are not compiled yet, so rows show raw hex."), h("button", { class: "small primary", onclick: () => app.views.definitions?.compile() }, "Compile")];
+    } else if (pending && idle) {
+      key = `ids:${pending}`;
+      build = () => [h("span", {}, `${pending} message${pending > 1 ? "s are" : " is"} grouped differently than the definitions identify them: different messages (registers) share a row and show up as many "candidates", or one message is spread over several rows.`),
+        h("button", { class: "small primary", onclick: () => this.applyIdLengths() }, "Group like the definitions")];
     }
-    el.style.display = content ? "" : "none";
-    if (content) el.replaceChildren(...content);
+    el.style.display = key ? "" : "none";
+    if (key !== this.noticeKey) { this.noticeKey = key; el.replaceChildren(); if (build) append(el, build()); }
   }
 
   syncSettings() {
@@ -203,41 +233,52 @@ export class Timeline {
   }
 
   updateIdButton() {
-    const pending = this.pendingIdLengths();
-    this.el.applyIds.style.display = pending.length ? "" : "none";
-    this.el.applyIds.textContent = `ID lengths from definitions (${pending.length})`;
+    const n = this.pendingRules?.size || 0;
+    this.el.applyIds.style.display = n ? "" : "none";
+    this.el.applyIds.textContent = `rows like the definitions (${n})`;
   }
 
-  /** Overrides the decoded definitions suggest that differ from the current settings. */
-  pendingIdLengths() {
-    if (!this.idLengths) return [];
-    const overrides = this.settings.id_overrides || {};
-    return Object.entries(this.idLengths).filter(([key, len]) => (key in overrides ? overrides[key] : (key.slice(2, 6) in overrides ? overrides[key.slice(2, 6)] : this.settings.id_bytes)) !== len);
-  }
+  /** The rules (zzpbsb:prefix -> ID length) that make rows follow the definitions, not yet in the settings. */
+  pendingIdLengths() { return [...(this.pendingRules || new Map()).entries()]; }
 
-  async applyIdLengths() {
-    const overrides = { ...(this.settings.id_overrides || {}) };
-    for (const [key, len] of this.pendingIdLengths()) overrides[key] = len;
+  /** Store prefix rules: they change the grouping of only the telegrams that start with the prefix. */
+  async saveRules(mutate) {
+    const rules = { ...(this.settings.id_rules || {}) };
+    mutate(rules);
     try {
-      app.settings = await api.put("api/settings", { id_overrides: overrides });
-      this.syncSettings();
-      this.updateIdButton();
-      bus.emit("settings-changed");
-      this.load(true);
-    } catch (err) { toast(err.message, "err"); }
-  }
-
-  /** Group the telegrams of one device and command by this many ID bytes from now on. */
-  async setIdLength(zz, pb, sb, len) {
-    const key = `${fmt.hex(zz)}${fmt.hex(pb)}${fmt.hex(sb)}`;
-    const overrides = { ...(this.settings.id_overrides || {}), [key]: len };
-    try {
-      app.settings = await api.put("api/settings", { id_overrides: overrides });
+      app.settings = await api.put("api/settings", { id_rules: rules });
       this.syncSettings();
       this.closePicker();
       bus.emit("settings-changed");
       this.load(true);
     } catch (err) { toast(err.message, "err"); }
+  }
+
+  async applyIdLengths() {
+    const pending = this.pendingIdLengths();
+    await this.saveRules((rules) => { for (const [key, length] of pending) rules[key] = length; });
+    toast(`${pending.length} message${pending.length === 1 ? "" : "s"} grouped like the definitions`);
+  }
+
+  /** Pivot: split a row at its next byte (+), or combine it with the rows that share all but its last byte (−). */
+  splitRow(row) {
+    const command = `${fmt.hex(row.row.zz)}${fmt.hex(row.row.pb)}${fmt.hex(row.row.sb)}`;
+    return this.saveRules((rules) => { rules[`${command}:${row.row.id}`] = row.row.id.length / 2 + 1; });
+  }
+
+  combineRow(row) {
+    const command = `${fmt.hex(row.row.zz)}${fmt.hex(row.row.pb)}${fmt.hex(row.row.sb)}`;
+    const parent = row.row.id.slice(0, -2);
+    return this.saveRules((rules) => {
+      for (const key of Object.keys(rules)) if (key.startsWith(`${command}:${parent}`)) delete rules[key];   // the rules below the merged row
+      rules[`${command}:${parent}`] = parent.length / 2;
+    });
+  }
+
+  /** Group the rows of the telegrams of a picker row like the definitions that decode them. */
+  splitLikeDefinitions(telegrams) {
+    const rules = app.decoder.idRulesFor(telegrams, this.settings);
+    return this.saveRules((current) => { for (const [key, length] of rules) current[key] = length; });
   }
 
   async changeIdBytes() {
@@ -357,20 +398,7 @@ export class Timeline {
   }
 
   buildRows() {
-    const rows = [];
-    const byEntity = new Map();
-    for (const ev of this.states) {
-      if (!ev.entity) continue;
-      if (!byEntity.has(ev.entity)) byEntity.set(ev.entity, []);
-      byEntity.get(ev.entity).push(ev);
-    }
-    const end = this.follow ? Date.now() : this.t1;
-    for (const [entity, list] of [...byEntity.entries()].sort()) {
-      const runs = list.map((ev, i) => ({ t0: ev.ms, t1: list[i + 1] ? list[i + 1].ms : end, n: 1, label: ev.state ?? "", value: ev.state ?? "", event: ev }));
-      if (!this.matches(entity, list[0]?.attributes?.friendly_name || "")) continue;
-      if (runs[runs.length - 1].t1 < this.t0) continue;
-      rows.push({ kind: "event", key: entity, label: entity, name: list[0]?.attributes?.friendly_name || "", n: list.length, runs });
-    }
+    const rows = [];   // Home Assistant entities are annotations (see annotations()), not rows
     const decoder = app.decoder;
     const telegramRows = [];
     for (const row of this.data?.rows || []) {
@@ -401,8 +429,10 @@ export class Timeline {
     };
     telegramRows.sort(sorters[this.sort] || sorters.address);
     this.rows = rows.concat(telegramRows);
-    if (this.selected && !this.rows.some((r) => r.key === this.selected.row.key)) this.closeDetails();
-    else if (this.selected) this.selected.row = this.rows.find((r) => r.key === this.selected.row.key);
+    if (this.selected?.row.kind === "telegram") {
+      const same = this.rows.find((r) => r.key === this.selected.row.key);
+      if (same) this.selected.row = same; else this.closeDetails();
+    }
     if (this.picker) this.picker.row = this.rows.find((r) => r.key === this.picker.row.key) || null;
     if (this.picker && !this.picker.row) this.closePicker();
     this.renderLabels();
@@ -454,10 +484,18 @@ export class Timeline {
         ? h("span", { class: `cands ${row.defKey ? "" : "warn"}`, title: `${n} candidate definitions — click to compare and choose`, onclick: (e) => { e.stopPropagation(); this.openPicker(row, e.currentTarget.closest(".tl-label")); } }, `${n}▾`)
         : null;
       const el = h("div", { class: `tl-label ${row.kind} ${this.picker?.row === row ? "picking" : ""}`, title, "data-row": i,
-        onclick: (e) => { if (row.kind === "telegram" && n && e.target.closest(".name")) this.openPicker(row, e.currentTarget); else this.showDetails(row, null); } },
+        onclick: (e) => {
+          if (row.kind === "telegram" && n && e.target.closest(".name")) this.openPicker(row, e.currentTarget);
+          else if (row.kind === "telegram" && !n && row.row.zz !== null) this.openEditor(row);   // no definition: define it from what the recording shows
+          else this.showDetails(row, null);
+        } },
+        row.kind === "telegram" ? h("span", { class: "pivot" },
+          h("button", { title: row.row.id ? (row.row.id.length > 2 ? `combine with the rows that share the first ${row.row.id.length / 2 - 1} byte${row.row.id.length / 2 === 2 ? "" : "s"} of the message ID (−)` : "combine all rows of this command into one (−)") : "nothing to combine: no ID byte", disabled: !row.row.id, onclick: (e) => { e.stopPropagation(); this.combineRow(row); } }, "−"),
+          h("button", { title: `split by the next byte after ${row.row.id || "the command"} (+)`, disabled: !row.runs.some((r) => r.payload), onclick: (e) => { e.stopPropagation(); this.splitRow(row); } }, "+")) : null,
         h("span", { class: "key" }, row.label),
         row.name ? h("span", { class: `name ${renamed ? "renamed" : ""}`, style: row.def ? `color:${messageColors(row.def.circuit, row.def.name).text}` : "" }, row.name) : null,
         badge,
+        row.kind === "telegram" && !n && row.row.zz !== null ? h("span", { class: "define", title: "no definition decodes this message: click to define it from the recording" }, "＋ define") : null,
         h("span", { class: "n" }, `${fmt.count(row.n)}${row.runs.length > 1 ? ` · ${row.runs.length - 1}Δ` : ""}`));
       labels.appendChild(el);
     }
@@ -507,8 +545,51 @@ export class Timeline {
     this.width = Math.max(50, this.el.plot.clientWidth || (this.el.body.clientWidth - this.el.labels.offsetWidth));
     if (this.width !== this.lastWidth) { this.lastWidth = this.width; }
     this.drawAxis();
+    this.drawAnnot();
     this.drawPlot();
     this.drawOverview();
+  }
+
+  /** Notes shown on the timeline: the recorded ones and the one being written. */
+  allMarkers() { return this.logDraft ? [...this.markers, this.logDraft] : this.markers; }
+
+  /** Notes and Home Assistant state changes inside the window, as flags of the events lane. */
+  annotations() {
+    const items = [];
+    for (const m of this.allMarkers()) {
+      if (m.ms < this.t0 || m.ms > this.t1) continue;
+      items.push({ ms: m.ms, kind: "marker", color: m.draft ? "#c2410c" : "#ef6c00", label: m.draft ? `new: ${m.message || "(time only)"}` : (m.message || "(time only)"), marker: m });
+    }
+    for (const ev of this.states) {
+      if (!ev.entity || ev.ms < this.t0 || ev.ms > this.t1) continue;
+      const name = ev.attributes?.friendly_name || ev.entity;
+      items.push({ ms: ev.ms, kind: "state", color: hashColor(ev.entity, 70, 38), entity: ev.entity, label: `${name}: ${ev.state ?? "?"}`, event: ev });
+    }
+    return items.sort((a, b) => a.ms - b.ms);
+  }
+
+  drawAnnot() {
+    const height = 28;
+    const ctx = this.sizeCanvas(this.el.annotCanvas, this.width, height);
+    ctx.clearRect(0, 0, this.width, height);
+    ctx.font = "11px system-ui, sans-serif";
+    const items = (this.annotItems = this.annotations());
+    const lanes = [-Infinity, -Infinity];   // end of the last label per lane: labels do not overlap
+    for (const it of items) {
+      const x = Math.round(this.xOf(it.ms)) + 0.5;
+      it.x = x;
+      ctx.strokeStyle = it.color; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, 1); ctx.lineTo(x, height); ctx.stroke();
+      ctx.fillStyle = it.color;
+      ctx.beginPath(); ctx.moveTo(x, 1); ctx.lineTo(x + 6, 5); ctx.lineTo(x, 9); ctx.closePath(); ctx.fill();
+      const lane = lanes[0] <= lanes[1] ? 0 : 1;
+      if (x > lanes[lane] + 4) {
+        const text = it.label.length > 48 ? `${it.label.slice(0, 47)}…` : it.label;
+        ctx.fillStyle = "#1f2d3d";
+        ctx.fillText(text, x + 9, lane ? 24 : 11);
+        lanes[lane] = x + 9 + ctx.measureText(text).width;
+      }
+    }
   }
 
   drawAxis() {
@@ -533,14 +614,6 @@ export class Timeline {
       const x = Math.round(this.xOf(now)) + 0.5;
       ctx.strokeStyle = "#0b7dda"; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
     }
-    for (const marker of this.markers) {
-      if (marker.ms < this.t0 || marker.ms > this.t1) continue;
-      const x = this.xOf(marker.ms);
-      ctx.fillStyle = "#ef6c00";
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 6, 5); ctx.lineTo(x, 10); ctx.closePath(); ctx.fill();
-      ctx.fillText((marker.message || "(time only)").slice(0, 60), x + 8, 9);
-      ctx.fillStyle = "#6b7a8a";
-    }
   }
 
   drawPlot() {
@@ -562,7 +635,7 @@ export class Timeline {
       ctx.strokeStyle = "#eef1f4"; ctx.beginPath(); ctx.moveTo(0, y + ROW - 0.5); ctx.lineTo(this.width, y + ROW - 0.5); ctx.stroke();
       this.drawRuns(ctx, row, y);
     }
-    for (const marker of this.markers) {
+    for (const marker of this.allMarkers()) {
       if ((marker.ms_max ?? marker.ms) < this.t0 || (marker.ms_min ?? marker.ms) > this.t1) continue;
       const x0 = this.xOf(marker.ms_min ?? marker.ms), x1 = this.xOf(marker.ms_max ?? marker.ms);
       if (x1 - x0 > 1.5) { ctx.fillStyle = "rgba(239,108,0,.12)"; ctx.fillRect(x0, 0, x1 - x0, height); }
@@ -570,6 +643,12 @@ export class Timeline {
       ctx.setLineDash([4, 3]); ctx.strokeStyle = "#ef6c00";
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
       ctx.setLineDash([]);
+    }
+    const states = (this.annotItems || []).filter((it) => it.kind === "state");
+    if (states.length <= 400) {
+      ctx.save(); ctx.globalAlpha = 0.35;
+      for (const it of states) { ctx.strokeStyle = it.color; ctx.beginPath(); ctx.moveTo(it.x, 0); ctx.lineTo(it.x, height); ctx.stroke(); }
+      ctx.restore();
     }
     const now = Date.now();
     if (now >= this.t0 && now <= this.t1) {
@@ -658,7 +737,43 @@ export class Timeline {
 
   // -- interaction --------------------------------------------------------------------------
 
+  /** Flags of the events lane within a few pixels of x. */
+  annotAt(x) {
+    return (this.annotItems || []).filter((it) => Math.abs(it.x - x) <= 6);
+  }
+
+  bindAnnot() {
+    const lane = this.el.annotCanvas;
+    const tip = this.el.tooltip;
+    lane.addEventListener("mousemove", (e) => {
+      const hits = this.annotAt(e.offsetX);
+      lane.style.cursor = hits.some((h) => h.kind === "state") ? "pointer" : "default";
+      if (!hits.length) { tip.style.display = "none"; return; }
+      tip.textContent = hits.slice(0, 8).map((it) => it.kind === "marker"
+        ? `${it.label}\n${fmt.dateTime(it.ms)}${it.marker.ms_max > it.marker.ms_min ? ` (between ${fmt.time(it.marker.ms_min)} and ${fmt.time(it.marker.ms_max)})` : ""}`
+        : `${it.event.attributes?.friendly_name ? `${it.event.attributes.friendly_name} (${it.entity})` : it.entity}\n${it.event.previous !== null && it.event.previous !== undefined ? `${it.event.previous} → ` : ""}${it.event.state}  at ${fmt.dateTime(it.ms, true)}`).join("\n\n")
+        + (hits.length > 8 ? `\n… ${hits.length - 8} more` : "");
+      tip.style.display = "block";
+      tip.style.left = `${Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8)}px`;
+      tip.style.top = `${Math.min(e.clientY + 14, window.innerHeight - tip.offsetHeight - 8)}px`;
+    });
+    lane.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+    lane.addEventListener("click", (e) => {
+      if (this.logPicking) { this.pickLogTime(this.tOf(e.offsetX)); return; }
+      const note = this.annotAt(e.offsetX).find((it) => it.kind === "marker" && !it.marker.draft);
+      if (note) { this.toggleLog(true, note.marker.id); return; }
+      const hit = this.annotAt(e.offsetX).find((it) => it.kind === "state");
+      if (!hit) return;
+      const list = this.states.filter((ev) => ev.entity === hit.entity);
+      const end = this.follow ? Date.now() : this.t1;
+      const runs = list.map((ev, i) => ({ t0: ev.ms, t1: list[i + 1] ? list[i + 1].ms : end, n: 1, label: ev.state ?? "", value: ev.state ?? "", event: ev }));
+      this.showDetails({ kind: "event", key: hit.entity, label: hit.entity, name: hit.event.attributes?.friendly_name || "", n: list.length, runs }, null);
+    });
+    lane.addEventListener("wheel", (e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.zoom(Math.exp(Math.max(-100, Math.min(100, e.deltaY)) * 0.006), this.tOf(e.offsetX), "soon"); } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) { e.preventDefault(); this.pan((e.deltaX || e.deltaY) / this.width, "soon"); } }, { passive: false });
+  }
+
   bindMouse() {
+    this.bindAnnot();
     const plot = this.el.plotCanvas;
     let drag = null;
     plot.addEventListener("mousedown", (e) => { drag = { x: e.clientX, t0: this.t0, t1: this.t1, moved: false }; });
@@ -772,7 +887,7 @@ export class Timeline {
     else if (e.key === "+" || e.key === "=") this.zoom(0.5);
     else if (e.key === "-") this.zoom(2);
     else if (e.key === "n" || e.key === "N") this.setFollow(true);
-    else if (e.key === "Escape") { if (this.picker) this.closePicker(); else if (this.drawerOpen) this.toggleDrawer(false); else this.closeDetails(); }
+    else if (e.key === "Escape") { if (this.editor) this.closeEditor(); else if (this.picker) this.closePicker(); else if (this.drawerOpen) this.toggleDrawer(false); else this.closeDetails(); }
     else return;
     e.preventDefault();
   }
@@ -825,6 +940,7 @@ export class Timeline {
   }
 
   click(e) {
+    if (this.logPicking) { this.pickLogTime(this.tOf(e.offsetX)); return; }
     const row = this.rows[Math.floor(e.offsetY / ROW)];
     if (!row) return;
     this.showDetails(row, this.runAt(row, e.offsetX));
@@ -882,10 +998,76 @@ export class Timeline {
     }
   }
 
+  // -- sources popover: where definitions come from, always at hand ------------------------------------------
+
+  toggleSourcesOff() { if (this.el.sourcesPop.style.display !== "none") this.toggleSources(false); }
+
+  /** Put a popover just below the toolbar (it wraps on narrow windows) so that it never covers its own button. */
+  placePopover(pop) {
+    pop.style.top = `${this.el.toolbar.offsetTop + this.el.toolbar.offsetHeight + 4}px`;
+  }
+
+  toggleSources(open = this.el.sourcesPop.style.display === "none") {
+    const pop = this.el.sourcesPop;
+    pop.style.display = open ? "" : "none";
+    if (open) this.placePopover(pop);
+    this.el.sourcesButton.classList.toggle("active", open);
+    const definitions = app.views.definitions;
+    if (open && definitions) definitions.mountSources(pop, true);
+    else if (definitions) definitions.unmountSources(pop);
+  }
+
+  // -- definition editor: a message without a definition, prefilled from the recording ----------------------------
+
+  openEditor(row) {
+    this.closePicker();
+    this.editor = { row };
+    this.renderEditor();
+  }
+
+  closeEditor() {
+    this.editor = null;
+    this.el.popover.style.display = "none";
+    this.el.popover.classList.remove("wide");
+    this.el.popover.replaceChildren();
+    this.renderLabels();
+  }
+
+  renderEditor() {
+    const pop = this.el.popover;
+    const row = this.editor?.row;
+    if (!row) return;
+    const decoder = app.decoder;
+    const telegrams = rowTelegrams(decoder, row.row);
+    pop.classList.add("wide");
+    pop.replaceChildren();
+    append(pop,
+      h("div", { class: "head" }, h("b", {}, "New definition"), h("span", { style: "margin-left:auto" }), h("button", { class: "small", onclick: () => this.closeEditor() }, "✕")),
+      h("div", { class: "pad" }, defineEditor({
+        row, telegrams, scan: decoder.scan || {}, own: app.settings?.own_address || "31", decoder,
+        onClose: () => this.closeEditor(),
+        onSave: async (csv, header) => {
+          await app.views.definitions.addCustomLine(csv);
+          const key = customKey(header);
+          const entries = decoder.entries;
+          const others = [...decoder.candidatesOf(telegrams.map((t) => t.line)).keys()];
+          if (decoder.def(key)) { setup.choose(row.key, key, others, entries); toast(`${header.circuit} ${header.name} added to your definitions and chosen for this row`); }
+          else toast("saved, but it decodes none of this row's telegrams: check the line", "err", 6000);
+          this.closeEditor();
+        },
+      })));
+    pop.style.display = "block";
+    const stageTop = this.el.stage.getBoundingClientRect().top;
+    pop.style.top = `${Math.max(0, 6 - 0 * stageTop)}px`;
+    pop.style.left = `${Math.max(0, Math.min(40, this.el.stage.clientWidth - pop.offsetWidth - 10))}px`;
+  }
+
   // -- candidate picker: the definitions that decode a row, compared and chosen in place ---------
 
   openPicker(row, anchor) {
     if (!row.candidates?.size) return;
+    this.editor = null;
+    this.el.popover.classList.remove("wide");
     this.picker = { row, anchorTop: anchor ? anchor.getBoundingClientRect().top : 0 };
     this.renderPicker();
     this.renderLabels();
@@ -922,6 +1104,67 @@ export class Timeline {
       h("div", { class: "muted" }, "Names end up in the exported CSV, the MQTT topics (ebusd/<circuit>/<message>) and the JSON fields (value_json.<field>)."));
   }
 
+  /** The definition as ebusd reads it, and a way to copy it into your own definitions to change it. */
+  rawPanel(def, group) {
+    const lines = [def.csv, ...(def.siblings || []).map((k) => app.decoder.def(k)?.csv).filter(Boolean)];
+    const area = h("textarea", { rows: Math.min(8, lines.length + 1), class: "rawcsv", spellcheck: "false" });
+    area.value = lines.join("\n");
+    return h("div", { class: "rawpanel" },
+      h("div", { class: "muted" }, `${def.file}${def.condition ? ` ${def.condition}` : ""} — edit the text and add it as your own definition: it is decoded over the whole recording at once and shows here as a candidate of its own${def.write ? "; this is a write definition, it changes the device when ebusd sends it" : ""}.`),
+      area,
+      h("div", { class: "row" }, h("button", { class: "small primary", onclick: async () => { await app.views.definitions.addCustomLine(area.value); toast("added to your definitions"); } }, "Add as my definition"),
+        h("button", { class: "small", onclick: () => navigator.clipboard?.writeText(area.value).then(() => toast("copied")) }, "copy")));
+  }
+
+  /** Value history of a definition over the whole recording as a chart: one point per telegram, by its timestamp. */
+  historyChart(row, defKey, groupKey) {
+    const db = app.status?.db;
+    const box = h("div", { class: "history" });
+    if (!db?.first_ms) return null;
+    const from = db.first_ms, to = db.last_ms + 1000;
+    const cacheKey = `${row.key}|${from}|${Math.floor(to / 60000)}`;
+    const decoder = app.decoder;
+    const draw = (data) => {
+      const fields = seriesFields(data, decoder, defKey);
+      let field = this.picker?.fields?.[groupKey];
+      if (!field || !fields.includes(field)) field = fields.find((f) => seriesValues(data, decoder, defKey, f).numeric) || fields[0];
+      const series = seriesValues(data, decoder, defKey, field);
+      const select = fields.length > 1 ? h("select", { onchange: () => { (this.picker.fields ||= {})[groupKey] = select.value; draw(data); } }, fields.map((f) => h("option", { value: f, selected: f === field }, f))) : null;
+      const canvas = h("canvas");
+      const info = h("div", { class: "hint" });
+      const width = Math.max(320, (this.el.popover.clientWidth || 700) - 60);
+      let geometry = null;
+      const paint = (hoverMs = null) => { geometry = drawChart(canvas, series, { t0: from, t1: to, width, height: 120, band: { from: this.t0, to: this.t1 }, hoverMs }); };
+      const summary = () => {
+        const values = series.points.map((p) => p.value);
+        const range = series.numeric && values.length ? ` · ${Math.min(...values)} … ${Math.max(...values)}` : "";
+        info.textContent = `${fmt.count(series.points.length)} telegrams of this definition${data.stride > 1 ? ` (every ${data.stride}th of ${fmt.count(data.total)})` : ""}${range} · the blue band is the timeline window; click to go there`;
+      };
+      summary();
+      canvas.addEventListener("mousemove", (e) => {
+        const ms = geometry.tOf(e.offsetX), p = nearestPoint(series, ms);
+        paint(ms);
+        info.textContent = p ? `${fmt.dateTime(p.ms)}  ${series.field ? `${series.field} = ` : ""}${p.value}` : "";
+      });
+      canvas.addEventListener("mouseleave", () => { paint(); summary(); });
+      canvas.addEventListener("click", (e) => bus.emit("goto-time", geometry.tOf(e.offsetX)));
+      box.replaceChildren();
+      append(box, h("div", { class: "row" }, h("b", {}, "History"), select ? [" of field ", select] : null), canvas, info);
+      paint();
+    };
+    const cached = this.seriesCache.get(cacheKey);
+    if (cached) { draw(cached); return box; }
+    box.textContent = "loading history…";
+    let pending = this.seriesLoading.get(cacheKey);
+    if (!pending) {
+      pending = api.get(seriesQuery(row.row, from, to)).then((data) => { this.seriesCache.set(cacheKey, data); return data; });
+      this.seriesLoading.set(cacheKey, pending);
+      pending.finally(() => this.seriesLoading.delete(cacheKey));
+    }
+    pending.then((data) => { if (box.isConnected) draw(data); }).catch((err) => { box.textContent = `history failed: ${err.message}`; });
+    return box;
+  }
+
   /** The value ranges of a candidate over the whole recording. */
   valuesDetail(cov) {
     const fields = summarizeFields(cov);
@@ -936,6 +1179,7 @@ export class Timeline {
 
   renderPicker() {
     const pop = this.el.popover;
+    if (this.editor) return;      // the definition editor is open: it keeps its own state
     if (!this.picker || !this.picker.row) { pop.style.display = "none"; return; }
     const row = this.picker.row;
     const decoder = app.decoder;
@@ -954,6 +1198,8 @@ export class Timeline {
     const { groups } = groupCandidates(decoder, candidates, telegrams, { chosenKey: row.defKey, usedKey });
     const total = telegrams.reduce((n, t) => n + (t.n || 0), 0);
     const lead = groups.find((g) => g.hasUsed) || groups[0];
+    const usedDef = candidates.find((c) => c.def.key === usedKey)?.def || null;
+    const firstCard = groups.find((g) => !g.failed);
 
     const member = (m, group) => {
       const def = m.def, key = def.key;
@@ -962,18 +1208,18 @@ export class Timeline {
       const exportName = setup.exportName(def);
       const renameOpen = this.picker.renaming === key;
       const d = m.coverage?.latest || null;
-      const why = !chosen && key !== usedKey ? whyNot(def, scan, group.failed ? m.coverage.errorKinds : null) : "";
+      const why = !chosen && key !== usedKey ? whyNot(def, scan, group.failed ? m.coverage.errorKinds : null, usedDef) : "";
       const fieldNote = group.fieldNames ? fieldNamesOf(def) : "";
       return h("div", { class: `member ${chosen ? "chosen" : ""}`, onmouseenter: () => this.setPreview(row, key), onmouseleave: () => this.setPreview(row, null) },
         h("div", { class: "line" },
           h("button", { class: `pick ${chosen ? "on" : ""}`, title: chosen ? "shown in this row and part of the setup" : "use this definition for this row (it joins the setup, the other candidates leave it)",
             onclick: () => setup.choose(row.key, key, otherKeys, entries) }, chosen ? "●" : "○"),
-          h("span", { class: "chip-msg", style: `color:${colors.text};background:${colors.background};border-color:${colors.border}` }, `${def.circuit} ${def.name}${def.passive ? " (u)" : ""}`),
+          h("span", { class: "chip-msg", style: `color:${colors.text};background:${colors.background};border-color:${colors.border}` }, `${def.circuit} ${def.name}`),
+          h("span", { class: `badge kind ${def.write ? "write" : ""}`, title: KIND_HELP[accessKind(def)] }, accessKind(def)),
           exportName !== def.name ? h("span", { class: "export" }, `→ ${setup.circuitOf(def)} ${exportName}`) : null,
           h("span", { class: "muted mono", title: def.file }, def.file.replace(/^.*\//, "")),
           h("span", { class: `badge ${def.status}`, title: STATUS_HELP[def.status] || "" }, def.status),
           def.source !== "base" ? h("span", { class: "badge", title: "added or changed by this community layer" }, def.source) : null,
-          def.write ? h("span", { class: "badge write", title: "write definition: sends values to the device" }, "write") : null,
           key === usedKey ? h("span", { class: "muted", title: "the definition ebusd itself picks for these telegrams" }, "ebusd's choice") : null,
           h("span", { style: "margin-left:auto" }),
           h("label", { class: "muted", title: "part of the setup of this installation (without changing what this row shows)" },
@@ -988,17 +1234,49 @@ export class Timeline {
     const rowId = (row.row.id || "").length / 2;
     const longer = Math.max(0, ...candidates.map((c) => c.def.idlen || 0));
     const isLumped = longer > rowId;   // different messages share the row: the groups are not competing for the same telegrams
-    const cards = groups.filter((g) => !g.failed).map((g) => {
+    const hideFailing = !!app.settings?.ui?.hideFailing;
+    const partial = (g) => hideFailing && !g.failed && g.coverage.errors > 0 && !g.hasChosen;
+    const SHORT = { active: "ebusd uses it", variant: "other device variant", conditional: "condition not met", hidden: "overridden by another", error: "fails" };
+    const base = (file) => file.replace(/^.*\//, "");
+    const cards = groups.filter((g) => !g.failed && !partial(g)).map((g) => {
       const cov = g.coverage;
-      const first = g.members.find((m) => m.def.key === row.defKey) || g.members.find((m) => m.def.key === usedKey) || g.members[0];
-      const latest = coverage(decoder, telegrams, first.def.key).latest;
+      // one definition, possibly defined in several files (one per device variant) and under several circuit names
+      const pref = g.members.find((m) => m.def.key === row.defKey) || g.members.find((m) => m.def.key === usedKey) || g.members.find((m) => !m.def.write) || g.members[0];
+      const def = pref.def;
+      const latest = coverage(decoder, telegrams, def.key).latest;
       const key = `${g.key}`;
       const open = this.picker.expanded?.has(key);
-      return h("div", { class: `group ${g.hasChosen ? "chosen" : ""}` },
+      const chosen = g.hasChosen;
+      const names = [...new Set(g.members.map((m) => `${m.def.circuit} ${m.def.name}`))];
+      const kinds = [...new Set(g.members.map((m) => accessKind(m.def)))];
+      const firstPref = firstCard && firstCard !== g ? (firstCard.members.find((m) => m.def.key === usedKey) || firstCard.members[0]) : null;
+      const differences = firstPref ? describeDifference(def, firstPref.def) : [];
+      const sameValues = firstPref ? firstCard.coverage.signature === cov.signature : null;
+      const files = g.members.map((m) => ({ file: base(m.def.file), status: m.def.status, key: m.def.key, source: m.def.source }));
+      const usedM = g.members.find((m) => m.def.key === usedKey);
+      const colors = messageColors(def.circuit, def.name);
+      const exportName = setup.exportName(def);
+      const renameOpen = this.picker.renaming === def.key;
+      const filesOpen = this.picker.filesOpen?.has(key) ?? names.length > 1;   // different names matter for the export: show them
+      const sentence = g.members.length === 1
+        ? (usedM ? "ebusd uses this definition." : whyNot(def, scan, null))
+        : usedM
+          ? `One definition, defined identically in ${files.length} files for different device variants. ebusd uses it from ${base(usedM.def.file)}; the others are for other hardware or software versions than the ones identified on this bus.`
+          : `One definition, defined identically in ${files.length} files. ${whyNot(def, scan, null)}`;
+      return h("div", { class: `group ${chosen ? "chosen" : ""}`, onmouseenter: () => this.setPreview(row, def.key), onmouseleave: () => this.setPreview(row, null) },
         h("div", { class: "ghead" },
-          h("b", {}, g.members.length > 1 ? `${g.members.length} of ${candidates.length} candidates are the same definition and decode alike` : `1 of ${candidates.length} candidates`),
-          g.writable ? h("span", { class: "badge write" }, g.writable === g.members.length ? "writable" : `${g.writable} writable`) : null,
-          g.hasUsed ? h("span", { class: "badge active" }, "includes ebusd's choice") : !isLumped && lead && !lead.failed && g !== lead ? h("span", { class: "badge variant", title: "decodes differently than the definition ebusd uses" }, "differs from ebusd's choice") : null),
+          h("button", { class: `pick ${chosen ? "on" : ""}`, title: chosen ? "shown in this row and part of the setup" : "use this definition for this row (it joins the setup, the other candidates leave it)",
+            onclick: () => setup.choose(row.key, def.key, otherKeys, entries) }, chosen ? "●" : "○"),
+          names.map((n) => { const c = messageColors(...n.split(/ (.+)/).slice(0, 2)); return h("span", { class: "chip-msg", style: `color:${c.text};background:${c.background};border-color:${c.border}` }, n); }),
+          kinds.map((k) => h("span", { class: `badge kind ${k.includes("write") ? "write" : ""}`, title: KIND_HELP[k] }, k)),
+          exportName !== def.name ? h("span", { class: "export" }, `→ ${setup.circuitOf(def)} ${exportName}`) : null,
+          g.hasUsed ? h("span", { class: "badge active" }, "ebusd's choice") : null,
+          h("span", { style: "margin-left:auto" }),
+          h("button", { class: "small", title: def.source === "custom" ? "edit your own definitions" : "open the TypeSpec source of this definition at its line", onclick: () => bus.emit("open-source", def) }, "source ↗"),
+          h("button", { class: "small", title: "the definition as ebusd reads it (CSV), to copy or edit as your own", onclick: () => { (this.picker.raw ||= new Set())[this.picker.raw.has(def.key) ? "delete" : "add"](def.key); this.renderPicker(); } }, "raw"),
+          h("label", { class: "muted", title: "part of the setup of this installation" },
+            h("input", { type: "checkbox", checked: included.has(def.key), onchange: (e) => setup.include(def.key, e.target.checked, entries) }), " in setup"),
+          h("button", { class: "small", title: "rename the message and its fields for my config", onclick: () => { this.picker.renaming = renameOpen ? null : def.key; this.renderPicker(); } }, renameOpen ? "done" : "rename")),
         h("div", { class: "decoded mono" }, latest ? latest.text : h("span", { class: "err" }, "decodes nothing of this row"),
           latest ? h("span", { class: "muted", title: latest.line }, `  (latest, ${fmt.dateTime(latest.last_ms).slice(5, 16)})`) : null),
         h("div", { class: `cover ${cov.errors ? "warn" : "ok"}` },
@@ -1007,16 +1285,29 @@ export class Timeline {
           h("span", { class: "muted" }, ` · ${fmt.count(cov.okOccurrences)} telegrams${cov.first_ms ? `, ${fmt.date(cov.first_ms)} – ${fmt.date(cov.last_ms || cov.first_ms)}` : ""}`),
           cov.decoded < cov.telegrams ? h("span", { class: "muted", title: "the other telegrams of this row belong to other messages (see the note above)" }, ` · matches ${fmt.count(cov.decoded)} of the row's ${fmt.count(cov.telegrams)} variants`) : null,
           " ", h("a", { href: "#", onclick: (e) => { e.preventDefault(); (this.picker.expanded ||= new Set())[open ? "delete" : "add"](key); this.renderPicker(); } }, open ? "hide values" : "all values")),
+        cov.ok ? this.historyChart(row, def.key, key) : null,
         open ? this.valuesDetail(cov) : null,
-        g.members.map((m) => member(m, g)));
+        firstPref ? h("div", { class: "gdiff" }, h("b", {}, sameValues ? "Decodes the same values as the card above" : "Decodes different values than the card above"),
+          differences.length ? ` — it differs as a definition in: ${differences.join("; ")}.` : ", with the same structure (only names, files or status differ).") : null,
+        h("div", { class: "gsummary" }, sentence),
+        files.length > 1 || names.length > 1 ? h("div", { class: "gfiles" },
+          h("a", { href: "#", onclick: (e) => { e.preventDefault(); (this.picker.filesOpen ||= new Set(names.length > 1 ? [key] : []))[filesOpen ? "delete" : "add"](key); this.renderPicker(); } }, filesOpen ? "hide the individual definitions" : `the ${files.length} individual definitions`),
+          !filesOpen ? h("span", { class: "muted" }, ` ${files.map((f) => `${f.file} (${SHORT[f.status] || f.status})`).join(" · ")}`) : null) : null,
+        renameOpen ? this.renameForm(def, latest?.fields || null, () => { this.picker.renaming = null; this.renderPicker(); }) : null,
+        this.picker.raw?.has(def.key) ? this.rawPanel(def, g) : null,
+        filesOpen && (files.length > 1 || names.length > 1) ? g.members.map((m) => member(m, g)) : null);
     });
+    const partialGroups = groups.filter(partial);
+    const partialBox = partialGroups.length ? h("details", { class: "group failed" },
+      h("summary", {}, `${partialGroups.reduce((n, g) => n + g.members.length, 0)} candidate${partialGroups.reduce((n, g) => n + g.members.length, 0) > 1 ? "s" : ""} fail on some recorded telegram (hidden)`),
+      partialGroups.flatMap((g) => g.members.map((m) => member(m, g)))) : null;
     const failed = groups.find((g) => g.failed);
     const failedBox = failed ? h("details", { class: "group failed" },
       h("summary", {}, `${failed.members.length} candidate${failed.members.length > 1 ? "s" : ""} decode none of this row's telegrams`),
       failed.members.map((m) => member(m, failed))) : null;
     const lumped = isLumped ? h("div", { class: "note-box" },
-      h("b", {}, "Why so many candidates? "), `This row groups telegrams by only ${rowId} ID byte${rowId === 1 ? "" : "s"} (${fmt.hex(row.row.zz)} ${fmt.hex(row.row.pb)}${fmt.hex(row.row.sb)} ${row.row.id}), but the definitions identify their messages by up to ${longer} bytes. So these are not ${candidates.length} alternatives for one message: they are different messages (registers) that share this row, each in the file ebusd loads and again in the files of other device variants. `,
-      h("button", { class: "small primary", onclick: () => this.setIdLength(row.row.zz, row.row.pb, row.row.sb, longer) }, `Split this row by ${longer} ID bytes`)) : null;
+      h("b", {}, "Why so many candidates? "), `This row groups telegrams by only ${rowId} ID byte${rowId === 1 ? "" : "s"} (${fmt.hex(row.row.zz)} ${fmt.hex(row.row.pb)}${fmt.hex(row.row.sb)} ${row.row.id}), but the definitions identify their messages by up to ${longer} bytes. So these are not ${candidates.length} alternatives for one message: they are different messages (registers) that share this row, each in the file ebusd loads and again in the files of other device variants. Only the telegrams that belong to a defined message are split off; you can also split or combine any row by hand with its + and − buttons. `,
+      h("button", { class: "small primary", onclick: () => this.splitLikeDefinitions(telegrams) }, "Split this row like the definitions")) : null;
     const none = !row.defKey ? h("div", { class: "note-box" }, "ebusd itself has no definition for this row: none of the candidates below would be used. Pick one to use it anyway (it joins the setup of this installation). The reasons are listed with each candidate.") : null;
 
     pop.replaceChildren();
@@ -1024,10 +1315,11 @@ export class Timeline {
       h("div", { class: "head" }, h("span", { class: "mono" }, row.label), h("span", { class: "muted" }, `${candidates.length} candidate definition${candidates.length > 1 ? "s" : ""} · ${fmt.count(telegrams.length)} recorded variants, ${fmt.count(total)} telegrams`),
         h("span", { style: "margin-left:auto" }),
         setup.chosenFor(row.key) ? h("button", { class: "small", title: "forget the choice for this row and show ebusd's choice again", onclick: () => setup.choose(row.key, null) }, "ebusd's choice") : null,
-        h("button", { class: "small", onclick: () => { bus.emit("show-tab", "definitions"); bus.emit("show-definition", row.defKey || candidates[0]?.def.key); } }, "Definitions ›"),
+        h("label", { class: "muted", title: "hide candidates that fail to decode some recorded telegram" }, h("input", { type: "checkbox", checked: hideFailing, onchange: (e) => setup.setUi("hideFailing", e.target.checked) }), " hide failing"),
+        h("button", { class: "small", title: "write a definition of your own for this message, prefilled from the recording", onclick: () => this.openEditor(row) }, "New definition…"),
         h("button", { class: "small", onclick: () => this.closePicker() }, "✕")),
-      lumped, none, cards, failedBox,
-      h("div", { class: "hint foot" }, "Candidates are compared over every telegram of this row in the recording. Definitions that are the same and decode the same values are shown together; what differs is their name, file and status. Hovering shows the decoding in the row; picking puts the definition into the setup (the row's other candidates leave it)."));
+      lumped, none, cards, partialBox, failedBox,
+      h("div", { class: "hint foot" }, "Candidates are compared over every telegram of this row in the recording. Definitions that are the same and decode the same values are one card (the same definition is usually repeated in the files of other device variants). Hovering a card shows its decoding in the row; picking puts it into the setup (the row's other candidates leave it)."));
     pop.style.display = "block";
     const stageTop = this.el.stage.getBoundingClientRect().top;
     const top = Math.max(0, Math.min(this.picker.anchorTop - stageTop + ROW, this.el.stage.clientHeight - Math.min(pop.offsetHeight, this.el.stage.clientHeight * 0.8)));
@@ -1091,7 +1383,7 @@ export class Timeline {
     const status = h("div", { class: "hint" });
     const exportsBox = h("div", { class: "exports" },
       h("button", { class: "primary small", disabled: !included.length, title: `write the CSV files of the setup to ${deployDir}${subdir ? "/" + subdir : ""} for the eBUSd app`, onclick: async () => {
-        const files = setup.files(entries, layers).files;
+        const files = app.views.definitions.setupDeployFiles(entries).files;
         if (!confirm(`Write ${Object.keys(files).length} files (${Object.keys(files).join(", ")}) to ${deployDir}${subdir ? "/" + subdir : ""} and remove other definition files there?`)) return;
         try {
           const result = await api.post("api/deploy", { files, subdir, clean: true });
@@ -1100,7 +1392,7 @@ export class Timeline {
         } catch (err) { status.textContent = `deploy failed: ${err.message}`; status.className = "hint err"; }
       } }, "Deploy to eBUSd"),
       h("button", { class: "small", disabled: !included.length, onclick: () => {
-        for (const [name, text] of Object.entries(setup.files(entries, layers).files)) {
+        for (const [name, text] of Object.entries(app.views.definitions.setupDeployFiles(entries).files)) {
           const a = h("a", { href: URL.createObjectURL(new Blob([text], { type: "text/csv" })), download: name });
           document.body.appendChild(a); a.click(); a.remove();
         }
@@ -1132,12 +1424,94 @@ export class Timeline {
     } catch (err) { toast(err.message, "err"); }
   }
 
-  async addMarker() {
-    const note = prompt("Marker text (e.g. what you just did at the heating):");
-    if (!note) return;
+  // -- events: what the terminal's `log` command does ---------------------------------------------------------------
+
+  toggleLog(open = this.el.logPop.style.display === "none", highlight = null) {
+    const pop = this.el.logPop;
+    pop.style.display = open ? "" : "none";
+    if (open) { this.placePopover(pop); this.toggleSourcesOff(); }
+    this.el.logButton.classList.toggle("active", open);
+    if (!open) { this.logDraft = null; this.logPicking = false; this.el.plotCanvas.style.cursor = ""; this.drawAnnot(); this.drawPlot(); return; }
+    this.log ||= { message: "", mode: "now", ms: Date.now(), before: { value: 500, unit: "ms" }, after: { value: 500, unit: "ms" }, whole: false, notes: [] };
+    this.log.highlight = highlight;
+    this.renderLog();
+    this.loadNotes();
+  }
+
+  async loadNotes() {
+    try { this.log.notes = (await api.get("api/notes?limit=30")).notes; this.renderLog(); } catch (err) { console.warn(err); }
+  }
+
+  /** The time the form means, the range and the draft that is drawn on the timeline meanwhile. */
+  logEvent() {
+    const l = this.log;
+    const ms = l.mode === "now" ? Date.now() : l.ms;
+    const range = eventRange({ ms, beforeMs: toMs(l.before.value, l.before.unit), afterMs: toMs(l.after.value, l.after.unit), whole: l.whole });
+    return { ...range, beforeMs: toMs(l.before.value, l.before.unit), afterMs: toMs(l.after.value, l.after.unit) };
+  }
+
+  pickLogTime(ms) {
+    this.logPicking = false;
+    this.el.plotCanvas.style.cursor = "";
+    this.log.mode = "at";
+    this.log.ms = Math.round(ms);
+    this.renderLog();
+  }
+
+  renderLog() {
+    const pop = this.el.logPop;
+    if (pop.style.display === "none" || !this.log) return;
+    const l = this.log;
+    const ev = this.logEvent();
+    this.logDraft = l.mode === "now" ? null : { ms: ev.ms, ms_min: ev.min, ms_max: ev.max, message: l.message.trim(), draft: true };
+    this.drawAnnot(); this.drawPlot();
+    const local = (ms) => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 19);
+    const message = h("input", { type: "text", value: l.message, size: 44, placeholder: "e.g. set hot water to 50 °C (optional: only the time is noted without)", oninput: () => { l.message = message.value; this.logDraft && (this.logDraft.message = message.value.trim()); command.textContent = this.logCommandText(); this.drawAnnot(); },
+      onkeydown: (e) => { if (e.key === "Enter") this.submitLog(); } });
+    const when = h("input", { type: "datetime-local", step: 1, value: local(l.mode === "now" ? Date.now() : l.ms), disabled: l.mode === "now", onchange: () => { const t = new Date(when.value).getTime(); if (Number.isFinite(t)) { l.ms = t; this.renderLog(); } } });
+    const units = (side) => h("select", { onchange: (e) => { l[side].unit = e.target.value; this.renderLog(); } }, ["ms", "s", "min", "h"].map((u) => h("option", { value: u, selected: u === l[side].unit }, u)));
+    const amount = (side) => h("input", { type: "number", min: 0, value: l[side].value, style: "width:64px", disabled: l.whole, onchange: (e) => { l[side].value = Number(e.target.value) || 0; this.renderLog(); } });
+    const command = h("code", { class: "mono" }, this.logCommandText());
+    const exact = ev.max - ev.min;
+    append(pop.replaceChildren() || pop,
+      h("div", { class: "row" }, h("b", {}, "Note an event"), h("span", { class: "muted" }, "like the log command of the eBUSd terminal"), h("span", { style: "margin-left:auto" }), h("button", { class: "small", onclick: () => this.toggleLog(false) }, "✕")),
+      h("label", { class: "col" }, "What happened", message),
+      h("div", { class: "row" }, h("label", {}, "When"),
+        h("label", {}, h("input", { type: "radio", name: "logwhen", checked: l.mode === "now", onchange: () => { l.mode = "now"; this.renderLog(); } }), " now"),
+        h("label", {}, h("input", { type: "radio", name: "logwhen", checked: l.mode === "at", onchange: () => { l.mode = "at"; l.ms = l.ms || Date.now(); this.renderLog(); } }), " at"), when,
+        h("button", { class: `small ${this.logPicking ? "primary" : ""}`, title: "then click the time on the timeline", onclick: () => { this.logPicking = !this.logPicking; this.el.plotCanvas.style.cursor = this.logPicking ? "crosshair" : ""; this.renderLog(); } }, this.logPicking ? "click the timeline…" : "pick on the timeline")),
+      h("div", { class: "row" }, h("label", {}, "How exact"),
+        l.whole ? h("span", {}, "the whole minute") : [h("span", {}, "up to"), amount("before"), units("before"), h("span", {}, "before and"), amount("after"), units("after"), h("span", {}, "after")]),
+      h("div", { class: "chips" }, LOG_PRESETS.map(([label, preset]) => h("button", { class: "small", onclick: () => { l.before = fromMs(preset.beforeMs); l.after = fromMs(preset.afterMs); l.whole = preset.whole; this.renderLog(); } }, label))),
+      h("div", { class: "hint" }, l.mode === "now" ? "The time is taken when you press Log." : `Between ${fmt.time(ev.min, true)} and ${fmt.time(ev.max, true)} (${durationText(Math.max(0, exact)) || "0ms"} wide); the band is drawn on the timeline.`),
+      h("div", { class: "hint" }, "In the terminal: ", command, " ", h("a", { href: "#", onclick: (e) => { e.preventDefault(); navigator.clipboard?.writeText(command.textContent).then(() => toast("copied")); } }, "copy")),
+      h("div", { class: "row" }, h("button", { class: "primary", onclick: () => this.submitLog() }, "Log event")),
+      h("h3", {}, "Recent notes"),
+      h("div", { class: "notes" }, l.notes.length ? l.notes.map((n) => {
+        const before = n.ms - n.ms_min, after = n.ms_max - n.ms;
+        const range = before === after ? (before > 500 ? `±${durationText(before)}` : "") : `${before ? `-${durationText(before)}` : ""}${after ? `+${durationText(after)}` : ""}`;
+        return h("div", { class: `note ${l.highlight === n.id ? "hl" : ""}` },
+          h("a", { href: "#", class: "mono", title: "show on the timeline", onclick: (e) => { e.preventDefault(); bus.emit("goto-time", n.ms); } }, fmt.dateTime(n.ms)),
+          range ? h("span", { class: "muted" }, ` ${range}`) : null, " ", n.message ? h("span", {}, n.message) : h("span", { class: "muted" }, "(time only)"),
+          h("a", { href: "#", class: "err", style: "margin-left:auto", title: "delete this note", onclick: async (e) => { e.preventDefault(); if (!confirm(`Delete the note "${n.message || fmt.dateTime(n.ms)}"?`)) return; try { await api.del(`api/events/${n.id}`); this.loadNotes(); this.load(true); } catch (err) { toast(err.message, "err"); } } }, "✕"));
+      }) : h("div", { class: "hint" }, "none yet")));
+  }
+
+  logCommandText() {
+    const l = this.log;
+    const ev = this.logEvent();
+    return logCommand({ message: l.message, now: l.mode === "now", ms: ev.ms, beforeMs: ev.beforeMs, afterMs: ev.afterMs, whole: l.whole });
+  }
+
+  async submitLog() {
+    const l = this.log;
+    const ev = this.logEvent();
     try {
-      await api.post("api/events", { note });
-      toast("marker added");
+      await api.post("api/events", { message: l.message.trim(), ms: Math.round(ev.ms), ms_min: Math.round(ev.min), ms_max: Math.round(ev.max) });
+      toast(l.message.trim() ? "event noted" : "time noted");
+      l.message = ""; l.mode = "now"; this.logDraft = null;
+      this.renderLog();
+      this.loadNotes();
       this.load(true);
     } catch (err) { toast(err.message, "err"); }
   }

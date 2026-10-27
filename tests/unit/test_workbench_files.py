@@ -60,7 +60,7 @@ class Repository(unittest.TestCase):
 
     def test_clone_edit_commit_push(self):
         self.assertFalse(self.repo.exists())
-        self.assertEqual(self.repo.status(), {"exists": False, "dir": self.repo.dir, "busy": None})
+        self.assertEqual(self.repo.status(), {"exists": False, "dir": self.repo.dir, "busy": None, "error": None})
         self.repo.clone(self.remote)
         status = self.repo.status()
         self.assertTrue(status["exists"])
@@ -178,6 +178,52 @@ class RepoBusy(unittest.TestCase):
             self.assertIsNone(repo.status()["busy"])
 
 
+class BackgroundClone(unittest.TestCase):
+    def test_clone_in_background_reports_busy_then_exists_or_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            upstream = os.path.join(tmp, "upstream.git")
+            git("init", "--bare", "-q", "--initial-branch=master", upstream, cwd=tmp)
+            work = os.path.join(tmp, "work")
+            git("clone", "-q", upstream, work, cwd=tmp)
+            with open(os.path.join(work, "a.tsp"), "w") as f:
+                f.write("model A {}\n")
+            git("add", "-A", cwd=work)
+            git("commit", "-q", "-m", "x", cwd=work)
+            git("push", "-q", "origin", "HEAD:master", cwd=work)
+            repo = Repo(os.path.join(tmp, "repo"))
+            thread = repo.clone_background(upstream)
+            with self.assertRaises(RepoError):       # one slow operation at a time
+                repo.clone_background(upstream)
+            thread.join(30)
+            status = repo.status()
+            self.assertTrue(status["exists"])
+            self.assertIsNone(status["busy"])
+            self.assertIsNone(status["error"])
+            # a failing clone ends with an error instead of an exception in a thread
+            bad = Repo(os.path.join(tmp, "bad"))
+            bad.clone_background(os.path.join(tmp, "missing.git")).join(30)
+            status = bad.status()
+            self.assertFalse(status["exists"])
+            self.assertIsNone(status["busy"])
+            self.assertIn("failed", status["error"])
+
+    def test_layers_from_other_repositories(self):
+        slug = Repo.layer_ref("https://github.com/someone/ebusd-configuration.git#my-branch")
+        self.assertEqual(slug, "ext/github.com-someone-ebusd-configuration-my-branch")
+        self.assertEqual(Repo.layer_ref(slug), slug)
+        self.assertEqual(Repo.layer_ref("https://github.com/someone/ebusd-configuration"), "ext/github.com-someone-ebusd-configuration")
+        for bad in ("http://example.com/x.git", "https://x/../y", "ssh://git@host/x.git", "ext/", "https://example.com/x y"):
+            with self.assertRaises(RepoError):
+                Repo.layer_ref(bad)
+
+    def test_manifest_is_deployed_next_to_the_csv_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = deploy.deploy({"a.csv": "type\n", "workbench-setup.json": "{}\n"}, tmp, clean=True)
+            self.assertEqual(result["written"], ["a.csv", "workbench-setup.json"])
+            with self.assertRaises(RepoError):
+                deploy.deploy({"notes.json": "{}"}, tmp)
+
+
 class SettingsFile(unittest.TestCase):
     def test_validation_and_persistence(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -198,6 +244,11 @@ class SettingsFile(unittest.TestCase):
                 with self.assertRaises((ValueError, TypeError)):
                     settings.update(bad)
             # ebusd's own address and the setup (included definitions, chosen candidates, renames) round-trip
+            settings.update({"id_rules": {"08B51A:05FF3221": 4, "08b509:": 3}})
+            self.assertEqual(settings.as_dict()["id_rules"], {"08b51a:05ff3221": 4, "08b509:": 3})
+            for bad_rule in ({"08b51a:0": 1}, {"08b51a": 1}, {"zzzzzz:00": 1}):
+                with self.assertRaises(ValueError):
+                    settings.update({"id_rules": bad_rule})
             self.assertEqual(settings.as_dict()["own_address"], "31")
             settings.update({"own_address": " F1 "})
             setup = {"included": ["a.csv|c|Name|"], "chosen": {"10→08 b509 0d": "a.csv|c|Name|"},

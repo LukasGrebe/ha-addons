@@ -90,6 +90,11 @@ export class SettingsView {
       h("div", { class: "hint" }, "A timeline row is one source, destination, command (PBSB) and message ID. The ID is the first data bytes of the master part; the remaining bytes and the answer are the value. Rows whose value seems to change with every telegram usually need more ID bytes, rows mixing several registers fewer. Per command (PBSB) or per device and command (ZZPBSB); the timeline offers the lengths of the decoded definitions after a decode run."),
       h("div", { class: "row", style: "margin:8px 0" }, h("label", {}, "default ID length: "), select),
       h("h3", {}, "per command"), rows,
+      h("h3", {}, "per message (rows split or combined with + and −)"),
+      h("div", { class: "hint" }, `${Object.keys(settings.id_rules || {}).length} rule${Object.keys(settings.id_rules || {}).length === 1 ? "" : "s"}: the + and − buttons next to a row in the timeline split it at its next byte or combine it with its neighbours, only for the telegrams starting with that prefix. "rows like the definitions" in the timeline sets them from the decoded definitions.`),
+      h("div", { class: "row", style: "margin:6px 0" },
+        h("button", { class: "small", disabled: !Object.keys(settings.id_rules || {}).length, onclick: () => this.saveSettings({ id_rules: {} }) }, "clear all rules"),
+        h("button", { class: "small", title: "1 byte by default, 3 for b509 and 6 for b524, no rules", onclick: () => { if (confirm("Reset the grouping of the timeline to the defaults?")) this.saveSettings({ id_bytes: 1, id_overrides: { b509: 3, b524: 6 }, id_rules: {} }); } }, "reset grouping to the defaults")),
       h("div", { class: "ov" }, pbsb, len, h("button", { class: "small", onclick: () => {
         const key = pbsb.value.trim().toLowerCase();
         if (!/^([0-9a-f]{4}|[0-9a-f]{6})$/.test(key)) return toast("command must be PBSB or ZZPBSB in hex", "err");

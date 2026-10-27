@@ -17,7 +17,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 LABEL \
-    org.opencontainers.image.title="Home Assistant App: eBUSd Workbench" \
+    org.opencontainers.image.title="Home Assistant App: ebusd Config Workbench" \
     org.opencontainers.image.description="Browse recorded eBUS telegrams and work on ebusd message definitions (TypeSpec to CSV) with tests against real bus data" \
     org.opencontainers.image.source="https://github.com/LukasGrebe/ha-addons" \
     org.opencontainers.image.licenses="Apache License 2.0"

@@ -34,17 +34,50 @@ export function idLength(zz, pb, sb, settings) {
   return settings?.id_bytes ?? 1;
 }
 
+const ruleIndexes = new WeakMap();
+
+/** The prefix rules of the settings by command, longest prefix first: {"zzpbsb:prefix": length} -> Map(zzpbsb -> [{prefix, length}]). */
+function ruleIndex(rules) {
+  let index = ruleIndexes.get(rules);
+  if (!index) {
+    index = new Map();
+    for (const [key, length] of Object.entries(rules)) {
+      const [command, prefix = ""] = key.split(":");
+      if (!index.has(command)) index.set(command, []);
+      index.get(command).push({ prefix, length });
+    }
+    for (const list of index.values()) list.sort((a, b) => b.prefix.length - a.prefix.length);
+    ruleIndexes.set(rules, index);
+  }
+  return index;
+}
+
+/**
+ * Message ID length (data bytes) of a telegram: the longest matching prefix rule (what splitting or
+ * combining a row stores), else the command's length, else the default.
+ */
+export function idLengthOf(master, settings) {
+  const zz = parseInt(master.slice(2, 4), 16), pb = parseInt(master.slice(4, 6), 16), sb = parseInt(master.slice(6, 8), 16);
+  const rules = settings?.id_rules;
+  if (rules) {
+    const list = ruleIndex(rules).get(master.slice(2, 8));
+    if (list) {
+      const data = master.slice(10);
+      for (const rule of list) if (data.startsWith(rule.prefix)) return rule.length;
+    }
+  }
+  return idLength(zz, pb, sb, settings);
+}
+
 /** The value string of a telegram as the timeline groups it: payload/slave answer/status. */
 export function telegramValue(master, slave, status, settings) {
-  const zz = parseInt(master.slice(2, 4), 16), pb = parseInt(master.slice(4, 6), 16), sb = parseInt(master.slice(6, 8), 16);
-  const len = idLength(zz, pb, sb, settings);
+  const len = idLengthOf(master, settings);
   const payload = master.slice(10 + len * 2);
   return `${payload}/${slave ? slave.slice(2) : ""}/${status || "ok"}`;
 }
 
 /** Row key of a telegram in the timeline: QQ ZZ PB SB + message ID. */
 export function telegramRowKey(master, settings) {
-  const zz = parseInt(master.slice(2, 4), 16), pb = parseInt(master.slice(4, 6), 16), sb = parseInt(master.slice(6, 8), 16);
-  const len = idLength(zz, pb, sb, settings);
+  const len = idLengthOf(master, settings);
   return master.slice(0, 8) + master.slice(10, 10 + len * 2);
 }

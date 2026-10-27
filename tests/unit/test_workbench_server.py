@@ -87,6 +87,20 @@ class Api(unittest.TestCase):
         self.assertEqual(len(raw["telegrams"]), 5)
         self.assertEqual(self.request("GET", "/api/telegrams/runs?from=5&to=1")[0], 400)
 
+    def test_telegrams_of_rows_without_address(self):
+        # rows of telegrams too broken to tell source or destination are shown as "--" and can be listed
+        body = self.get_json(f"/api/telegrams?from={self.end_ms - 86400_000}&to={self.end_ms}&qq=--&zz=--&pb=--&sb=--&limit=5")
+        self.assertIsInstance(body["telegrams"], list)
+        for t in body["telegrams"]:
+            self.assertIsNone(t["qq"])
+        self.assertEqual(self.request("GET", f"/api/telegrams?from=0&to=1&qq=zz")[0], 400)
+
+    def test_series_endpoint(self):
+        body = self.get_json(f"/api/telegrams/series?from={self.end_ms - 3600_000}&to={self.end_ms}&qq=10&zz=08&pb=b5&sb=10&id=00")
+        self.assertEqual(body["total"], len(body["points"]))
+        self.assertGreater(body["total"], 100)
+        self.assertEqual(body["from_ms"], self.end_ms - 3600_000)
+
     def test_events_and_settings(self):
         events = self.get_json(f"/api/events?from={self.end_ms - 86400_000}&to={self.end_ms}")
         self.assertEqual(len(events["markers"]), 1)
@@ -97,7 +111,22 @@ class Api(unittest.TestCase):
         self.assertEqual(len(self.get_json(f"/api/events?from={self.end_ms - 86400_000}&to={self.end_ms}")["markers"]), 2)
         self.assertEqual(self.request("DELETE", f"/api/events/{event_id}")[0], 200)
         self.assertEqual(self.request("DELETE", f"/api/events/{event_id}")[0], 404)
-        self.assertEqual(self.request("POST", "/api/events", {"message": ""})[0], 400)
+        # like the terminal's `log`: a time range ("somewhere between 8:40 and 8:50"), or only a time without a message
+        at = self.end_ms - 5000
+        code, _, body = self.request("POST", "/api/events", {"message": "Dampf vom Abtauen", "ms": at, "ms_min": at - 600_000, "ms_max": at})
+        self.assertEqual(code, 200, body)
+        notes = self.get_json("/api/notes?limit=5")["notes"]
+        newest = next(n for n in notes if n["message"] == "Dampf vom Abtauen")
+        self.assertEqual((newest["ms"], newest["ms_min"], newest["ms_max"]), (at, at - 600_000, at))
+        self.assertGreater(newest["logged_ms"], 0)
+        code, _, body = self.request("POST", "/api/events", {"message": "", "ms": at - 1})
+        self.assertEqual(code, 200)
+        self.assertIsNone(next(n for n in self.get_json("/api/notes?limit=20")["notes"] if n["ms"] == at - 1)["message"], "time only")
+        self.assertEqual(self.request("POST", "/api/events", {"message": "x", "ms": at, "ms_min": at + 1, "ms_max": at + 2})[0], 400, "the time lies outside its range")
+        self.assertEqual(self.request("POST", "/api/events", {"message": "x", "ms_min": at - 1})[0], 400, "a range needs the time")
+        for note in self.get_json("/api/notes?limit=50")["notes"]:
+            if note["message"] in ("Dampf vom Abtauen", None):
+                self.request("DELETE", f"/api/events/{note['id']}")
         code, _, body = self.request("PUT", "/api/settings", {"id_overrides": {"08b509": 5}, "layers": ["660", {"ref": "upstream/master"}]})
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(body)["id_overrides"], {"08b509": 5})

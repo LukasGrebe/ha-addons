@@ -7,11 +7,21 @@ import { api, app, append, bus, fmt, h, toast, refreshStatus } from "./app.js";
 import { messageColors, telegramValue, valueColors } from "./colors.js";
 import { generateEbusdOptions, generateHaYaml } from "./hayaml.js";
 import { describeMatch, fmtTime, parseAddressMap, runProfile, summaryJson } from "./evidence.js";
+import { accessKind, locateSource } from "./compare.js";
 import { setup } from "./setup.js";
 
 const dirname = (p) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const basename = (p) => p.slice(p.lastIndexOf("/") + 1);
-const VIEWS = [["editor", "Editor"], ["results", "Decoded"], ["setup", "Setup"], ["export", "Export"], ["evidence", "Evidence"]];
+const VIEWS = [["sources", "1 · Sources"], ["results", "2 · Live decoding"], ["setup", "3 · Choose"], ["editor", "4 · Edit"], ["export", "5 · Summary & save"], ["evidence", "Evidence"]];
+const STEP_HELP = {
+  sources: "Where definitions come from: a repository (the default ebusd-configuration or your own), community pull requests, other repositories, and definitions you write yourself. They are compiled in your browser and decode your recorded telegrams.",
+  results: "Every distinct telegram of the recording, decoded by every matching definition as it arrives, newest first. The same decodings are in the timeline.",
+  setup: "All definitions that matched your telegrams, hidden ones included. Tick the ones for your installation and name them the way you want them in your config.",
+  editor: "The TypeSpec sources of the definitions. Saving recompiles and decodes the whole recording again. To write a definition of your own, add it as an own definition in Sources or from a candidate in the timeline.",
+  export: "What you chose, where each definition comes from and how it fared on your recording. Save it as CSV files for the eBUSd app, together with a record of its sources.",
+  evidence: "Checks of ebus-evidence profiles against your recording, and the raw log export for the research.",
+};
+const DEFAULT_REPO = "https://github.com/john30/ebusd-configuration.git";
 const STATUS_HELP = {
   active: "ebusd uses this definition for this installation (file chosen by the scan, condition met)",
   variant: "definition from a file of another device variant (ebusd would not load it); it decodes the recorded telegrams",
@@ -19,6 +29,7 @@ const STATUS_HELP = {
   hidden: "definition in the file ebusd loads, but another definition takes precedence",
   error: "definition matches the telegram but cannot decode it (wrong length or values)",
   companion: "not seen on the bus: the counterpart of a seen definition (same name, other direction, usually for writing)",
+  custom: "your own definition: decoded over the whole recording like the others, but never chosen automatically",
 };
 
 function chip(circuit, name, extra = "") {
@@ -50,24 +61,32 @@ export class Definitions {
     this.content = "";
     this.dirty = false;
     this.layers = [];
-    this.view = "editor";
+    this.view = "sources";
     this.dirtyViews = new Set();
     this.evidenceRun = null;
     this.compiling = false;
     this.autoCompiled = false;
     this.setupFilter = "";
+    this.mounts = new Set();        // containers that show the sources panel (the Sources step, the timeline's popover)
+    this.compileMessage = null;     // {text, cls} of the last compile
+    this.diagList = [];
+    this.customDraft = null;
+    this.cloneUrl = "";
+    this.layerMessage = "";
     this.build();
     bus.on("status", (status) => {
       const busy = status.repo?.busy || null;
       const wasBusy = this.repo?.busy || null;
       if (status.repo?.exists !== this.repo?.exists || (wasBusy && !busy)) this.refresh();
-      else if (JSON.stringify(busy) !== JSON.stringify(wasBusy) && this.repo) { this.repo.busy = busy; this.renderRepo(); }
+      else if (JSON.stringify(busy) !== JSON.stringify(wasBusy) && this.repo) { this.repo.busy = busy; this.renderRepo(); this.renderSources(); }
+      else if (status.repo?.error !== this.repo?.error && this.repo) { this.repo.error = status.repo.error; this.renderSources(); }
     });
-    setInterval(() => { for (const el of this.root.querySelectorAll("[data-since]")) el.textContent = fmt.duration(Date.now() - Number(el.dataset.since)); }, 1000);
+    setInterval(() => { for (const el of document.querySelectorAll("[data-since]")) el.textContent = fmt.duration(Date.now() - Number(el.dataset.since)); }, 1000);
     bus.on("decodes-changed", (reason) => { this.updateDecodeStatus(); if (reason !== "progress") { this.setCounts(); this.refreshViews(); } });
     bus.on("setup-changed", () => { this.setCounts(); this.refreshViews(["setup", "export"]); });
     bus.on("show-view", (id) => this.showView(id));
     bus.on("show-definition", (key) => { const def = app.decoder?.def(key); this.setupFilter = def ? `${def.circuit} ${def.name}` : ""; this.dirtyViews.add("setup"); this.showView("setup"); });
+    bus.on("open-source", (def) => this.openSource(def));
     this.refresh();
   }
 
@@ -88,18 +107,18 @@ export class Definitions {
     const el = (this.el = {});
     el.repo = h("div", { class: "repo" });
     el.tree = h("div", { class: "tree" });
-    el.left = h("div", { class: "left" }, el.repo, el.tree);
-
+    el.build = h("div", { class: "build" });
+    el.stephint = h("div", { class: "stephint" });
     el.subtabs = h("div", { class: "subtabs" }, VIEWS.map(([id, label]) => h("button", { "data-view": id, class: id === this.view ? "active" : "", onclick: () => this.showView(id) }, label, h("span", { class: "count" }))));
     el.panes = {};
     for (const [id] of VIEWS) el.panes[id] = h("div", { class: `pane ${id === this.view ? "active" : ""}` });
     this.buildEditor();
-    el.center = h("div", { class: "center" }, el.subtabs, ...Object.values(el.panes));
-
-    el.build = h("div", { class: "build" });
-    el.right = h("div", { class: "right" }, el.build);
-    this.root.appendChild(h("div", { class: "defs" }, el.left, el.center, el.right));
-    this.renderBuild();
+    el.panes.sources.appendChild(h("div", { class: "sources" }, el.build, el.repo));
+    el.center = h("div", { class: "center" }, el.subtabs, el.stephint, ...Object.values(el.panes));
+    this.root.appendChild(h("div", { class: "defs" }, el.center));
+    el.stephint.textContent = STEP_HELP[this.view];
+    this.mounts.add(el.build);
+    this.renderSources();
     this.renderResults();
     this.renderSetup();
     this.renderExport();
@@ -111,6 +130,7 @@ export class Definitions {
     this.view = id;
     for (const button of this.el.subtabs.querySelectorAll("button")) button.classList.toggle("active", button.dataset.view === id);
     for (const [key, pane] of Object.entries(this.el.panes)) pane.classList.toggle("active", key === id);
+    this.el.stephint.textContent = STEP_HELP[id] || "";
     if (id === "export") this.renderExport();
     if (this.dirtyViews.has(id)) this.renderView(id);
   }
@@ -143,7 +163,7 @@ export class Definitions {
       h("button", { class: "small", onclick: () => this.deleteFile() }, "Delete"),
       el.save);
     el.gutter = h("div", { class: "gutter" });
-    el.textarea = h("textarea", { spellcheck: "false", placeholder: "Open a .tsp file from the tree on the left, or clone a repository first." });
+    el.textarea = h("textarea", { spellcheck: "false", placeholder: "Open a .tsp file from the tree on the left, or load definitions in the Sources step first." });
     el.textarea.addEventListener("input", () => { this.content = el.textarea.value; this.setDirty(true); this.updateGutter(); });
     el.textarea.addEventListener("scroll", () => { el.gutter.scrollTop = el.textarea.scrollTop; });
     el.textarea.addEventListener("keydown", (e) => {
@@ -156,7 +176,7 @@ export class Definitions {
     });
     el.editor = h("div", { class: "editor" }, el.gutter, el.textarea);
     el.diff = h("pre", { class: "diffview", style: "display:none" });
-    append(el.panes.editor, el.editorBar, el.editor, el.diff);
+    append(el.panes.editor, h("div", { class: "editor-layout" }, el.tree, h("div", { class: "editor-main" }, el.editorBar, el.editor, el.diff)));
   }
 
   // -- repository ------------------------------------------------------------------
@@ -181,15 +201,15 @@ export class Definitions {
     if (!app.decoder?.compile && !this.compiling) this.compile();
   }
 
-  // -- layers: community pull requests compiled on top of the checkout ---------------------------
+  // -- layers: community pull requests and other repositories compiled on top of the checkout -------------
 
   async loadLayers() {
-    if (!this.repo?.exists) { this.layers = []; this.renderLayers(); return; }
+    if (!this.repo?.exists) { this.layers = []; this.renderSources(); return; }
     try {
       const { layers } = await api.get("api/repo/layers?dir=src");
       this.layers = layers;
     } catch (err) { console.warn(err); this.layers = []; }
-    this.renderLayers();
+    this.renderSources();
   }
 
   enabledLayers() {
@@ -201,47 +221,48 @@ export class Definitions {
     const ui = { ...(app.settings?.ui || {}) };
     ui.layersEnabled = { ...(ui.layersEnabled || {}), [ref]: on };
     try { app.settings = await api.put("api/settings", { ui }); } catch (err) { toast(err.message, "err"); }
-    this.renderLayers();
+    this.renderSources();
   }
 
   async addLayer(spec) {
     if (!spec.trim()) return;
-    this.layerStatus.textContent = `fetching ${spec}…`;
+    this.layerMessage = `fetching ${spec}…`;
+    this.renderSources();
     try {
       const layer = await api.post("api/repo/layers", { ref: spec.trim() });
-      this.layerStatus.textContent = `fetched ${layer.ref}: ${layer.head?.subject || ""}`;
+      this.layerMessage = `fetched ${layer.ref}: ${layer.head?.subject || ""}. Compile to use it.`;
       await this.loadLayers();
-    } catch (err) { this.layerStatus.textContent = `fetching ${spec} failed: ${err.message}`; }
+    } catch (err) { this.layerMessage = `fetching ${spec} failed: ${err.message}`; this.renderSources(); }
   }
 
   async removeLayer(ref) {
     try { await api.del(`api/repo/layers/${encodeURIComponent(ref)}`); await this.loadLayers(); } catch (err) { toast(err.message, "err"); }
   }
 
-  renderLayers() {
-    const box = this.layerBox;
-    if (!box) return;
-    box.replaceChildren();
+  layersList() {
+    const box = h("div", { class: "layers" });
     const enabled = app.settings?.ui?.layersEnabled || {};
     for (const layer of this.layers) {
       const check = h("input", { type: "checkbox", checked: layer.fetched && enabled[layer.ref] !== false, disabled: !layer.fetched, onchange: () => this.setLayerEnabled(layer.ref, check.checked) });
       const title = layer.fetched ? `${layer.head.short} ${layer.head.subject} — ${layer.head.author}, ${layer.head.date.slice(0, 10)}` : "not fetched";
       append(box, h("label", { title, style: "display:flex;gap:6px;align-items:center;padding:1px 0" }, check,
-        h("span", { class: "mono" }, layer.ref),
+        h("span", { class: "mono" }, layer.ref.length > 34 ? `${layer.ref.slice(0, 33)}…` : layer.ref),
         h("span", { class: "muted", style: "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, layer.fetched ? `${layer.changes.length} files: ${layer.head.subject}` : "not fetched"),
         layer.fetched && !layer.common_history ? h("span", { class: "warn", title: "no common history with the checkout (shallow clone?): every difference counts as a change" }, "!") : null,
         h("a", { href: "#", class: "muted", title: "re-fetch", onclick: (e) => { e.preventDefault(); this.addLayer(layer.ref); } }, "↻"),
         h("a", { href: "#", class: "err", title: "remove", onclick: (e) => { e.preventDefault(); this.removeLayer(layer.ref); } }, "✕")));
     }
-    if (!this.layers.length) append(box, h("div", { class: "hint" }, "none yet — e.g. 660 (HMU HW5103), 598 (VWZIO), 604"));
+    if (!this.layers.length) append(box, h("div", { class: "hint" }, "none yet: e.g. 660 (HMU HW5103), 598 (VWZIO), 604"));
+    return box;
   }
 
   async repoAction(action, body, label) {
-    const slow = ["clone", "fetch", "pull", "push"].includes(action);
+    const slow = ["fetch", "pull", "push"].includes(action);
     if (slow) {
       // visible right away; the server's own busy state (polled with the status) takes over if the request is cut off
-      this.pending = { what: action === "clone" ? `cloning ${body?.url || ""}` : `${label || action}`, since: Date.now() / 1000 };
+      this.pending = { what: `${label || action}`, since: Date.now() / 1000 };
       this.renderRepo();
+      this.renderSources();
       refreshStatus();
     }
     try {
@@ -257,27 +278,46 @@ export class Definitions {
     }
   }
 
+  /** Clone in the background (a full clone takes minutes); the status shows the progress and a failure. */
+  async cloneRepo(url) {
+    url = (url || "").trim();
+    if (!url) return toast("enter the URL of a repository", "err");
+    try {
+      this.repo = await api.post("api/repo/clone", { url, background: true });
+      await refreshStatus();
+      this.renderSources();
+    } catch (err) { toast(`clone failed: ${err.message}`, "err", 8000); }
+  }
+
+  /** What to do when there are no definitions yet: the default ones, a repository of your own, or start empty. */
+  clonePanel() {
+    const r = this.repo || app.status?.repo || {};
+    const busy = r.busy || this.pending;
+    if (busy) return this.busyBox(busy);
+    const upstream = app.settings?.upstream_url || DEFAULT_REPO;
+    const url = h("input", { type: "text", placeholder: "https://github.com/<you>/ebusd-configuration.git", value: this.cloneUrl || app.status?.repo_url || "", size: 42, oninput: () => { this.cloneUrl = url.value; } });
+    return h("div", { class: "clone" },
+      r.error ? h("div", { class: "err", style: "margin-bottom:6px" }, r.error) : null,
+      h("div", { class: "hint" }, "No definitions yet: nothing can decode the recorded telegrams. Start with the default definitions, or use a repository of your own (a fork of ebusd-configuration, HTTPS)."),
+      h("div", { class: "row" }, h("button", { class: "primary", onclick: () => this.cloneRepo(upstream) }, "Load the default definitions"), h("span", { class: "muted mono" }, upstream.replace("https://", ""))),
+      h("div", { class: "row" }, url, h("button", { onclick: () => this.cloneRepo(url.value) }, "Use this repository")),
+      h("div", { class: "row" }, h("button", { onclick: () => this.repoAction("init", {}, "init") }, "Start empty"), h("span", { class: "hint" }, "and write your own definitions (below)")));
+  }
+
+  busyBox(busy) {
+    return h("div", { class: "busy-box" }, h("span", { class: "spinner" }), h("div", {}, h("b", {}, `${busy.what}…`), " ", h("span", { class: "muted", "data-since": String(Math.round(busy.since * 1000)) }, fmt.duration(Date.now() - busy.since * 1000)),
+      h("div", { class: "hint" }, busy.what.startsWith("cloning") ? "A full clone of ebusd-configuration (with its history, needed for the community pull requests) takes a minute or two on a small device. You can leave this page; the timeline shows the progress." : "This can take a moment.")));
+  }
+
+  /** The git panel of the Sources step: branch, changes to commit, history. */
   renderRepo() {
     const r = this.repo || {};
     const box = this.el.repo;
     box.replaceChildren();
+    if (!r.exists) return;
     const busy = r.busy || this.pending;
-    if (busy) {
-      append(box, h("h2", {}, "Definitions repository"),
-        h("div", { class: "busy-box" }, h("span", { class: "spinner" }), h("div", {}, h("b", {}, `${busy.what}…`), " ", h("span", { class: "muted", "data-since": String(Math.round(busy.since * 1000)) }, fmt.duration(Date.now() - busy.since * 1000)),
-          h("div", { class: "hint" }, busy.what.startsWith("cloning") ? "A full clone of ebusd-configuration (with its history, needed for the community layers) takes a minute or two on a small device. You can leave this tab; the timeline shows the progress." : "This can take a moment."))));
-      if (!r.exists) return;
-    }
-    if (!r.exists) {
-      const url = h("input", { type: "text", placeholder: "https://github.com/<you>/ebusd-configuration.git", value: app.status?.repo_url || "" });
-      append(box, h("h2", {}, "Definitions repository"),
-        h("div", { class: "hint" }, `No git repository in ${r.dir || "the app config folder"} yet. Clone your fork of ebusd-configuration (HTTPS; set a token in the app configuration to push) or start empty.`),
-        h("div", { class: "row" }, url),
-        h("div", { class: "row" },
-          h("button", { class: "primary", "data-action": "clone", onclick: () => this.repoAction("clone", { url: url.value.trim() }, "clone") }, "Clone"),
-          h("button", { "data-action": "init", onclick: () => this.repoAction("init", {}, "init") }, "Start empty")));
-      return;
-    }
+    if (busy) append(box, this.busyBox(busy));
+    append(box, h("h3", {}, "Git: your checkout"));
     const changes = r.changes || [];
     const checks = new Map();
     const message = h("input", { type: "text", placeholder: "commit message" });
@@ -402,8 +442,9 @@ export class Definitions {
       this.content = this.el.textarea.value;
       this.setDirty(false);
       toast(`saved ${this.file}`);
-      this.refresh();
+      await this.refresh();
       refreshStatus();
+      if (this.file.endsWith(".tsp") || /\.ya?ml$/.test(this.file)) this.compile();   // the whole recording is decoded again with the new source
     } catch (err) { toast(`save failed: ${err.message}`, "err"); }
   }
 
@@ -430,63 +471,139 @@ export class Definitions {
 
   goTo(path, line) {
     const open = this.file === path ? Promise.resolve() : this.open(path);
-    open.then(() => {
-      this.showPane("editor");
-      const ta = this.el.textarea;
-      const lines = ta.value.split("\n");
-      const offset = lines.slice(0, Math.max(0, line - 1)).reduce((sum, l) => sum + l.length + 1, 0);
-      ta.focus();
-      ta.setSelectionRange(offset, offset + (lines[line - 1] || "").length);
-      ta.scrollTop = Math.max(0, (line - 6) * 18);
-    });
+    return open.then(() => { this.showPane("editor"); this.selectLine(line); });
   }
 
+  // -- sources: repository, layers, own definitions, compile ------------------------------------------------
 
-  // -- build panel: compile and the decoding state ------------------------------------------------
+  renderBuild() { this.renderSources(); }
 
-  renderBuild() {
-    const box = this.el.build;
-    box.replaceChildren();
+  /** Show the sources panel in a container (the timeline's popover); it follows every change. */
+  mountSources(container, compact = true) {
+    container.sourcesCompact = compact;
+    this.mounts.add(container);
+    container.replaceChildren(this.sourcesPanel(compact));
+  }
+
+  unmountSources(container) { this.mounts.delete(container); }
+
+  renderSources() {
+    for (const container of [...this.mounts]) {
+      if (!container.isConnected && container !== this.el.build) { this.mounts.delete(container); continue; }
+      container.replaceChildren(this.sourcesPanel(container === this.el.build ? false : container.sourcesCompact !== false));
+    }
+    bus.emit("sources-changed");
+  }
+
+  currentEntry() {
+    const settings = app.settings || {};
+    const tspFiles = this.tree.filter((e) => e.path.endsWith(".tsp") && e.type !== "dir").map((e) => e.path);
+    if (this.entryChoice && tspFiles.includes(this.entryChoice)) return this.entryChoice;
+    return tspFiles.includes(settings.compile?.entry) ? settings.compile.entry : tspFiles.find((p) => p.endsWith("main.tsp")) || tspFiles[0] || "";
+  }
+
+  currentTranslations() { return this.translationsChoice ?? app.settings?.compile?.translations ?? ""; }
+
+  sourcesPanel(compact = false) {
+    const r = this.repo || app.status?.repo || {};
+    const box = h("div", { class: `sources-panel ${compact ? "compact" : ""}` });
+    // 1 repository
+    append(box, h("h3", {}, "Definitions repository"));
+    if (!r.exists) append(box, this.clonePanel());
+    else {
+      const busy = r.busy || this.pending;
+      append(box, busy ? this.busyBox(busy) : null,
+        h("div", { class: "row" }, h("b", {}, r.branch || "(detached)"), h("span", { class: "muted", title: r.remote || "" }, r.remote ? r.remote.replace(/^https:\/\//, "") : "local repository"),
+          h("span", { style: "margin-left:auto" }),
+          h("button", { class: "small", onclick: () => this.repoAction("fetch") }, "Fetch"), h("button", { class: "small", onclick: () => this.repoAction("pull") }, "Pull")),
+        r.head ? h("div", { class: "hint", title: r.head.hash }, `${r.head.short} ${r.head.subject} — ${r.head.author}, ${r.head.date.slice(0, 10)}${r.changes?.length ? ` · ${r.changes.length} uncommitted changes` : ""}`) : null);
+    }
+    // 2 layers
+    if (r.exists) {
+      const input = h("input", { type: "text", placeholder: "PR number, branch, or repository URL", size: compact ? 24 : 34, title: "660 (a pull request of ebusd-configuration), upstream/master (a branch), or https://github.com/<user>/ebusd-configuration.git#<branch> (a fork)",
+        onkeydown: (e) => { if (e.key === "Enter") { this.addLayer(input.value); input.value = ""; } } });
+      append(box, h("h3", {}, "Community pull requests and other repositories"),
+        h("div", { class: "hint", title: "Their changed files are compiled on top of your checkout, without merging. Decoded definitions show where they come from." }, "Compiled on top of the checkout, without merging:"),
+        this.layersList(),
+        h("div", { class: "row" }, input, h("button", { class: "small", onclick: () => { this.addLayer(input.value); input.value = ""; } }, "+ add")),
+        this.layerMessage ? h("div", { class: "hint" }, this.layerMessage) : null);
+    }
+    // 3 own definitions
+    append(box, h("h3", {}, "Your own definitions"), this.customPanel(compact));
+    // 4 compile
+    append(box, h("h3", {}, "Compile"), this.compilePanel(compact));
+    if (!compact) append(box, this.advancedPanel());
+    return box;
+  }
+
+  /** Definitions you write or paste yourself (ebusd CSV lines): decoded over the whole recording like any other candidate. */
+  customPanel(compact) {
+    const d = app.decoder;
+    const text = this.customDraft ?? app.settings?.custom ?? "";
+    const area = h("textarea", { rows: compact ? 5 : 8, spellcheck: "false", class: "customtext", placeholder: "r,hmu,MyTemp,my temperature,,08,b511,01,temp,s,D2C,,°C,\\nOne ebusd CSV line per message: type,circuit,name,comment,qq,zz,pbsb,id,then fields (name,part,type,divisor,unit,comment). Lines starting with # are comments.\\nTo start from a recorded message, click a row without a definition in the timeline.", oninput: () => { this.customDraft = area.value; } });
+    area.value = text;
+    const st = d?.customStatus;
+    const status = h("div", { class: `hint ${st?.errors ? "err" : st ? "ok" : ""}` }, st ? `${st.messages} definition${st.messages === 1 ? "" : "s"} loaded${st.errors ? `, ${st.errors} error${st.errors === 1 ? "" : "s"}` : ""}${st.stderr?.length ? `: ${st.stderr.slice(0, 3).join(" | ")}` : ""}` : (text.trim() ? "saved" : ""));
+    return h("div", {}, area, h("div", { class: "row" },
+      h("button", { class: "small primary", onclick: () => this.saveCustom(area.value) }, "Save and decode the recording"), status));
+  }
+
+  async saveCustom(text) {
+    try {
+      app.settings = await api.put("api/settings", { custom: text });
+      this.customDraft = null;
+      toast("own definitions saved");
+      await app.decoder.setCustom(text);
+    } catch (err) { toast(err.message, "err"); }
+    this.renderSources();
+  }
+
+  /** Add one definition line (from the definition editor or a candidate) to the own definitions and decode the recording with it. */
+  async addCustomLine(csv) {
+    const current = (this.customDraft ?? app.settings?.custom ?? "").trimEnd();
+    await this.saveCustom(`${current}${current ? "\n" : ""}${csv.trim()}\n`);
+  }
+
+  compilePanel(compact) {
     const settings = app.settings || {};
     const tspFiles = this.tree.filter((e) => e.path.endsWith(".tsp") && e.type !== "dir").map((e) => e.path);
     const yamlFiles = this.tree.filter((e) => /\.ya?ml$/.test(e.path) && e.type !== "dir").map((e) => e.path);
-    const entryValue = tspFiles.includes(settings.compile?.entry) ? settings.compile.entry : tspFiles.find((p) => p.endsWith("main.tsp")) || tspFiles[0] || "";
-    this.entry = h("select", {}, tspFiles.map((p) => h("option", { value: p, selected: p === entryValue }, p)));
-    this.translations = h("select", {}, h("option", { value: "" }, "no translation"), yamlFiles.map((p) => h("option", { value: p, selected: p === settings.compile?.translations }, p)));
     const compile = app.decoder?.compile;
-    this.compileStatus = h("div", { class: compile ? "hint ok" : "hint" }, compile ? `${compile.summary} (${fmt.dateTime(new Date(compile.at).getTime())})` : "TypeSpec → CSV runs in your browser; the device is not involved.");
-    this.diagnostics = h("div", { class: "diag" });
-    this.outputList = h("div", { class: "outputs" });
-    this.layerBox = h("div", { class: "outputs" });
-    this.layerStatus = h("div", { class: "hint" });
-    const layerInput = h("input", { type: "text", placeholder: "PR number or branch", size: 14, onkeydown: (e) => { if (e.key === "Enter") { this.addLayer(layerInput.value); layerInput.value = ""; } } });
-    append(box, h("h3", {}, "1 · Compile"),
-      h("div", { class: "row" }, h("label", {}, "entry"), this.entry),
-      h("div", { class: "row" }, h("label", {}, "i18n"), this.translations),
-      h("div", { class: "hint", title: "Pull requests of the upstream repository (or branches) are fetched and their changed files are compiled on top of your checkout, without merging. Decoded definitions show where they come from." }, "community layers (pull requests on top of the checkout):"),
-      this.layerBox,
-      h("div", { class: "row" }, layerInput, h("button", { class: "small", onclick: () => { this.addLayer(layerInput.value); layerInput.value = ""; } }, "+ add"), this.layerStatus),
-      h("div", { class: "row" }, h("button", { class: "primary", onclick: () => this.compile() }, "Compile")),
-      this.compileStatus, this.diagnostics, this.outputList);
-    this.renderLayers();
+    const message = this.compileMessage || (compile ? { text: `${compile.summary}${compile.at ? ` (${fmt.dateTime(new Date(compile.at).getTime())})` : ""}`, cls: "ok" } : { text: "TypeSpec → CSV runs in your browser; the device is not involved.", cls: "" });
+    const box = h("div", {});
+    if (!compact && tspFiles.length) {
+      const entry = h("select", { onchange: () => { this.entryChoice = entry.value; } }, tspFiles.map((p) => h("option", { value: p, selected: p === this.currentEntry() }, p)));
+      const translations = h("select", { onchange: () => { this.translationsChoice = translations.value; } }, h("option", { value: "" }, "no translation"), yamlFiles.map((p) => h("option", { value: p, selected: p === this.currentTranslations() }, p)));
+      append(box, h("div", { class: "row" }, h("label", {}, "entry"), entry), h("div", { class: "row" }, h("label", {}, "i18n"), translations));
+    }
+    append(box, h("div", { class: "row" }, h("button", { class: "primary small", disabled: !this.repo?.exists || this.compiling, onclick: () => this.compile() }, this.compiling ? "compiling…" : "Compile"), h("div", { class: `hint ${message.cls}` }, message.text)));
+    if (!compact) {
+      append(box, h("div", { class: "diag" }, this.diagList.slice(0, 100).map((d) => h("div", { class: d.severity, title: d.code || "", onclick: () => d.file && this.goTo(this.compileRoot ? `${this.compileRoot}/${d.file}` : d.file, d.line || 1) }, `${d.file ? `${d.file}:${d.line || "?"} ` : ""}${d.message}`))));
+      append(box, this.outputsList());
+    }
+    return box;
+  }
 
+  setCompileMessage(text, cls = "") { this.compileMessage = { text, cls }; this.renderSources(); }
+
+  advancedPanel() {
     this.telegramInput = h("textarea", { rows: 3, style: "width:100%;font-family:var(--mono);font-size:11px", placeholder: "telegrams to decode by hand, one per line: QQZZPBSBNNDD/NNDD, e.g. 1008b5110101/0938…" });
     this.decodeStatus = h("div", { class: "hint" });
-    append(box, h("h3", {}, "2 · Decoded recording"),
-      h("div", { class: "hint" }, "Every distinct telegram of the recording is decoded with every matching definition as it arrives, in this browser (Web Worker), and kept in the browser store with the definition's source. The timeline shows the decodings; the tabs in the middle list them."),
+    const box = h("details", { class: "advanced" }, h("summary", {}, "Advanced: decoding and the browser store"),
+      h("div", { class: "hint" }, "Every distinct telegram of the recording is decoded with every matching definition as it arrives, in this browser (Web Worker), and kept in the browser store with the definition's source."),
       this.decodeStatus,
       h("div", { class: "row" },
         h("button", { class: "small", title: "decode the whole recording again with the current compile", onclick: () => { if (app.decoder?.compile) app.decoder.setCompile(app.decoder.compile); } }, "decode again"),
-        h("button", { class: "small", title: "forget the browser-side copy of the recording and its decodings (the database is not touched)", onclick: async () => { if (confirm("Forget the browser store (telegrams, decodings, compile)? It is rebuilt from the database.")) { await app.decoder.reset(); this.renderBuild(); } } }, "reset store")),
+        h("button", { class: "small", title: "forget the browser-side copy of the recording and its decodings (the database is not touched)", onclick: async () => { if (confirm("Forget the browser store (telegrams, decodings, compile)? It is rebuilt from the database.")) { await app.decoder.reset(); this.renderSources(); } } }, "reset store")),
       this.telegramInput,
       h("div", { class: "row" }, h("button", { class: "small", onclick: () => { const lines = this.telegramInput.value.split("\n").filter((l) => l.trim()); if (!lines.length) return; app.decoder.addManual(lines).then(() => { this.telegramInput.value = ""; this.showView("results"); }); } }, "Decode these too")));
-    this.renderOutputs();
     this.updateDecodeStatus();
+    return box;
   }
 
   updateDecodeStatus() {
     const el = this.decodeStatus;
-    if (!el) return;
+    if (!el || !el.isConnected) return;
     const st = app.decoder?.status();
     if (!st) { el.textContent = ""; return; }
     if (st.progress) { el.textContent = st.progress; el.className = "hint"; return; }
@@ -499,7 +616,7 @@ export class Definitions {
 
   async loadLibs() {
     if (!this.tsp) {
-      this.compileStatus.textContent = "loading the TypeSpec compiler…";
+      this.setCompileMessage("loading the TypeSpec compiler…");
       this.tsp = await import("./vendor/ebus-tsp.js");
     }
   }
@@ -510,19 +627,20 @@ export class Definitions {
   }
 
   async compile(entryPath = null) {
-    const entry = entryPath || this.entry.value;
+    const entry = entryPath || this.currentEntry();
     if (!entry) return toast("no .tsp file to compile", "err");
     if (this.compiling) return;
-    const translations = this.translations.value;
+    const translations = this.currentTranslations();
     const root = entry.includes("/") ? entry.slice(0, entry.indexOf("/")) : "";
     const entryRel = root ? entry.slice(root.length + 1) : entry;
     const translationsRel = translations && translations.startsWith(root ? root + "/" : "") ? (root ? translations.slice(root.length + 1) : translations) : "";
     const t0 = performance.now();
     this.compiling = true;
+    this.compileRoot = root;
     try {
       this.setCompileState({ busy: true, text: "loading the compiler…" });
       await this.loadLibs();
-      this.compileStatus.textContent = "loading sources…";
+      this.setCompileMessage("loading sources…");
       this.setCompileState({ busy: true, text: "compiling: loading sources…" });
       const layers = this.enabledLayers();
       const sources = await api.get(`api/repo/sources?dir=${encodeURIComponent(root)}${layers.length ? "&layers=" + encodeURIComponent(layers.join(",")) : ""}`);
@@ -534,15 +652,15 @@ export class Definitions {
         }
       };
       applyEditor(files);
-      this.compileStatus.textContent = `compiling ${entry} (${Object.keys(files).length} files${layers.length ? `, layers ${layers.join(", ")}` : ""})…`;
-      this.setCompileState({ busy: true, text: `compiling ${Object.keys(files).length} files${layers.length ? ` with ${layers.join(", ")}` : ""}…` });
+      const text = `compiling ${Object.keys(files).length} files${layers.length ? ` with ${layers.join(", ")}` : ""}…`;
+      this.setCompileMessage(text);
+      this.setCompileState({ busy: true, text });
       const options = { entry: entryRel, translations: translationsRel || undefined };
       const result = await this.tsp.compileEbusTsp(files, options);
       let baseOutputs = null, baseFiles = null;
       const layerFiles = {};
       if (result.ok && layers.length) {
         // the checkout alone, to tell which definitions the layers add
-        this.compileStatus.textContent = "compiling the checkout without layers for comparison…";
         this.setCompileState({ busy: true, text: "compiling the checkout without layers for comparison…" });
         const base = await api.get(`api/repo/sources?dir=${encodeURIComponent(root)}`);
         applyEditor(base.files);
@@ -554,44 +672,89 @@ export class Definitions {
       const ms = Math.round(performance.now() - t0);
       const errors = result.diagnostics.filter((d) => d.severity === "error").length;
       const summary = result.ok ? `✓ ${Object.keys(result.outputs).length} files in ${ms} ms${layers.length ? ` with ${layers.join(", ")}` : ""}${result.diagnostics.length ? `, ${result.diagnostics.length} warnings` : ""}${sources.conflicts?.length ? `; ${sources.conflicts.length} files changed by several layers (last wins)` : ""}` : `✗ ${errors} errors, ${result.diagnostics.length - errors} warnings (${ms} ms)`;
-      this.compileStatus.textContent = summary;
-      this.compileStatus.className = result.ok ? "hint ok" : "hint err";
-      this.diagnostics.replaceChildren(...result.diagnostics.slice(0, 100).map((d) => h("div", { class: d.severity, title: d.code || "",
-        onclick: () => d.file && this.goTo(root ? `${root}/${d.file}` : d.file, d.line || 1) },
-        `${d.file ? `${d.file}:${d.line || "?"} ` : ""}${d.message}`)));
+      this.diagList = result.diagnostics;
+      this.compileMessage = { text: summary, cls: result.ok ? "ok" : "err" };
       app.settings = await api.put("api/settings", { compile: { entry, translations } }).catch(() => app.settings);
       if (result.ok) {
-        const record = { id: `${Date.now().toString(36)}`, at: new Date().toISOString(), entry, root, layers, outputs: result.outputs, selected: null, baseOutputs, baseFiles, layerFiles,
+        const record = { id: `${Date.now().toString(36)}`, at: new Date().toISOString(), entry, root, layers, outputs: result.outputs, selected: null, baseOutputs, baseFiles, layerFiles, sourceFiles: files,
           origins: sources.origins || {}, originLayers: sources.origin_layers || {}, conflicts: sources.conflicts || [], summary, warnings: result.diagnostics.length, loaded: null };
         this.setCompileState({ busy: false, text: summary });
-        this.renderOutputs(record);
+        this.compiling = false;
+        this.renderSources();
         await app.decoder.setCompile(record);
       } else {
         this.setCompileState({ busy: false, error: summary });
-        this.showView("editor");
+        this.renderSources();
+        this.showView("sources");
       }
     } catch (err) {
       console.error(err);
-      this.compileStatus.textContent = `compile failed: ${err.message}`;
-      this.compileStatus.className = "hint err";
+      this.compileMessage = { text: `compile failed: ${err.message}`, cls: "err" };
       this.setCompileState({ busy: false, error: `compile failed: ${err.message}` });
     } finally {
       this.compiling = false;
+      this.renderSources();
     }
   }
 
-  renderOutputs(record = app.decoder?.compile) {
-    const list = this.outputList;
-    list.replaceChildren();
-    if (!record?.outputs) return;
+  outputsList() {
+    const record = app.decoder?.compile;
+    const list = h("div", { class: "outputs" });
+    if (!record?.outputs || !Object.keys(record.outputs).length) return list;
     const names = Object.keys(record.outputs).sort();
     const selected = new Set(record.selected || names);
     const apply = h("button", { class: "small", style: "display:none", onclick: () => app.decoder.selectFiles(selected.size === names.length ? null : [...selected]) }, "decode with these files");
-    append(list, h("div", { class: "hint" }, `compiled files (${names.length}; untick files to leave them out of the decoding):`), apply);
-    for (const name of names) {
-      const check = h("input", { type: "checkbox", checked: selected.has(name), onchange: () => { check.checked ? selected.add(name) : selected.delete(name); apply.style.display = ""; } });
-      append(list, h("label", {}, check, h("span", { class: "mono" }, name), h("span", { class: "size" }, `${record.outputs[name].split("\n").length - 1} lines`)));
+    append(list, h("details", {}, h("summary", {}, `${names.length} compiled files (untick files to leave them out of the decoding)`), apply,
+      names.map((name) => {
+        const check = h("input", { type: "checkbox", checked: selected.has(name), onchange: () => { check.checked ? selected.add(name) : selected.delete(name); apply.style.display = ""; } });
+        return h("label", {}, check, h("span", { class: "mono" }, name), h("span", { class: "size" }, `${record.outputs[name].split("\n").length - 1} lines`));
+      })));
+    return list;
+  }
+
+  // -- from a decoded definition to its source: TypeSpec at the line, or the own definitions ------------------
+
+  /** Open the TypeSpec source of a decoded definition at its line (read only for what only a layer has). */
+  async openSource(def) {
+    bus.emit("show-tab", "definitions");
+    if (def.source === "custom") { this.showView("sources"); setTimeout(() => this.root.querySelector(".customtext")?.focus(), 50); return; }
+    const c = app.decoder?.compile;
+    const files = def.source === "base" ? (c?.baseFiles || c?.sourceFiles) : c?.sourceFiles;
+    if (!files) { toast("compile the definitions first", "err"); this.showView("sources"); return; }
+    const loc = locateSource(files, def);
+    if (!loc) { toast(`the TypeSpec source of ${def.circuit} ${def.name} was not found (expected in ${def.file.replace(/\.(csv|inc)$/, ".tsp")})`, "err", 6000); return; }
+    const root = c.root || "";
+    const path = root ? `${root}/${loc.path}` : loc.path;
+    this.showView("editor");
+    if (def.source === "base" || !this.tree.some((e) => e.path === path) || (c.layers?.length && def.source !== "base")) {
+      if (def.source === "base" && this.tree.some((e) => e.path === path)) return this.goTo(path, loc.line);
+      return this.openText(path, files[loc.path], loc.line, `${def.source === "base" ? "the checkout's" : `as changed by ${def.source},`} version`);
     }
+    return this.goTo(path, loc.line);
+  }
+
+  /** Show text that is not (yet) a file of the checkout, read only, with the line selected. */
+  async openText(path, text, line, label) {
+    if (this.dirty && !confirm(`Discard unsaved changes of ${this.file}?`)) return;
+    this.file = null;
+    this.content = text;
+    this.el.textarea.value = text;
+    this.el.textarea.readOnly = true;
+    this.el.textarea.classList.add("readonly");
+    this.el.path.textContent = `${path} — ${label} (read only: not part of your checkout)`;
+    this.setDirty(false);
+    this.updateGutter();
+    this.showPane("editor");
+    this.selectLine(line);
+  }
+
+  selectLine(line) {
+    const ta = this.el.textarea;
+    const lines = ta.value.split("\n");
+    const offset = lines.slice(0, Math.max(0, line - 1)).reduce((sum, l) => sum + l.length + 1, 0);
+    ta.focus();
+    ta.setSelectionRange(offset, offset + (lines[line - 1] || "").length);
+    ta.scrollTop = Math.max(0, (line - 6) * 18);
   }
 
   // -- decoded telegrams ---------------------------------------------------------------------
@@ -618,7 +781,7 @@ export class Definitions {
     const renderTable = () => {
       const q = search.value.trim().toLowerCase();
       const tl = app.views.timeline;
-      const all = decoder.telegramList();
+      const all = decoder.decodedList();
       const rows = all.filter((t) => {
         const map = decoder.decodesOf(t.line);
         const used = decoder.usedDecode(t.line);
@@ -629,8 +792,8 @@ export class Definitions {
         if (q && !t.line.includes(q) && !(map && [...map.keys()].some((k) => { const d = decoder.def(k); return d && `${d.circuit} ${d.name} ${setup.exportName(d)}`.toLowerCase().includes(q); }))) return false;
         return true;
       });
-      info.textContent = `${fmt.count(rows.length)} of ${fmt.count(all.length)} distinct telegrams; colours as in the timeline`;
-      const table = h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "n"), h("th", {}, "first seen"), h("th", {}, "telegram"), h("th", {}, "ebusd uses"), h("th", {}, "decoded"), h("th", {}, "other candidates"))),
+      info.textContent = `${fmt.count(rows.length)} of ${fmt.count(all.length)} distinct telegrams, newest decoding first; colours as in the timeline`;
+      const table = h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "n"), h("th", {}, "last seen"), h("th", {}, "telegram"), h("th", {}, "ebusd uses"), h("th", {}, "decoded"), h("th", {}, "other candidates"))),
         h("tbody", {}, rows.slice(0, 1500).map((t) => {
           const map = decoder.decodesOf(t.line);
           const used = decoder.usedDecode(t.line);
@@ -638,7 +801,7 @@ export class Definitions {
           const others = map ? [...map.values()].filter((d) => d !== used) : [];
           return h("tr", {},
             h("td", {}, t.manual ? h("span", { class: "muted" }, "pasted") : fmt.count(t.n)),
-            h("td", { class: "mono muted" }, t.first_ms ? fmt.dateTime(t.first_ms).slice(5, 16) : ""),
+            h("td", { class: "mono muted" }, t.last_ms ? fmt.dateTime(t.last_ms).slice(5, 16) : ""),
             h("td", { class: "mono", title: t.line }, swatch(telegramValue(t.master, t.slave, t.status, app.settings), t.status), t.line.length > 40 ? t.line.slice(0, 38) + "…" : t.line),
             h("td", {}, t.compileId !== decoder.compile.id ? h("span", { class: "muted" }, "…") : t.error ? h("span", { class: "err" }, t.error) : !usedDef ? h("span", { class: "warn" }, "unknown") : chip(usedDef.circuit, usedDef.name, usedDef.write ? " (w)" : "")),
             h("td", { class: "mono", style: "white-space:normal" }, used ? (used.result === "ok" ? used.text : h("span", { class: "err" }, used.result)) : ""),
@@ -664,11 +827,13 @@ export class Definitions {
     }
     const scan = app.decoder.scan || {};
     const statusFilter = h("select", { onchange: () => renderTable() }, h("option", { value: "all" }, "all definitions"), h("option", { value: "active" }, "used by ebusd"),
-      h("option", { value: "other" }, "hidden: other file / condition"), h("option", { value: "companion" }, "counterparts not seen (write)"), h("option", { value: "included" }, "included in the setup"), h("option", { value: "renamed" }, "renamed"));
+      h("option", { value: "other" }, "hidden: other file / condition"), h("option", { value: "companion" }, "counterparts not seen (write)"), h("option", { value: "included" }, "included in the setup"), h("option", { value: "renamed" }, "renamed"), h("option", { value: "custom" }, "own definitions"), h("option", { value: "clean" }, "decode every recorded telegram without error"));
+    const hideFailing = h("input", { type: "checkbox", checked: !!app.settings?.ui?.hideFailing, onchange: () => setup.setUi("hideFailing", hideFailing.checked) });
     const search = h("input", { type: "search", placeholder: "filter: circuit, name, file", value: this.setupFilter || "", oninput: () => { this.setupFilter = search.value; renderTable(); } });
     const summary = h("span", { class: "hint" });
     const body = h("div", { class: "body" });
     append(pane, h("div", { class: "bar" }, statusFilter, search,
+      h("label", { class: "muted", title: "hide definitions that failed to decode any telegram of the recording (unless they are in the setup)" }, hideFailing, " hide ones that fail somewhere"),
       h("button", { class: "small", onclick: () => setup.setIncluded(entries.filter((m) => m.status === "active").map((m) => m.key)) }, "include what ebusd uses"),
       h("button", { class: "small", title: "also the hidden definitions that decode every recorded telegram without error", onclick: () => setup.setIncluded([...setup.includedKeys(entries), ...entries.filter((m) => m.errors === 0 && m.ok > 0 && !["error", "companion"].includes(m.status)).map((m) => m.key)]) }, "+ plausible hidden ones"),
       h("button", { class: "small", title: "the write (and other direction) definitions belonging to included ones; they were not seen on the bus. Writing to a device with a definition of another variant can be harmful.", onclick: () => { const inc = new Set(setup.includedKeys(entries)); setup.setIncluded([...inc, ...entries.filter((m) => m.status === "companion" && m.companionOf.some((k) => inc.has(k))).map((m) => m.key)]); } }, "+ counterparts of included"),
@@ -682,6 +847,9 @@ export class Definitions {
         if (statusFilter.value === "companion" && m.status !== "companion") return false;
         if (statusFilter.value === "included" && !current.has(m.key)) return false;
         if (statusFilter.value === "renamed" && !setup.renamed(m)) return false;
+        if (statusFilter.value === "custom" && m.source !== "custom") return false;
+        if (statusFilter.value === "clean" && !(m.errors === 0 && m.ok > 0)) return false;
+        if (app.settings?.ui?.hideFailing && m.errors > 0 && !current.has(m.key) && !m.companion) return false;
         return !q || `${m.circuit} ${m.name} ${setup.exportName(m)} ${m.file} ${m.condition}`.toLowerCase().includes(q);
       });
       summary.textContent = `${current.size} of ${entries.length} definitions included${setup.customized ? "" : " (ebusd's own choice so far)"} (${entries.filter((m) => m.status === "active").length} used by ebusd, ${entries.filter((m) => !["active", "error", "companion"].includes(m.status)).length} hidden, ${entries.filter((m) => m.status === "error").length} not fitting, ${entries.filter((m) => m.status === "companion").length} counterparts not seen)`;
@@ -697,8 +865,8 @@ export class Definitions {
         const nameInput = h("input", { type: "text", class: "rename", value: setup.exportName(m), size: 16, title: `name in my config (MQTT topic ebusd/${setup.circuitOf(m)}/<name>); upstream: ${m.name}`, onchange: () => setup.rename(m, nameInput.value) });
         append(tbody, h("tr", { class: current.has(m.key) ? "included" : "" },
           h("td", {}, check),
-          h("td", {}, h("span", { class: `badge ${m.status}`, title: STATUS_HELP[m.status] }, m.status), m.write ? h("span", { class: "badge write", title: "write definition: sends values to the device" }, "write") : null),
-          h("td", {}, chip(m.circuit, m.name, m.passive ? " (u)" : "")),
+          h("td", {}, h("span", { class: `badge ${m.status}`, title: STATUS_HELP[m.status] }, m.status), h("span", { class: `badge kind ${m.write ? "write" : ""}`, style: "margin-left:3px" }, accessKind(m))),
+          h("td", {}, chip(m.circuit, m.name)),
           h("td", {}, nameInput, setup.exportName(m) !== m.name ? h("span", { class: "muted", title: "renamed for my config" }, " ✎") : null),
           h("td", { class: "mono", title: m.file }, m.file.replace(/^.*\//, ""), m.source !== "base" ? h("span", { class: "badge", style: "margin-left:4px", title: "added or changed by this layer" }, m.source) : null),
           h("td", { class: "mono" }, m.condition),
@@ -711,6 +879,64 @@ export class Definitions {
     renderTable();
   }
 
+  // -- summary and save ---------------------------------------------------------------------------
+
+  /** What was sourced where: the repository, the layers, the compile, the devices and every included definition with how it fared. */
+  manifest(entries) {
+    const d = app.decoder, c = d?.compile, repo = app.status?.repo;
+    const iso = (ms) => (ms ? new Date(ms).toISOString() : null);
+    const enabled = new Set(this.enabledLayers());
+    const head = (h) => (h ? { hash: h.hash, subject: h.subject, author: h.author, date: h.date } : null);
+    return {
+      generator: `ebusd Config Workbench ${app.status?.version || ""}`.trim(),
+      created: new Date().toISOString(),
+      note: "Which definitions this installation uses and where each one comes from. Written next to the CSV files; ebusd ignores it.",
+      repository: repo?.exists ? { remote: repo.remote, branch: repo.branch, head: head(repo.head), uncommitted_changes: repo.changes?.length || 0 } : null,
+      layers: this.layers.filter((l) => l.fetched && enabled.has(l.ref)).map((l) => ({ ref: l.ref, head: head(l.head), files: (l.changes || []).map((x) => x.path || x) })),
+      compile: c ? { entry: c.entry, at: c.at, summary: c.summary, layers: c.layers || [] } : null,
+      devices: d?.scan || {},
+      recording: { distinct_telegrams: d?.telegrams.size || 0, from: iso(app.status?.db?.first_ms), to: iso(app.status?.db?.last_ms) },
+      own_definitions: d?.custom?.trim() ? d.custom : undefined,
+      definitions: entries.map((m) => {
+        const fields = setup.data.names[m.key]?.fields;
+        return {
+          circuit: setup.circuitOf(m), name: setup.exportName(m), upstream_circuit: m.circuit, upstream_name: m.name,
+          field_names: fields && Object.keys(fields).length ? fields : undefined,
+          access: accessKind(m), source: m.source, file: m.file, condition: m.condition || undefined, status: m.status,
+          recorded: { variants: m.distinct, decoded_ok: m.ok, decode_errors: m.errors, telegrams: m.occurrences, first: iso(m.first_ms), last: iso(m.last_ms) },
+        };
+      }),
+    };
+  }
+
+  manifestText(entries) { return `${JSON.stringify(this.manifest(entries), null, 2)}\n`; }
+
+  /** The files a deploy or download writes: the CSV files of the setup and the record of its sources. */
+  setupDeployFiles(entries) {
+    const included = setup.includedEntries(entries);
+    if (!included.length) return { files: {}, sources: [] };
+    const result = setup.files(entries, this.layers);
+    return { files: { ...result.files, "workbench-setup.json": this.manifestText(included) }, sources: result.sources };
+  }
+
+  /** The included definitions with where they come from and how they decoded the recording. */
+  summaryTable(included) {
+    const writable = included.filter((m) => m.write).length, failing = included.filter((m) => m.errors > 0).length, own = included.filter((m) => m.source === "custom").length;
+    const bySource = new Map();
+    for (const m of included) bySource.set(m.source, (bySource.get(m.source) || 0) + 1);
+    const rows = included.slice().sort((a, b) => setup.circuitOf(a).localeCompare(setup.circuitOf(b)) || setup.exportName(a).localeCompare(setup.exportName(b)));
+    return h("div", {},
+      h("div", { class: "hint" }, `${included.length} definitions: ${[...bySource.entries()].map(([k, n]) => `${n} from ${k === "base" ? "the checkout" : k === "custom" ? "your own definitions" : `layer ${k}`}`).join(", ")}${writable ? `; ${writable} can write to your devices` : ""}${failing ? `; ${failing} failed on some recorded telegram` : "; all of them decode every recorded telegram they match"}${own ? "" : ""}.`),
+      h("div", { class: "summary-table" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "message in my config"), h("th", {}, "upstream"), h("th", {}, "kind"), h("th", {}, "source"), h("th", {}, "file"), h("th", {}, "on your recording"))),
+        h("tbody", {}, rows.map((m) => h("tr", { class: m.write ? "write" : "" },
+          h("td", {}, chip(setup.circuitOf(m), setup.exportName(m))),
+          h("td", { class: "muted" }, setup.exportName(m) !== m.name || setup.circuitOf(m) !== m.circuit ? `${m.circuit} ${m.name}` : ""),
+          h("td", {}, h("span", { class: `badge kind ${m.write ? "write" : ""}` }, accessKind(m))),
+          h("td", {}, m.source === "base" ? "checkout" : h("span", { class: "badge" }, m.source)),
+          h("td", { class: "mono", title: m.file }, m.file.replace(/^.*\//, "")),
+          h("td", {}, m.companion ? h("span", { class: "muted" }, "not seen (counterpart)") : m.errors ? h("span", { class: m.ok ? "warn" : "err" }, `${fmt.count(m.ok)} of ${fmt.count(m.distinct)} variants decode, ${m.errors} fail`) : h("span", { class: "ok" }, `all ${fmt.count(m.ok)} variants decode · ${fmt.count(m.occurrences)} telegrams`))))))));
+  }
+
   // -- export -----------------------------------------------------------------------------------
 
   renderExport() {
@@ -720,7 +946,7 @@ export class Definitions {
     const deployDir = app.status?.deploy_dir || "/share/ebusd/config";
     const entries = this.entries;
     const included = setup.includedEntries(entries);
-    const files = included.length ? setup.files(entries, this.layers) : { files: {}, sources: [] };
+    const files = this.setupDeployFiles(entries);
     const outputs = app.decoder?.compile?.outputs || null;
     // circuit names: the MQTT topics are ebusd/<circuit>/<name>, so they can be adapted here
     const circuitRows = [...new Set(included.map((m) => m.circuit))].sort().map((circuit) => {
@@ -731,12 +957,14 @@ export class Definitions {
     // setup CSV
     const preview = h("pre", { style: "display:none" });
     const list = h("div", { class: "outputs" }, Object.entries(files.files).map(([name, text]) => h("label", { style: "cursor:pointer", onclick: () => { preview.textContent = text; preview.style.display = ""; } },
-      h("span", { class: "mono" }, name), h("span", { class: "size" }, `${text.split("\n").filter((l) => l && !l.startsWith("#") && !l.startsWith("type,")).length} definitions`))));
+      h("span", { class: "mono" }, name), h("span", { class: "size" }, name.endsWith(".json") ? "what was sourced where" : `${text.split("\n").filter((l) => l && !l.startsWith("#") && !l.startsWith("type,")).length} definitions`))));
     const subdir = h("input", { type: "text", value: settings.deploy_subdir || "", placeholder: "subfolder (optional)", size: 14, onchange: () => api.put("api/settings", { deploy_subdir: subdir.value.trim() }).then((s) => { app.settings = s; }).catch((err) => toast(err.message, "err")) });
     const clean = h("input", { type: "checkbox", checked: true });
     const setupStatus = h("div", { class: "hint" });
-    append(pane, h("div", { class: "block" }, h("h3", {}, "Definitions of this installation"),
-      included.length ? h("div", { class: "hint" }, `${included.length} definitions from ${files.sources.length} compiled files, grouped by circuit; conditions removed so that ebusd loads them for this installation without the scan${renamed.length ? `; ${renamed.length} renamed for my config (upstream names in the comments)` : ""}. ebusd then needs --configpath=${deployDir}${subdir.value ? "/" + subdir.value : ""} and no --scanconfig (or an empty vaillant/ folder).`)
+    append(pane, h("div", { class: "block" }, h("h3", {}, "Summary of your setup"),
+      included.length ? this.summaryTable(included) : h("div", { class: "hint" }, "Nothing chosen yet: pick definitions in the timeline or in step 3.")));
+    append(pane, h("div", { class: "block" }, h("h3", {}, "Save for ebusd"),
+      included.length ? h("div", { class: "hint" }, `${included.length} definitions from ${files.sources.length} compiled files, grouped by circuit; conditions removed so that ebusd loads them for this installation without the scan${renamed.length ? `; ${renamed.length} renamed for my config (upstream names in the comments)` : ""}. workbench-setup.json records what was sourced where (repository and commit, pull requests, own definitions, devices, how each definition fared on your recording). ebusd then needs --configpath=${deployDir}${subdir.value ? "/" + subdir.value : ""} and no --scanconfig (or an empty vaillant/ folder).`)
         : h("div", { class: "hint" }, "No definitions included yet: pick candidates in the timeline or tick definitions in the Setup tab."),
       circuitRows.length ? h("div", { class: "row" }, h("label", { title: "circuit names as used in the MQTT topics ebusd/<circuit>/<name>; e.g. vwz → vwzio" }, "circuits"), ...circuitRows) : null,
       list, preview,

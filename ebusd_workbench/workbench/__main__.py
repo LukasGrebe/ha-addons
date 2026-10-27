@@ -1,4 +1,4 @@
-"""Start the eBUSd Workbench backend: python3 -m workbench [options]."""
+"""Start the ebusd Config Workbench backend: python3 -m workbench [options]."""
 
 import argparse
 import logging
@@ -38,7 +38,7 @@ def main(argv=None):
     args = parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO), stream=sys.stderr,
                         format="[%(asctime)s] %(levelname)s: %(name)s: %(message)s", datefmt="%H:%M:%S")
-    log.info("eBUSd Workbench %s", __version__)
+    log.info("ebusd Config Workbench %s", __version__)
 
     db = Database(args.db)
     try:

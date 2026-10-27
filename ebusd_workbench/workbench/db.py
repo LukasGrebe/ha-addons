@@ -109,6 +109,9 @@ class Schema:
         self.raw = "raw"
 
 
+NO_VALUE = object()   # filter marker: the column is NULL
+
+
 class Database:
     def __init__(self, path):
         self.path = path
@@ -216,16 +219,44 @@ class Database:
             conn.close()
 
     @staticmethod
-    def _id_length_sql(id_bytes, id_overrides):
+    def _id_length_sql(id_bytes, id_overrides, id_rules=None, dd_sql="dd"):
         """SQL expression for the message ID length in hex digits and its parameters.
 
         id_overrides maps "pbsb" or "zzpbsb" (hex) to a length in bytes; the more specific one wins.
+        id_rules refine that per message: {"zzpbsb:prefix": length}, the telegrams of that command
+        whose data starts with prefix get that ID length (the longest matching prefix wins). They are
+        what splitting or combining a row in the timeline stores.
         """
-        cases, params = [], []
-        for key, length in sorted((id_overrides or {}).items(), key=lambda kv: -len(kv[0])):
+        overrides = {}
+        for key, length in (id_overrides or {}).items():
             try:
-                key = key.lower()
-                length = max(0, min(8, int(length)))
+                overrides[str(key).lower()] = max(0, min(8, int(length)))
+            except (ValueError, TypeError):
+                continue
+        default = max(0, min(8, int(id_bytes)))
+        cases, params = [], []
+        # rules by command, grouped by (prefix length, resulting ID length): "substr(...) IN (...)" stays fast with many rules
+        by_command = {}
+        for key, length in (id_rules or {}).items():
+            try:
+                command, _, prefix = str(key).lower().partition(":")
+                if len(command) != 6 or len(prefix) % 2 or len(prefix) > 32:
+                    continue
+                int(command, 16), int(prefix or "0", 16)
+                by_command.setdefault(command, {}).setdefault((len(prefix), max(0, min(16, int(length)))), []).append(prefix)
+            except (ValueError, TypeError):
+                continue
+        for command, groups in by_command.items():
+            fallback = overrides.get(command, overrides.get(command[2:], default))
+            inner = []
+            inner_params = []
+            for (plen, length), prefixes in sorted(groups.items(), key=lambda kv: -kv[0][0]):
+                inner.append("WHEN substr(%s, 1, ?) IN (%s) THEN ?" % (dd_sql, ",".join("?" * len(prefixes))))
+                inner_params += [plen] + prefixes + [length * 2]
+            cases.append("WHEN zz = ? AND pb = ? AND sb = ? THEN (CASE %s ELSE ? END)" % " ".join(inner))
+            params += [int(command[0:2], 16), int(command[2:4], 16), int(command[4:6], 16)] + inner_params + [fallback * 2]
+        for key, length in sorted(overrides.items(), key=lambda kv: -len(kv[0])):
+            try:
                 if len(key) == 6:
                     cases.append("WHEN zz = ? AND pb = ? AND sb = ? THEN ?")
                     params += [int(key[0:2], 16), int(key[2:4], 16), int(key[4:6], 16), length * 2]
@@ -234,10 +265,10 @@ class Database:
                     params += [int(key[0:2], 16), int(key[2:4], 16), length * 2]
             except (ValueError, TypeError):
                 continue
-        params.append(max(0, min(8, int(id_bytes))) * 2)
+        params.append(default * 2)
         return ("(CASE %s ELSE ? END)" % " ".join(cases) if cases else "?"), params
 
-    def runs(self, from_ms, to_ms, id_bytes=1, id_overrides=None, max_rows=MAX_RUN_ROWS):
+    def runs(self, from_ms, to_ms, id_bytes=1, id_overrides=None, max_rows=MAX_RUN_ROWS, id_rules=None):
         """Group the telegrams of a time window into rows (one per source, destination, command and
         message ID) and collapse consecutive identical values into runs.
 
@@ -247,7 +278,7 @@ class Database:
         schema = self.schema()
         if schema is None:
             return {"rows": [], "scanned": 0, "truncated": False, "from_ms": from_ms, "to_ms": to_ms}
-        id_len, id_params = self._id_length_sql(id_bytes, id_overrides)
+        id_len, id_params = self._id_length_sql(id_bytes, id_overrides, id_rules, f"coalesce({schema.dd}, '')")
         sql = f"""
 WITH t AS (
   SELECT {schema.id} AS id, ts, qq, zz, pb, sb, status,
@@ -307,7 +338,9 @@ FROM c GROUP BY qq, zz, pb, sb, kid, run ORDER BY qq, zz, pb, sb, kid, t0
         where = ["ts >= ?", "ts < ?"]
         params = [from_ms * NS_PER_MS, to_ms * NS_PER_MS]
         for column, value in (("qq", qq), ("zz", zz), ("pb", pb), ("sb", sb)):
-            if value is not None:
+            if value is NO_VALUE:     # telegrams too broken to tell the address (shown as "--")
+                where.append(f"{column} IS NULL")
+            elif value is not None:
                 where.append(f"{column} = ?")
                 params.append(int(value))
         if id_prefix:
@@ -340,6 +373,57 @@ FROM c GROUP BY qq, zz, pb, sb, kid, run ORDER BY qq, zz, pb, sb, kid, t0
                 "pb": r["pb"], "sb": r["sb"], "nn": r["nn"], "dd": r["dd"], "ack": hexbyte(r["ack"]),
                 "s_nn": r["s_nn"], "s_dd": r["s_dd"], "s_ack": hexbyte(r["s_ack"]), "status": r["status"],
                 "master": self.master_hex(r), "slave": self.slave_hex(r)}
+
+    def series(self, from_ms, to_ms, qq=None, zz=None, pb=None, sb=None, id_prefix=None, max_points=20000):
+        """The complete telegrams of one row over a time range as a time series.
+
+        Returns {"lines": [telegram hex, ...], "points": [[ms, index into lines], ...], "total", "stride"}: every
+        telegram is stored once in lines, so that a long series of repeated values stays small. More than
+        max_points telegrams are thinned by a fixed stride (the last one is always kept).
+        """
+        schema = self.schema()
+        if schema is None:
+            return {"lines": [], "points": [], "total": 0, "stride": 1}
+        where = ["ts >= ?", "ts < ?", "status = 'ok'", "dd IS NOT NULL"]
+        params = [from_ms * NS_PER_MS, to_ms * NS_PER_MS]
+        for column, value in (("qq", qq), ("zz", zz), ("pb", pb), ("sb", sb)):
+            if value is NO_VALUE:
+                where.append(f"{column} IS NULL")
+            elif value is not None:
+                where.append(f"{column} = ?")
+                params.append(int(value))
+        if id_prefix:
+            where.append(f"substr({schema.dd}, 1, ?) = ?")
+            params += [len(id_prefix), id_prefix]
+        conn = self.connect()
+        try:
+            total = conn.execute(f"SELECT count(*) FROM telegram WHERE {' AND '.join(where)}", params).fetchone()[0]
+            stride = max(1, -(-total // max(100, int(max_points))))
+            rows = conn.execute(
+                f"SELECT ts, qq, zz, pb, sb, nn, {schema.dd} AS dd, s_nn, {schema.s_dd} AS s_dd FROM telegram "
+                f"WHERE {' AND '.join(where)} ORDER BY ts", params)
+            index, lines, points = {}, [], []
+            last = None
+            for i, r in enumerate(rows):
+                last = r
+                if i % stride:
+                    continue
+                points.append(self._series_point(r, index, lines))
+            if last is not None and total and (total - 1) % stride:
+                points.append(self._series_point(last, index, lines))
+            return {"lines": lines, "points": points, "total": total, "stride": stride}
+        finally:
+            conn.close()
+
+    def _series_point(self, r, index, lines):
+        line = self.master_hex(r) or ""
+        slave = self.slave_hex(r)
+        if slave:
+            line += "/" + slave
+        if line not in index:
+            index[line] = len(lines)
+            lines.append(line)
+        return [ms(r["ts"]), index[line]]
 
     def distinct(self, from_ms, to_ms, limit=2000, only_ok=True):
         """Distinct telegrams (master and slave part) of a window with counts, by first appearance."""
@@ -431,14 +515,35 @@ FROM c GROUP BY qq, zz, pb, sb, kid, run ORDER BY qq, zz, pb, sb, kid, t0
         finally:
             conn.close()
 
-    def add_marker(self, message, ts_ns=None, uncertainty_ns=500_000_000):
+    def add_marker(self, message, ts_ns=None, uncertainty_ns=500_000_000, ts_min_ns=None, ts_max_ns=None):
+        """Note an event like the terminal's `log` command: when it happened (ts) and between which times
+        (ts_min..ts_max, given as a range or as a symmetric uncertainty). message None: only the time."""
         ts = ts_ns if ts_ns is not None else now_ns()
+        low = ts_min_ns if ts_min_ns is not None else ts - uncertainty_ns
+        high = ts_max_ns if ts_max_ns is not None else ts + uncertainty_ns
+        if not low <= ts <= high:
+            raise ValueError("the time must lie between the earliest and the latest time")
         conn = self.connect()
         try:
             with conn:
                 cur = conn.execute("INSERT INTO event (ts, ts_min, ts_max, message, logged) VALUES (?, ?, ?, ?, ?)",
-                                   (ts, ts - uncertainty_ns, ts + uncertainty_ns, message, now_ns()))
+                                   (ts, low, high, message or None, now_ns()))
                 return cur.lastrowid
+        finally:
+            conn.close()
+
+    def notes(self, limit=50):
+        """The latest notes, newest first (by the time of the event)."""
+        if not self.exists():
+            return []
+        conn = self.connect()
+        try:
+            if conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'event'").fetchone() is None:
+                return []
+            rows = conn.execute("SELECT id, ts, ts_min, ts_max, message, logged FROM event ORDER BY ts DESC, id DESC LIMIT ?",
+                                (max(1, min(500, int(limit))),)).fetchall()
+            return [{"id": r["id"], "ms": ms(r["ts"]), "ms_min": ms(r["ts_min"]), "ms_max": ms(r["ts_max"]),
+                     "message": r["message"], "logged_ms": ms(r["logged"])} for r in rows]
         finally:
             conn.close()
 

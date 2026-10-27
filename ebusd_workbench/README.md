@@ -1,4 +1,4 @@
-# Home Assistant App: eBUSd Workbench
+# Home Assistant App: ebusd Config Workbench
 
 A companion of the [eBUSd app](../ebusd) for everyone who works on eBUS message definitions.
 
@@ -29,7 +29,7 @@ See [DOCS.md](DOCS.md) for setup and usage.
 
 Add this repository to Home Assistant as described in the
 [repository readme](https://github.com/LukasGrebe/ha-addons#how-to-install) and install
-**eBUSd Workbench**. It needs the eBUSd app with the SQLite telegram log enabled.
+**ebusd Config Workbench**. It needs the eBUSd app with the SQLite telegram log enabled.
 
 ## Support
 

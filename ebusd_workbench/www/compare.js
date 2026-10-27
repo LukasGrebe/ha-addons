@@ -26,6 +26,44 @@ export function structuralSignature(csv) {
   return `${head.join(",")}|${fields.join("|")}`;
 }
 
+/** The parts of a definition's structure: access type, source, destination, command, ID and the fields. */
+export function structureOf(csv) {
+  const cells = splitCsv(csv || "");
+  const fields = [];
+  for (let i = FIELD_COLUMNS; i < cells.length; i += FIELD_GROUP) fields.push({ name: cells[i], part: cells[i + 1], type: cells[i + 2], divisor: cells[i + 3], unit: cells[i + 4] });
+  return { type: (cells[0] || "").replace(/^\[[^\]]*\]/, ""), qq: cells[4] || "", zz: cells[5] || "", pbsb: cells[6] || "", id: cells[7] || "", fields };
+}
+
+/** read / write / passive read / passive write: what ebusd does with the definition. */
+export function accessKind(def) {
+  return def.passive ? (def.write ? "passive write" : "passive read") : def.write ? "write" : "read";
+}
+
+export const KIND_HELP = {
+  "read": "ebusd polls this value from the device",
+  "write": "ebusd sends this value to the device (it changes the device)",
+  "passive read": "ebusd only listens: it decodes what other devices send or answer on the bus",
+  "passive write": "ebusd only listens: it decodes a command another device sends, e.g. the controller setting a mode",
+};
+
+/** In what two definitions differ, in words (empty when they are the same apart from names). */
+export function describeDifference(a, b) {
+  const out = [];
+  if (accessKind(a) !== accessKind(b)) out.push(`${accessKind(a)} (${KIND_HELP[accessKind(a)]}) instead of ${accessKind(b)} (${KIND_HELP[accessKind(b)]})`);
+  const x = structureOf(a.csv), y = structureOf(b.csv);
+  if (x.qq !== y.qq) out.push(`source address ${x.qq || "any"} instead of ${y.qq || "any"}`);
+  if (x.zz !== y.zz) out.push(`destination ${x.zz || "any"} instead of ${y.zz || "any"}`);
+  if (x.pbsb !== y.pbsb || x.id !== y.id) out.push(`message ID ${x.pbsb} ${x.id} instead of ${y.pbsb} ${y.id}`);
+  if (x.fields.length !== y.fields.length) out.push(`${x.fields.length} fields instead of ${y.fields.length}`);
+  else {
+    x.fields.forEach((f, i) => {
+      const g = y.fields[i];
+      if (f.part !== g.part || f.type !== g.type || f.divisor !== g.divisor || f.unit !== g.unit) out.push(`field ${f.name || i + 1}: ${f.type}${f.divisor ? " " + f.divisor : ""}${f.unit ? " " + f.unit : ""} instead of ${g.type}${g.divisor ? " " + g.divisor : ""}${g.unit ? " " + g.unit : ""}`);
+    });
+  }
+  return out;
+}
+
 /** Names that distinguish definitions with the same structure: circuit, name and field names. */
 export function fieldNames(csv) {
   const cells = splitCsv(csv || "");
@@ -139,7 +177,7 @@ export function summarizeFields(cov, limit = 6) {
 }
 
 /** Why a candidate is not what ebusd uses for the row. */
-export function whyNot(def, scan, errorKinds = null) {
+export function whyNot(def, scan, errorKinds = null, used = null) {
   const s = scan?.[def.zz];
   const file = def.file.replace(/^.*\//, "");
   switch (def.status) {
@@ -156,7 +194,7 @@ export function whyNot(def, scan, errorKinds = null) {
       return `Its condition ${def.condition} was not met by the recorded telegrams${needs.length ? `: it needs ${needs.join(" and ")}` : ""}.`;
     }
     case "hidden":
-      return "ebusd loads this file, but another definition for the same address and message ID takes precedence.";
+      return `ebusd loads this file, but finds ${used ? `${used.circuit} ${used.name} (${accessKind(used)}) from ${used.file.replace(/^.*\//, "")}` : "another definition"} first for the same address and message ID.`;
     case "error":
       return `It does not decode the recorded telegrams${errorKinds?.size ? ` (${[...errorKinds.entries()].map(([k, n]) => `${k} ×${n}`).join(", ")})` : ""}.`;
     case "companion":
@@ -173,3 +211,29 @@ const rangeText = (value) => {
   if (value.length === 2 && lo !== hi) return `${lo}…${hi}`;
   return value.length === 1 || lo === hi ? `= ${lo}` : value.join("/");
 };
+
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const dirOf = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+
+/**
+ * Where a compiled definition comes from in the TypeSpec sources: the file and line of its model.
+ * @param files {path relative to the source root: text}
+ * @param def a decoded definition (file is the compiled CSV, name the message)
+ */
+export function locateSource(files, def) {
+  const stem = def.file.replace(/\.(csv|inc)$/, "");
+  const own = def.file.endsWith(".inc") ? `${stem}_inc.tsp` : `${stem}.tsp`;
+  const dir = dirOf(own);
+  const tsp = Object.keys(files).filter((p) => p.endsWith(".tsp"));
+  // the file named like the CSV first, then its neighbours, then everything
+  const order = [own, ...tsp.filter((p) => p !== own && dirOf(p) === dir), ...tsp.filter((p) => dirOf(p) !== dir)].filter((p) => files[p] !== undefined);
+  const name = escapeRegExp(def.name);
+  const patterns = [new RegExp(`\\bmodel\\s+${name}\\b`), new RegExp(`@name\\(\\s*"${name}"`), new RegExp(`\\b${name}\\b`)];
+  for (const pattern of patterns) {
+    for (const path of order) {
+      const match = pattern.exec(files[path]);
+      if (match) return { path, line: files[path].slice(0, match.index).split("\n").length };
+    }
+  }
+  return null;
+}
