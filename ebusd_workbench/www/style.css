@@ -378,3 +378,10 @@ main { flex: 1; min-height: 0; display: flex; }
 .dsec table.cmp { table-layout: fixed; width: 100%; }
 .dsec table.cmp col.what, .dsec table.cmp th:first-child { width: 22%; }
 .dsec table.cmp td, .dsec table.cmp th { white-space: normal; word-break: break-word; overflow-wrap: anywhere; }
+
+/* virtual rows: labels are placed at their row, the canvas covers the rows in view */
+.tl-labels .tl-label { position: absolute; left: 0; right: 0; box-sizing: border-box; }
+.tl-labels { overflow: hidden; }
+.tl-plot canvas.tl-canvas { position: absolute; left: 0; top: 0; }
+.tl-label.group .collapse, .tl-label .expand { flex: none; font-size: 10px; padding: 0 6px; height: 17px; }
+.tl-label.group .muted { font-weight: 400; }

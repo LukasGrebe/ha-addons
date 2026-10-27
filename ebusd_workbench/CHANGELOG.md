@@ -1,4 +1,17 @@
-# 0.4.1 (unreleased)
+# 0.4.2 (unreleased)
+
+## Features
+* A command with many messages (the registers of b524, the parameters of b516) gets a header row
+  with **⊟ one row**: all its telegrams become one row per source and destination; **⊞ expand**
+  brings one row per message ID back
+
+## Fixes
+* Long lists of rows work: only the rows in view are drawn and in the DOM (virtual rows), so
+  thousands of rows scroll and zoom like a few, and the canvas no longer stays empty beyond the
+  height browsers can draw; runs that share a pixel column are drawn once and only the runs in
+  the window are looked at
+
+# 0.4.1
 
 ## Features
 * **+** on a message with a definition of several fields shows one row per field (hcmode,

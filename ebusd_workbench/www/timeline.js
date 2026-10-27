@@ -21,6 +21,9 @@ import { seriesQuery } from "./chart.js";
 import { structureOf } from "./compare.js";
 
 const ROW = 24;
+const LABEL_MARGIN = 30;                               // rows beyond the view that have a label in the DOM
+const GROUP_MIN = 6;                                   // rows of one command from which a header offers to collapse them
+const DEFAULT_ID_OVERRIDES = { b509: 3, b524: 6 };      // as in the backend's settings: commands whose message ID is longer than the default
 const STATUS_ORDER = { active: 0, custom: 1, hidden: 2, conditional: 3, variant: 4, error: 5, companion: 6 };
 const STATUS_HELP = {
   active: "ebusd uses this definition for this installation (file chosen by the scan, condition met)",
@@ -127,7 +130,7 @@ export class Timeline {
     el.annotCanvas = h("canvas");
     el.annot = h("div", { class: "tl-annot", title: "Home Assistant state changes and notes: hover for details, click an entity's flag for its history" }, h("div", { class: "corner" }, "events"), el.annotCanvas);
     el.labels = h("div", { class: "tl-labels" });
-    el.plotCanvas = h("canvas");
+    el.plotCanvas = h("canvas", { class: "tl-canvas" });   // only the rows in view (and a margin) are drawn, see drawPlot
     el.plot = h("div", { class: "tl-plot" }, el.plotCanvas);
     el.body = h("div", { class: "tl-body" }, h("div", { class: "tl-rows" }, el.labels, el.plot));
     el.drawer = h("div", { class: "tl-drawer", style: "display:none" });
@@ -138,6 +141,7 @@ export class Timeline {
     this.root.appendChild(h("div", { class: "tl" }, el.toolbar, el.progress, el.overview, el.axis, el.annot, el.stage, el.detailsHandle, el.details, el.tooltip, el.sourcesPop, el.logPop));
     this.bindMouse();
     this.bindResize();
+    el.body.addEventListener("scroll", () => this.onScroll(), { passive: true });
     document.addEventListener("mousedown", (e) => { if (el.sourcesPop.style.display !== "none" && !el.sourcesPop.contains(e.target) && !e.target.closest(".toolbar")) this.toggleSources(false); });
     this.updateDecodeState();
   }
@@ -259,13 +263,7 @@ export class Timeline {
   async saveRules(mutate) {
     const rules = { ...(this.settings.id_rules || {}) };
     mutate(rules);
-    try {
-      app.settings = await api.put("api/settings", { id_rules: rules });
-      this.syncSettings();
-      this.detail.close();   // the row is split or combined: the rows it was made of are new
-      bus.emit("settings-changed");
-      this.load(true);
-    } catch (err) { toast(err.message, "err"); }
+    await this.saveGrouping({ id_rules: rules });   // the row is split or combined: the rows it was made of are new
   }
 
   async applyIdLengths() {
@@ -449,12 +447,65 @@ export class Timeline {
       telegramRows.splice(i + 1, 0, ...fieldRows);
       i += fieldRows.length;
     }
-    this.rows = rows.concat(telegramRows);
+    this.rows = rows.concat(this.sort === "address" ? this.withGroupHeaders(telegramRows) : telegramRows);
     if (this.selected) {
       const same = this.rows.find((r) => r.key === this.selected.row.key);
       if (same) { this.selected.row = same; this.detail?.relink(same); }   // otherwise the row left the window: the details stay put
     }
     this.renderLabels();
+  }
+
+  /** Rows of one command that only differ in the message ID (b524 registers) get a header that can collapse them into one row. */
+  withGroupHeaders(rows) {
+    const command = (r) => `${r.row.zz}.${r.row.pb}.${r.row.sb}`;
+    const totals = new Map();
+    for (const r of rows) {
+      if (r.kind !== "telegram" || !r.row.id) continue;
+      const t = totals.get(command(r)) || { rows: 0, n: 0 };
+      t.rows++; t.n += r.n;
+      totals.set(command(r), t);
+    }
+    const out = [];
+    let last = null;
+    for (const r of rows) {
+      if (r.kind === "telegram") {
+        const total = totals.get(command(r));
+        if (total && total.rows >= GROUP_MIN && command(r) !== last) {
+          const pbsb = `${fmt.hex(r.row.pb)}${fmt.hex(r.row.sb)}`;
+          out.push({ kind: "group", key: `group|${command(r)}`, label: `→${fmt.hex(r.row.zz)} ${pbsb}`, pbsb, zz: fmt.hex(r.row.zz), rows: total.rows, n: total.n, runs: [], candidates: new Map() });
+        }
+        last = command(r);
+      }
+      out.push(r);
+    }
+    return out;
+  }
+
+  /** Put all telegrams of a command (b524) into one row per source and destination: the ID is not part of the row any more. */
+  async collapseCommand(pbsb) {
+    const overrides = { ...(this.settings.id_overrides || {}) };
+    const rules = { ...(this.settings.id_rules || {}) };
+    for (const key of Object.keys(overrides)) if (key.length === 6 && key.slice(2) === pbsb) delete overrides[key];
+    for (const key of Object.keys(rules)) if (key.slice(2, 6) === pbsb) delete rules[key];
+    overrides[pbsb] = 0;
+    await this.saveGrouping({ id_overrides: overrides, id_rules: rules });
+  }
+
+  /** Back to one row per message ID for a command. */
+  async expandCommand(pbsb) {
+    const overrides = { ...(this.settings.id_overrides || {}) };
+    if (pbsb in DEFAULT_ID_OVERRIDES) overrides[pbsb] = DEFAULT_ID_OVERRIDES[pbsb]; else delete overrides[pbsb];
+    await this.saveGrouping({ id_overrides: overrides });
+  }
+
+  async saveGrouping(patch) {
+    try {
+      app.settings = await api.put("api/settings", patch);
+      this.syncSettings();
+      this.detail.close();
+      bus.emit("settings-changed");
+      this.load(true);
+    } catch (err) { toast(err.message, "err"); }
   }
 
   /** The definition a row is shown with: the chosen one, else what ebusd uses, else an included candidate. */
@@ -526,36 +577,14 @@ export class Timeline {
     });
   }
 
+  /** Rows are virtual: only the labels in view (and a margin) are in the DOM, placed at their row's height. */
   renderLabels() {
     const labels = this.el.labels;
     labels.replaceChildren();
-    for (const [i, row] of this.rows.entries()) {
-      const n = row.candidates ? row.candidates.size : 0;
-      const renamed = row.def && setup.exportName(row.def) !== row.def.name;
-      const title = row.kind === "telegram"
-        ? `${row.label}${row.def ? `\n${row.name}${renamed ? ` (upstream: ${row.def.circuit} ${row.def.name})` : ""}\n${row.def.file}${row.def.source !== "base" ? ` from ${row.def.source}` : ""} — ${row.def.status}: ${STATUS_HELP[row.def.status] || ""}` : ""}${n ? `\n${n} candidate definition${n > 1 ? "s" : ""}: click to compare and choose` : "\nno definition decodes this row"}`
-        : (row.name ? `${row.label}\n${row.name}` : row.label);
-      const badge = row.kind === "telegram" && (n > 1 || (n > 0 && !row.defKey))
-        ? h("span", { class: `cands ${row.defKey ? "" : "warn"}`, title: `${n} candidate definitions — click to compare and choose`, onclick: (e) => { e.stopPropagation(); this.detail.open(row, null); } }, `${n}▾`)
-        : null;
-      const el = h("div", { class: `tl-label ${row.kind} ${this.selected?.row === row ? "picking" : ""}`, title, "data-row": i,
-        onclick: (e) => {
-          if (row.kind === "telegram" && !n && row.row.zz !== null) this.detail.open(row, null, { tab: "new" });   // no definition: define it from what the recording shows
-          else this.showDetails(row, null);
-        } },
-        row.kind === "telegram" ? h("span", { class: "pivot" },
-          h("button", { title: this.expanded.has(row.key) ? "show the message as one row again (−)" : row.row.id ? (row.row.id.length > 2 ? `combine with the rows that share the first ${row.row.id.length / 2 - 1} byte${row.row.id.length / 2 === 2 ? "" : "s"} of the message ID (−)` : "combine all rows of this command into one (−)") : "nothing to combine: no ID byte", disabled: !this.expanded.has(row.key) && !row.row.id, onclick: (e) => { e.stopPropagation(); if (this.expanded.has(row.key)) this.toggleExpanded(row); else this.combineRow(row); } }, "−"),
-          this.canExpand(row)
-            ? h("button", { title: this.expanded.has(row.key) ? "the values of the definition are shown as rows below" : `show the values of the definition as rows of their own: ${this.fieldsOf(row).slice(0, 6).join(", ")}${this.fieldsOf(row).length > 6 ? ", …" : ""} (+)`, disabled: this.expanded.has(row.key), onclick: (e) => { e.stopPropagation(); this.toggleExpanded(row); } }, "+")
-            : h("button", { title: `split by the next byte after ${row.row.id || "the command"} (+)`, disabled: !row.runs.some((r) => r.payload), onclick: (e) => { e.stopPropagation(); this.splitRow(row); } }, "+")) : null,
-        row.kind === "field" ? h("span", { class: "pivot" }, h("button", { title: "show the message as one row again (−)", onclick: (e) => { e.stopPropagation(); this.toggleExpanded(row.parent); } }, "−"), h("button", { disabled: true }, "+")) : null,
-        h("span", { class: "key" }, row.label),
-        row.name ? h("span", { class: `name ${renamed ? "renamed" : ""}`, style: row.def ? `color:${messageColors(row.def.circuit, row.def.name).text}` : "" }, row.name) : null,
-        badge,
-        row.kind === "telegram" && !n && row.row.zz !== null ? h("span", { class: "define", title: "no definition decodes this message: click to define it from the recording" }, "＋ define") : null,
-        h("span", { class: "n" }, `${fmt.count(row.n)}${row.runs.length > 1 ? ` · ${row.runs.length - 1}Δ` : ""}`));
-      labels.appendChild(el);
-    }
+    labels.style.height = `${Math.max(this.rows.length * ROW, this.el.body.clientHeight - 2)}px`;
+    const [from, to] = this.visibleRows(LABEL_MARGIN);
+    this.labelRange = { from, to };
+    for (let i = from; i < to; i++) labels.appendChild(this.labelFor(this.rows[i], i));
     if (!this.rows.length) {
       const db = app.status?.db;
       const hint = !db?.exists || !db?.has_telegram_table
@@ -565,6 +594,48 @@ export class Timeline {
     }
   }
 
+  /** Make the labels in the DOM cover the rows in view: when scrolling gets close to the end of what is there. */
+  syncLabels() {
+    const r = this.labelRange;
+    const [first, last] = this.visibleRows(0);
+    if (!r || (first < r.from + 4 && r.from > 0) || (last > r.to - 4 && r.to < this.rows.length)) this.renderLabels();
+  }
+
+  labelFor(row, i) {
+    if (row.kind === "group") {
+      return h("div", { class: "tl-label group", "data-row": i, style: `top:${i * ROW}px`, title: `${row.rows} rows of the command ${row.pbsb} to ${row.zz}: they only differ in the message ID` },
+        h("span", { class: "key" }, row.label), h("span", { class: "muted" }, `${fmt.count(row.rows)} rows`),
+        h("button", { class: "small collapse", title: `show all telegrams of ${row.pbsb} as one row per source and destination; + on that row brings the rows back`, onclick: (e) => { e.stopPropagation(); this.collapseCommand(row.pbsb); } }, "⊟ one row"),
+        h("span", { class: "n" }, fmt.count(row.n)));
+    }
+    const n = row.candidates ? row.candidates.size : 0;
+    const renamed = row.def && setup.exportName(row.def) !== row.def.name;
+    const title = row.kind === "telegram"
+      ? `${row.label}${row.def ? `\n${row.name}${renamed ? ` (upstream: ${row.def.circuit} ${row.def.name})` : ""}\n${row.def.file}${row.def.source !== "base" ? ` from ${row.def.source}` : ""} — ${row.def.status}: ${STATUS_HELP[row.def.status] || ""}` : ""}${n ? `\n${n} candidate definition${n > 1 ? "s" : ""}: click to compare and choose` : "\nno definition decodes this row"}`
+      : (row.name ? `${row.label}\n${row.name}` : row.label);
+    const badge = row.kind === "telegram" && (n > 1 || (n > 0 && !row.defKey))
+      ? h("span", { class: `cands ${row.defKey ? "" : "warn"}`, title: `${n} candidate definitions — click to compare and choose`, onclick: (e) => { e.stopPropagation(); this.detail.open(row, null); } }, `${n}▾`)
+      : null;
+    const el = h("div", { class: `tl-label ${row.kind} ${this.selected?.row === row ? "picking" : ""}`, title, "data-row": i, style: `top:${i * ROW}px`,
+      onclick: (e) => {
+        if (row.kind === "telegram" && !n && row.row.zz !== null) this.detail.open(row, null, { tab: "new" });   // no definition: define it from what the recording shows
+        else this.showDetails(row, null);
+      } },
+      row.kind === "telegram" ? h("span", { class: "pivot" },
+        h("button", { title: this.expanded.has(row.key) ? "show the message as one row again (−)" : row.row.id ? (row.row.id.length > 2 ? `combine with the rows that share the first ${row.row.id.length / 2 - 1} byte${row.row.id.length / 2 === 2 ? "" : "s"} of the message ID (−)` : "combine all rows of this command into one (−)") : "nothing to combine: no ID byte", disabled: !this.expanded.has(row.key) && !row.row.id, onclick: (e) => { e.stopPropagation(); if (this.expanded.has(row.key)) this.toggleExpanded(row); else this.combineRow(row); } }, "−"),
+        this.canExpand(row)
+          ? h("button", { title: this.expanded.has(row.key) ? "the values of the definition are shown as rows below" : `show the values of the definition as rows of their own: ${this.fieldsOf(row).slice(0, 6).join(", ")}${this.fieldsOf(row).length > 6 ? ", …" : ""} (+)`, disabled: this.expanded.has(row.key), onclick: (e) => { e.stopPropagation(); this.toggleExpanded(row); } }, "+")
+          : h("button", { title: `split by the next byte after ${row.row.id || "the command"} (+)`, disabled: !row.runs.some((r) => r.payload), onclick: (e) => { e.stopPropagation(); this.splitRow(row); } }, "+")) : null,
+      row.kind === "field" ? h("span", { class: "pivot" }, h("button", { title: "show the message as one row again (−)", onclick: (e) => { e.stopPropagation(); this.toggleExpanded(row.parent); } }, "−"), h("button", { disabled: true }, "+")) : null,
+      h("span", { class: "key" }, row.label),
+      row.name ? h("span", { class: `name ${renamed ? "renamed" : ""}`, style: row.def ? `color:${messageColors(row.def.circuit, row.def.name).text}` : "" }, row.name) : null,
+      badge,
+      row.kind === "telegram" && this.settings.id_overrides?.[`${fmt.hex(row.row.pb)}${fmt.hex(row.row.sb)}`] === 0 ? h("button", { class: "small expand", title: "all messages of this command are one row: show one row per message ID again", onclick: (e) => { e.stopPropagation(); this.expandCommand(`${fmt.hex(row.row.pb)}${fmt.hex(row.row.sb)}`); } }, "⊞ expand") : null,
+      row.kind === "telegram" && !n && row.row.zz !== null ? h("span", { class: "define", title: "no definition decodes this message: click to define it from the recording" }, "＋ define") : null,
+      h("span", { class: "n" }, `${fmt.count(row.n)}${row.runs.length > 1 ? ` · ${row.runs.length - 1}Δ` : ""}`));
+    return el;
+  }
+
   // -- drawing ---------------------------------------------------------------------------
 
   xOf(t) { return (t - this.t0) / this.span * this.width; }
@@ -572,8 +643,9 @@ export class Timeline {
 
   sizeCanvas(canvas, width, height) {
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.round(width * dpr));
-    canvas.height = Math.max(1, Math.round(height * dpr));
+    const w = Math.max(1, Math.round(width * dpr)), hh = Math.max(1, Math.round(height * dpr));
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== hh) canvas.height = hh;
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
     const ctx = canvas.getContext("2d");
@@ -601,6 +673,7 @@ export class Timeline {
     if (!this.root.classList.contains("active")) return;
     this.width = Math.max(50, this.el.plot.clientWidth || (this.el.body.clientWidth - this.el.labels.offsetWidth));
     if (this.width !== this.lastWidth) { this.lastWidth = this.width; }
+    this.syncLabels();
     this.drawAxis();
     this.drawAnnot();
     this.drawPlot();
@@ -673,21 +746,57 @@ export class Timeline {
     }
   }
 
+  /** The rows in view (plus a margin) as first and last row index. */
+  visibleRows(margin = 0) {
+    const body = this.el.body;
+    const viewH = body.clientHeight || 800;
+    return [Math.max(0, Math.floor(body.scrollTop / ROW) - margin), Math.min(this.rows.length, Math.ceil((body.scrollTop + viewH) / ROW) + margin)];
+  }
+
+  /** The row at a vertical position of the canvas (which only covers the rows around the view). */
+  rowIndexAt(offsetY) { return Math.floor((offsetY + (this.canvasWin?.top || 0)) / ROW); }
+
+  /**
+   * Rows are virtual, so that thousands of them cost no more than a screenful: the scroll area
+   * has the height of all rows, but the canvas covers only the rows in view and half a screen
+   * above and below, and is drawn again when the view leaves that margin. (Browsers draw nothing
+   * on canvases beyond about 16 000 pixels, which is what long lists of rows ran into.)
+   */
+  onScroll() {
+    this.syncLabels();
+    const c = this.canvasWin;
+    const { scrollTop, clientHeight } = this.el.body;
+    const content = Math.max(this.rows.length * ROW, clientHeight);
+    if (!c || (scrollTop - c.top < ROW * 3 && c.top > 0) || (c.top + c.height - (scrollTop + clientHeight) < ROW * 3 && c.top + c.height < content)) this.drawPlot();
+  }
+
   drawPlot() {
-    const height = Math.max(this.rows.length * ROW, this.el.body.clientHeight - 2);
+    const body = this.el.body;
+    const viewH = Math.max(1, body.clientHeight - 2);
+    const content = Math.max(this.rows.length * ROW, viewH);
+    const dpr = window.devicePixelRatio || 1;
+    const limit = Math.max(viewH, Math.floor(12e6 / (Math.max(1, this.width) * dpr * dpr)));   // keep the canvas well below what browsers can draw
+    const height = Math.min(content, limit, Math.max(viewH + ROW * 20, Math.round(viewH * 2)));
+    const top = Math.max(0, Math.min(body.scrollTop - (height - viewH) / 2, content - height));
+    this.canvasWin = { top, height };
+    this.el.plot.style.height = `${content}px`;
+    this.el.plotCanvas.style.top = `${top}px`;
     const ctx = this.sizeCanvas(this.el.plotCanvas, this.width, height);
-    this.el.labels.style.minHeight = `${height}px`;
-    ctx.clearRect(0, 0, this.width, height);
+    ctx.translate(0, -top);
+    ctx.clearRect(0, top, this.width, height);
     ctx.font = "11px ui-monospace, Menlo, Consolas, monospace";
     const { ticks } = this.ticks();
     ctx.strokeStyle = "#eef1f4";
     for (const t of ticks) {
       const x = Math.round(this.xOf(t)) + 0.5;
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + height); ctx.stroke();
     }
-    for (const [i, row] of this.rows.entries()) {
+    const first = Math.floor(top / ROW), last = Math.min(this.rows.length, Math.ceil((top + height) / ROW));
+    for (let i = first; i < last; i++) {
+      const row = this.rows[i];
       const y = i * ROW;
       if (row.kind === "event") { ctx.fillStyle = "#fbf7ee"; ctx.fillRect(0, y, this.width, ROW); }
+      if (row.kind === "group") { ctx.fillStyle = "#f7f9fb"; ctx.fillRect(0, y, this.width, ROW); }
       if (this.selected && this.selected.row === row) { ctx.fillStyle = "#e3f1fc"; ctx.fillRect(0, y, this.width, ROW); }
       ctx.strokeStyle = "#eef1f4"; ctx.beginPath(); ctx.moveTo(0, y + ROW - 0.5); ctx.lineTo(this.width, y + ROW - 0.5); ctx.stroke();
       this.drawRuns(ctx, row, y);
@@ -695,10 +804,10 @@ export class Timeline {
     for (const marker of this.allMarkers()) {
       if ((marker.ms_max ?? marker.ms) < this.t0 || (marker.ms_min ?? marker.ms) > this.t1) continue;
       const x0 = this.xOf(marker.ms_min ?? marker.ms), x1 = this.xOf(marker.ms_max ?? marker.ms);
-      if (x1 - x0 > 1.5) { ctx.fillStyle = "rgba(239,108,0,.12)"; ctx.fillRect(x0, 0, x1 - x0, height); }
+      if (x1 - x0 > 1.5) { ctx.fillStyle = "rgba(239,108,0,.12)"; ctx.fillRect(x0, top, x1 - x0, height); }
       const x = Math.round(this.xOf(marker.ms)) + 0.5;
       ctx.setLineDash([4, 3]); ctx.strokeStyle = "#ef6c00";
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + height); ctx.stroke();
       ctx.setLineDash([]);
     }
     const states = (this.annotItems || []).filter((it) => it.kind === "state");
@@ -710,21 +819,28 @@ export class Timeline {
     const now = Date.now();
     if (now >= this.t0 && now <= this.t1) {
       const x = Math.round(this.xOf(now)) + 0.5;
-      ctx.strokeStyle = "rgba(11,125,218,.5)"; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+      ctx.strokeStyle = "rgba(11,125,218,.5)"; ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + height); ctx.stroke();
     }
     if (this.hover && this.hover.x !== undefined) {
       const x = Math.round(this.hover.x) + 0.5;
-      ctx.strokeStyle = "rgba(31,45,61,.35)"; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+      ctx.strokeStyle = "rgba(31,45,61,.35)"; ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + height); ctx.stroke();
     }
   }
 
   drawRuns(ctx, row, y) {
     const top = y + 4, barHeight = ROW - 8;
-    for (const [j, run] of row.runs.entries()) {
-      if (run.t1 < this.t0 || run.t0 > this.t1) continue;
+    const runs = row.runs;
+    // the runs are in time order: start at the first one that reaches into the window, stop after the last
+    let lo = 0, hi = runs.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (runs[mid].t1 < this.t0) lo = mid + 1; else hi = mid; }
+    let lastPixel = -1;
+    for (let j = lo; j < runs.length; j++) {
+      const run = runs[j];
+      if (run.t0 > this.t1) break;
       const x0 = this.xOf(run.t0), x1 = this.xOf(run.t1);
+      if (x1 - x0 < 2) { const pixel = Math.round(x0); if (pixel === lastPixel) continue; lastPixel = pixel; }   // many runs in one pixel column: draw the first
       const { fill, stroke } = valueColors(run.value, run.status);
-      const next = row.runs[j + 1];
+      const next = runs[j + 1];
       if (next && row.kind !== "event") {
         // the value holds until the next (different) telegram
         const nx = this.xOf(next.t0);
@@ -966,8 +1082,7 @@ export class Timeline {
   }
 
   hoverAt(e) {
-    const index = Math.floor(e.offsetY / ROW);
-    const row = this.rows[index];
+    const row = this.rows[this.rowIndexAt(e.offsetY)];
     const run = row ? this.runAt(row, e.offsetX) : null;
     this.hover = { x: e.offsetX, row, run };
     const tip = this.el.tooltip;
@@ -1003,8 +1118,8 @@ export class Timeline {
 
   click(e) {
     if (this.logPicking) { this.pickLogTime(this.tOf(e.offsetX)); return; }
-    const row = this.rows[Math.floor(e.offsetY / ROW)];
-    if (!row) return;
+    const row = this.rows[this.rowIndexAt(e.offsetY)];
+    if (!row || row.kind === "group") return;
     this.showDetails(row, this.runAt(row, e.offsetX));
   }
 

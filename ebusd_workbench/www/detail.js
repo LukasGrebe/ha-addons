@@ -48,6 +48,7 @@ export class DetailPanel {
     this.scroll = null;
     this.tl.selected = { row, run };
     this.tl.showDock(true);
+    this.tl.renderLabels();   // the label of the row shows that it is selected
     this.refreshModel();
     this.ensureTab();
     this.render();
@@ -62,6 +63,7 @@ export class DetailPanel {
     this.tl.setPreview?.(null, null);
     this.tl.showDock(false);
     this.el.replaceChildren();
+    this.tl.renderLabels();
     this.tl.drawPlot();
   }
 

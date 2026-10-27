@@ -134,6 +134,14 @@ result in place:
   with that prefix are regrouped (the rules are in *Settings → Telegram grouping*, where they can
   be cleared or reset to the defaults). **rows like the definitions** (or the notice above the
   timeline) sets the rules from the decoded definitions: one row per message they know.
+- **Collapse a whole command**: commands with many messages (the registers of `b524`, the
+  parameters of `b516`) get a header row, *→08 b524 · 312 rows*, with **⊟ one row**: all telegrams
+  of that command become one row per source and destination, and **⊞ expand** next to the name
+  brings one row per message ID back (the grouping rules of the command are replaced either way).
+  The header shows where a command has six or more rows (sorted by address).
+- **Thousands of rows**: only the rows in view exist, as labels and on the canvas, so a window
+  with thousands of rows scrolls like a short one (browsers draw nothing on canvases taller than
+  about 16 000 pixels, which is what long lists ran into).
 - **hide failing** in the details (and in the Choose step) hides candidates that fail to decode
   some recorded telegram.
 - **source ↗** opens the TypeSpec source of a definition at its line in the editor (read only
