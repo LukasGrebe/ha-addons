@@ -1,6 +1,25 @@
-# 0.5.3 (unreleased)
+# 0.5.4 (unreleased)
 
 ## Features
+* **Nothing waits for ebusd's library any more.** A line of your own shows as a row of the
+  inspector the moment it is saved, marked *checking* with a spinner until it has been decoded
+  (the page is given back at once; the decode runs in the background with its progress in the
+  sources strip and the top bar). The stored build no longer carries the files of every source
+* **A raw field is carved**: a shorter type on a raw field (`HEX:9` → `HEX:5`) leaves the rest
+  as a raw field of its own (`HEX:4`), to be carved further; every edit of a line of your own
+  shows at once, from the line as saved
+* **The chart is a box over the table**: click a field, its value or its sparkline and the chart
+  of that field over the whole recording opens over the lower part of the inspector; hovering
+  it shows that telegram in the table above (the bytes and every definition's values follow the
+  pointer), a click keeps it, Esc or ✕ closes. The values list is gone. Stepping through the
+  telegrams only repaints the telegram row and the values, nothing else moves
+* **The open pull requests are the way to a definition**: their search sits right under the
+  table and runs by itself for a message nothing is set up for (once per message and page,
+  never over a running search). **+ add as a source** now says what happens: fetching from
+  GitHub, compiling, decoding the recording with the telegrams of the inspected message first
+  (so its rows appear after the first batch), done
+
+## Features of 0.5.3
 * **The eBUS specification as hints**: the addresses of a telegram are named in the inspector
   (the device the scan identified, ebusd for its own address, else the role the specification
   assigns: heating controller, burner control unit, …), the command bytes are explained in the

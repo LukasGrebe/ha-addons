@@ -420,3 +420,11 @@ table.inspector td.field { min-width: 130px; }
 table.inspector td.field.bitfield { min-width: 64px; max-width: 90px; }
 table.inspector td.field.bitfield .ftype { display: none; }
 table.inspector td.fixed .addrname { font-family: var(--sans, system-ui, sans-serif); font-size: 10px; color: var(--muted); white-space: normal; max-width: 160px; line-height: 1.2; margin-top: 1px; }
+.insp-host { position: relative; }
+.chart-anchor { position: relative; height: 0; }
+.chart-backdrop { position: absolute; left: 0; right: 0; top: 0; z-index: 19; background: rgba(30, 40, 50, .22); cursor: pointer; }
+.chartbox { position: absolute; left: 8px; right: 8px; top: 4px; z-index: 20; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 8px 28px rgba(0, 0, 0, .28); padding: 8px 10px; }
+.chartbox .head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.chartbox canvas { display: block; cursor: crosshair; max-width: 100%; }
+table.inspector tr.def.pending td.label { background: #fffdf5; }
+table.inspector .defmeta .spinner { vertical-align: middle; }

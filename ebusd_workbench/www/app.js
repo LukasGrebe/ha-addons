@@ -196,7 +196,7 @@ async function main() {
   app.views.sources = new SourcesStrip(document.getElementById("sources"));
   app.views.messages = new MessagesView(document.getElementById("messages"));
   app.views.pad = new Scratchpad(app.views.messages);
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !e.target.closest("input, textarea, select") && app.views.pad.isOpen) bus.emit("select-row", null); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !(e.target instanceof Element && e.target.closest("input, textarea, select")) && app.views.pad.isOpen) bus.emit("select-row", null); });
   app.views.setup = new SetupPanel(document.getElementById("setup"));
   app.views.extras = new Extras(document.getElementById("extras"));
   bus.on("status", (status) => { setup.load(); app.builder.onStatus(status); updateActivity(); });

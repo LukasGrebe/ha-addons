@@ -199,7 +199,7 @@ export class Builder {
     const sources = build.sources.filter((s) => s.id !== MINE);
     if (mine) {
       const reference = sources.find((s) => s.id === build.reference) || null;
-      sources.push({ ...mine, stamp: mine.filesId, delta: reference ? deltaOf(mine.files, reference.files) : null });
+      sources.push({ ...mine, stamp: mine.filesId, delta: reference?.files ? deltaOf(mine.files, reference.files) : null });
     }
     await app.decoder.setBuild({ ...build, id: Date.now().toString(36), at: new Date().toISOString(), sources });
   }

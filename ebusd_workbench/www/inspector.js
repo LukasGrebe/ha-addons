@@ -4,7 +4,11 @@
 // recording, what every definition decodes from it, and a sparkline per field over the whole
 // recording. Definitions are compared by eye: cells where a definition reads the same bytes
 // differently are highlighted. A definition of your own is edited in place: name, type, divisor
-// and unit per field, or its line as text.
+// and unit per field, or its line as text; it shows as a row the moment it is saved, marked
+// "checking" until ebusd's library has been over the recording with it.
+//
+// The table is built once; showing another telegram (the stepper, a hover over the chart) only
+// repaints the telegram row and the decoded values, so nothing else moves.
 import { app, append, fmt, h, toast } from "./app.js";
 import { messageColors } from "./colors.js";
 import { accessKind, describeConditions, whyNot } from "./compare.js";
@@ -22,6 +26,13 @@ const TYPE_LEN = {
 };
 const chip = (circuit, name) => { const c = messageColors(circuit, name); return h("span", { class: "chip-msg", style: `color:${c.text};background:${c.background};border-color:${c.border}` }, `${circuit} ${name}`); };
 const hexToBytes = (hex) => (hex || "").match(/../g)?.map((b) => parseInt(b, 16)) || [];
+
+/** The bytes a type takes as written in a CSV (0 for a bit field). */
+export function byteLengthOf(type) {
+  const { code, length } = splitType(type);
+  if (/^BI[0-7]$/.test(code)) return 0;
+  return length ? Math.max(1, Number(length) || 1) : (TYPE_LEN[code] ?? 1);
+}
 
 /**
  * Where the fields of a definition sit: [{name, part, type, divisor, unit, comment, byte, len, bit, bits}].
@@ -108,10 +119,18 @@ function readings(bytes, offset, part) {
   return lines.join("\n");
 }
 
+/** A field name that is not taken yet: name2, name3, … */
+function freeName(fields, base) {
+  const taken = new Set(fields.map((f) => f.name));
+  let n = 2, name = `${base}${n}`;
+  while (taken.has(name)) name = `${base}${++n}`;
+  return name;
+}
+
 /**
- * The inspector of a message.
+ * The inspector of a message. Returns the element with showTelegram(index), index() and markSelected(defKey, field).
  * @param ctx {row, telegrams, defs: [{def, group}], decoder, view, telegramIndex, selected: {defKey, field},
- *   onTelegram(index), onSelect(defKey, field), onChange(), included: Set, otherKeys, usedKey}
+ *   onTelegram(index), onSelect(defKey, field), onChange(), onNew(), included: Set, otherKeys, usedKey, usedDef, defKey}
  */
 export function inspector(ctx) {
   const { row, telegrams, decoder } = ctx;
@@ -119,13 +138,14 @@ export function inspector(ctx) {
   const devices = decoder.devices(), own = app.settings?.own_address || "31";
   const nameOf = (addr) => addressName(addr, { devices, own });
   const sorted = telegrams.slice().sort((a, b) => (b.last_ms || 0) - (a.last_ms || 0));   // newest first
-  const index = Math.max(0, Math.min(sorted.length - 1, ctx.telegramIndex || 0));
-  const current = sorted[index] || null;
+  let index = Math.max(0, Math.min(sorted.length - 1, ctx.telegramIndex || 0));
   const bytesOf = (t) => ({ m: hexToBytes((t?.master || "").slice(10 + idBytes * 2)), s: hexToBytes((t?.slave || "").slice(2)) });
-  const cur = bytesOf(current);
+  // a row of your own shows the line as it is saved: the decoder's copy lags behind while the line is checked
+  const lines = mineLines();
+  const csvOf = (def) => (def.source === MINE ? lines.find((l) => l.key === def.key)?.line : null) || def.csv;
   // the columns: every byte of each part, a byte split into bits where some definition reads bits
-  const layouts = ctx.defs.map((d) => ({ ...d, fields: layoutFields(d.def.csv) }));
-  const maxLen = { m: cur.m.length, s: cur.s.length };
+  const layouts = ctx.defs.map((d) => { const csv = csvOf(d.def); return { ...d, csv, fields: layoutFields(csv) }; });
+  const maxLen = { m: 0, s: 0 };
   for (const t of sorted.slice(0, 200)) { const b = bytesOf(t); maxLen.m = Math.max(maxLen.m, b.m.length); maxLen.s = Math.max(maxLen.s, b.s.length); }
   for (const l of layouts) for (const f of l.fields) maxLen[f.part] = Math.max(maxLen[f.part], f.byte + f.len);
   const bitBytes = new Set();
@@ -163,20 +183,22 @@ export function inspector(ctx) {
   table.appendChild(h("thead", {}, head));
   const body = h("tbody");
   table.appendChild(body);
-  const fixedCells = (label) => [h("td", { class: "fixed label" }, label), h("td", { class: "fixed mono muted" }, ""), h("td", { class: "fixed mono muted" }, ""), h("td", { class: "fixed mono muted" }, "")];
 
   // -- one block per definition: its fields, what it decodes from the current telegram, the sparklines
-  const sparks = [];   // {canvas, defKey, field}
+  const sparks = [];        // {canvas, defKey, field}
+  const defCells = [];      // {defKey, pending, label: td, cells: [{field, unit, td}]} repainted per telegram
+  const fieldCells = new Map();   // "defKey|field" -> [td] to mark the selected field
   for (const l of layouts) {
-    const def = l.def, g = l.group;
+    const def = l.def, g = l.group, csv = l.csv;
     const mine = def.source === MINE;
+    const pending = !!def.pending;
     const isRef = reference && reference.def.key === def.key;
     const chosen = pickKey === def.key;
-    const dec = current ? decoder.decodesOf(current.line)?.get(def.key) : null;
+    const parsed = parseDefinition(csv);
     // the row of fields
-    const fieldsRow = h("tr", { class: `def ${isRef ? "ref" : ""} ${chosen ? "chosen" : ""}` });
-    const nameInput = h("input", { class: "msgname", value: mine ? def.name : setup.exportName(def), title: mine ? "the message name (edits your line)" : `the message name in your config (MQTT topic ebusd/${setup.circuitOf(def)}/…); upstream: ${def.name}`,
-      onchange: (e) => { if (mine) { const parsed = parseDefinition(def.csv); parsed.header.name = e.target.value.trim(); e.target.blur(); upsertMine(buildDefinition(parsed), def.key).then(() => ctx.onChange?.()).catch((err) => toast(err.message, "err")); } else setup.rename(def, e.target.value); } });
+    const fieldsRow = h("tr", { class: `def ${isRef ? "ref" : ""} ${chosen ? "chosen" : ""} ${pending ? "pending" : ""}` });
+    const nameInput = h("input", { class: "msgname", value: mine ? parsed.header.name : setup.exportName(def), title: mine ? "the message name (edits your line)" : `the message name in your config (MQTT topic ebusd/${setup.circuitOf(def)}/…); upstream: ${def.name}`,
+      onchange: (e) => { if (mine) { const next = parseDefinition(csv); next.header.name = e.target.value.trim(); e.target.blur(); upsertMine(buildDefinition(next), def.key).then(() => ctx.onChange?.()).catch((err) => toast(err.message, "err")); } else setup.rename(def, e.target.value); } });
     const label = h("td", { class: "fixed label", rowspan: mine ? 4 : 3 },
       h("div", { class: "deflabel" },
         h("label", { class: "insetup", title: chosen ? "used for this message and part of your setup" : "use this definition for this message: it joins your setup, the message's other definitions leave it" },
@@ -185,21 +207,22 @@ export function inspector(ctx) {
         h("span", { class: `tbadge ${mine ? "custom" : def.source === "release" ? "" : "src"}` }, mine ? "mine" : def.sourceLabel || def.source),
         g?.members?.length > 1 ? h("span", { class: "tmeta", title: `the same definition in ${g.members.length} files: ${g.members.map((m) => m.def.file.replace(/^.*\//, "")).join(", ")}` }, `×${g.members.length}`) : null,
         def.key === ctx.usedKey ? h("span", { class: "tbadge active", title: "what ebusd uses today" }, "ebusd's choice") : null),
-      h("div", { class: "defmeta muted", title: `${def.file}\n${describeConditions(def) ? `only when ${describeConditions(def)}\n` : ""}${def.key === ctx.usedKey ? "ebusd uses this definition today." : whyNot(def, decoder.scan?.[def.source] || {}, null, ctx.usedDef)}` },
-        accessKind(def), g?.coverage ? (g.coverage.errors ? h("span", { class: "warn" }, ` · fails on ${g.coverage.errors} of ${g.coverage.distinct}`) : h("span", { class: "ok" }, ` · decodes all ${fmt.count(g.coverage.ok)}`)) : null),
+      h("div", { class: "defmeta muted", title: pending ? "your line is being checked against every recorded telegram of this message" : `${def.file}\n${describeConditions(def) ? `only when ${describeConditions(def)}\n` : ""}${def.key === ctx.usedKey ? "ebusd uses this definition today." : whyNot(def, decoder.scan?.[def.source] || {}, null, ctx.usedDef)}` },
+        accessKind(def), pending ? [" · ", h("span", { class: "spinner" }), " checking over the recording…"] : g?.coverage ? (g.coverage.errors ? h("span", { class: "warn" }, ` · fails on ${g.coverage.errors} of ${g.coverage.distinct}`) : h("span", { class: "ok" }, ` · decodes all ${fmt.count(g.coverage.ok)}`)) : null),
       h("div", { class: "defacts" },
         h("span", { class: "muted" }, "name "), nameInput,
         mine ? h("button", { class: "small", title: "remove this line from your definitions", onclick: async () => { if (confirm(`Remove ${def.circuit} ${def.name} from your definitions?`)) await removeMine(def.key); } }, "remove") : h("button", { class: "small", title: "a copy of your own (mine), to change it freely", onclick: async () => { try { await upsertMine(def.csv); toast(`${def.circuit} ${def.name} copied: the copy (mine) is below`); ctx.onChange?.(); } catch (err) { toast(err.message, "err"); } } }, "copy")));
     fieldsRow.appendChild(label);
-    const { header } = parseDefinition(def.csv);
+    const { header } = parsed;
     fieldsRow.appendChild(h("td", { class: "fixed mono muted", title: `source (any) and destination the definition is for${header.zz ? `: ${nameOf(header.zz)}` : ""}` }, `${header.qq || "--"} ${header.zz || "--"}`));
     fieldsRow.appendChild(h("td", { class: "fixed mono muted" }, header.pbsb));
     fieldsRow.appendChild(h("td", { class: "fixed mono muted" }, header.id || ""));
     const valueRow = h("tr", { class: `decoded ${isRef ? "ref" : ""}` });
     const sparkRow = h("tr", { class: `sparks ${isRef ? "ref" : ""}` });
+    const block = { defKey: def.key, pending, label: h("td", { class: "fixed muted rowname", colspan: 3 }), cells: [] };
+    defCells.push(block);
     let col = 0;
     const filler = (upto) => { while (col < upto) { fieldsRow.appendChild(h("td", { class: "gap" })); valueRow.appendChild(h("td", { class: "gap" })); sparkRow.appendChild(h("td", { class: "gap" })); col++; } };
-    const parsed = parseDefinition(def.csv);
     for (const f of l.fields.slice().sort((a, b) => (a.part === b.part ? 0 : a.part === "m" ? -1 : 1) || a.byte - b.byte || (a.bit ?? 0) - (b.bit ?? 0))) {
       const s = spanOf(f);
       if (!s || s.start < col) continue;
@@ -212,33 +235,43 @@ export function inspector(ctx) {
         if (!mine && key === "name") { setup.renameField(def, f.name, value); return; }
         input?.blur();
         // several edits on a source's row go into the one copy: the second edit builds on the copy the first made
-        const copy = mine ? null : mineLines().find((l) => l.key === mineKey(parseDefinition(def.csv).header))?.line;
-        const next = parseDefinition(copy || def.csv);
-        next.fields[fieldIndex][key] = value.trim();
+        const copy = mine ? null : lines.find((x) => x.key === mineKey(parseDefinition(def.csv).header))?.line;
+        const next = parseDefinition(copy || csv);
+        const target = next.fields[fieldIndex];
+        if (!target) return;
+        target[key] = value.trim();
+        // a raw field made shorter leaves bytes behind: they become a raw field of their own, to be carved further
+        if (key === "type" && f.bit === null) {
+          const was = f.len, now = byteLengthOf(target.type);
+          if (now > 0 && now < was) next.fields.splice(fieldIndex + 1, 0, { name: freeName(next.fields, target.name || "field"), part: target.part, type: `HEX:${was - now}`, divisor: "", unit: "", comment: "" });
+        }
         upsertMine(buildDefinition(next), mine ? def.key : null).then((k) => { if (!mine) { toast(`a copy of your own with ${f.name} as ${value.trim()}: it is below (mine)`); setup.choose(row.key, k, ctx.otherKeys, decoder.entries); } ctx.onChange?.(); }).catch((err) => toast(err.message, "err"));
       };
       const names = mine ? null : setup.fieldMap(def);
-      const cell = h("td", { class: `field ${mine ? "mine" : ""} ${f.bit !== null ? "bitfield" : ""} ${differs ? "diff" : ""} ${selected ? "sel" : ""}`, colspan: s.span, title: `${f.name}: ${f.part === "m" ? "request" : "answer"} ${f.type}${f.divisor ? ` divisor/values ${f.divisor}` : ""}${f.unit ? ` unit ${f.unit}` : ""}${f.comment ? `\n${f.comment}` : ""}\nclick for the chart; edit the name for your config, edit type, divisor or unit for a copy of your own`,
+      const cell = h("td", { class: `field ${mine ? "mine" : ""} ${f.bit !== null ? "bitfield" : ""} ${differs ? "diff" : ""} ${selected ? "sel" : ""}`, colspan: s.span, title: `${f.name}: ${f.part === "m" ? "request" : "answer"} ${f.type}${f.divisor ? ` divisor/values ${f.divisor}` : ""}${f.unit ? ` unit ${f.unit}` : ""}${f.comment ? `\n${f.comment}` : ""}\nclick for the chart over the recording; edit the name for your config, edit type, divisor or unit for a copy of your own`,
         onclick: (e) => { if (!e.target.closest("input")) ctx.onSelect(def.key, f.name); } },
         h("input", { class: "fname", value: mine ? f.name : (names[f.name] || f.name), title: mine ? "field name" : `field name in your config (upstream: ${f.name})`, onchange: (e) => edit("name", e.target.value, e.target) }),
-        h("div", { class: "ftype" }, h("input", { class: "ftypein", value: f.type, title: "type as in the CSV (UCH, D2C, BI0:1, BCD:2, …)", onchange: (e) => edit("type", e.target.value, e.target) }),
+        h("div", { class: "ftype" }, h("input", { class: "ftypein", value: f.type, title: "type as in the CSV (UCH, D2C, BI0:1, BCD:2, HEX:5, …); a shorter raw type leaves the rest as a raw field of its own", onchange: (e) => edit("type", e.target.value, e.target) }),
           h("input", { class: "fdiv", value: f.divisor, placeholder: "÷/values", title: "divisor (10), factor (-10) or value names (0=off;1=on)", onchange: (e) => edit("divisor", e.target.value, e.target) }),
           h("input", { class: "funit", value: f.unit, placeholder: "unit", title: "unit", onchange: (e) => edit("unit", e.target.value, e.target) })));
       fieldsRow.appendChild(cell);
-      const value = dec && dec.result === "ok" && dec.fields && f.name in dec.fields ? dec.fields[f.name] : null;
-      valueRow.appendChild(h("td", { class: `value mono ${selected ? "sel" : ""}`, colspan: s.span, onclick: () => ctx.onSelect(def.key, f.name) }, dec ? (dec.result === "ok" ? (value === null || value === undefined ? "–" : `${value}${f.unit && typeof value === "number" ? ` ${f.unit}` : ""}`) : h("span", { class: "err", title: dec.result }, "✗")) : h("span", { class: "muted" }, "…")));
+      const valueCell = h("td", { class: `value mono ${selected ? "sel" : ""}`, colspan: s.span, onclick: () => ctx.onSelect(def.key, f.name) });
+      valueRow.appendChild(valueCell);
+      block.cells.push({ field: f.name, unit: f.unit, td: valueCell });
       const canvas = h("canvas", { class: "spark", title: `${f.name} over the whole recording: click for the chart` });
-      sparkRow.appendChild(h("td", { class: `spark ${selected ? "sel" : ""}`, colspan: s.span, onclick: () => ctx.onSelect(def.key, f.name) }, canvas));
+      const sparkCell = h("td", { class: `spark ${selected ? "sel" : ""}`, colspan: s.span, onclick: () => ctx.onSelect(def.key, f.name) }, canvas);
+      sparkRow.appendChild(sparkCell);
       sparks.push({ canvas, defKey: def.key, field: f.name });
+      fieldCells.set(`${def.key}|${f.name}`, [cell, valueCell, sparkCell]);
       col += s.span;
     }
     filler(columns.length);
-    valueRow.insertBefore(h("td", { class: "fixed muted rowname", colspan: 3 }, dec ? (dec.result === "ok" ? "decodes" : h("span", { class: "err" }, `does not decode: ${dec.result}`)) : "not decoded yet"), valueRow.firstChild);
+    valueRow.insertBefore(block.label, valueRow.firstChild);
     sparkRow.insertBefore(h("td", { class: "fixed muted rowname", colspan: 3 }, "over the recording"), sparkRow.firstChild);
     body.append(fieldsRow, valueRow, sparkRow);
     if (mine) {
       const area = h("textarea", { class: "rawcsv", rows: 2, spellcheck: "false" });
-      area.value = def.csv;
+      area.value = csv;
       body.appendChild(h("tr", { class: "raw" }, h("td", { class: "fixed muted rowname", colspan: 3 }, "as ebusd reads it"), h("td", { colspan: columns.length }, area,
         h("div", { class: "row" }, h("button", { class: "small primary", onclick: async () => { try { await upsertMine(area.value, def.key); ctx.onChange?.(); } catch (err) { toast(err.message, "err"); } } }, "save line")))));
     }
@@ -246,32 +279,65 @@ export function inspector(ctx) {
 
   // -- the telegram: one recorded telegram, bytes per column, with the buttons to step through the recording
   const telegramRow = h("tr", { class: "telegram" });
-  const stepper = h("div", { class: "stepper" },
-    h("button", { class: "small", disabled: index >= sorted.length - 1, title: "the previous (older) recorded telegram", onclick: () => ctx.onTelegram(index + 1) }, "◀ older"),
-    h("span", { class: "mono muted" }, sorted.length ? `${fmt.count(index + 1)} of ${fmt.count(sorted.length)} distinct` : "no telegram"),
-    h("button", { class: "small", disabled: index <= 0, title: "the next (newer) recorded telegram", onclick: () => ctx.onTelegram(index - 1) }, "newer ▶"),
-    current ? h("span", { class: "muted", title: current.line }, `${current.n ? `×${fmt.count(current.n)}` : "pasted"} · last ${current.last_ms ? fmt.dateTime(current.last_ms, true) : "?"}`) : null);
-  telegramRow.appendChild(h("td", { class: "fixed label" }, h("b", {}, "telegram"), stepper));
-  const master = current?.master || "";
-  const cmd = master ? commandInfo(master.slice(4, 8)) : null;
-  telegramRow.appendChild(h("td", { class: "fixed mono", title: master ? `${describeAddress(master.slice(0, 2), { devices, own })}\n\n${describeAddress(master.slice(2, 4), { devices, own })}` : "" },
-    master ? [`${master.slice(0, 2)} ${master.slice(2, 4)}`, h("div", { class: "addrname" }, `${nameOf(master.slice(0, 2))} → ${nameOf(master.slice(2, 4))}`)] : ""));
-  telegramRow.appendChild(h("td", { class: "fixed mono", title: master ? describeCommand(master.slice(4, 8)) : "" }, master.slice(4, 8), cmd?.service || cmd?.primary ? h("div", { class: "addrname" }, cmd.service || cmd.primary) : null));
-  telegramRow.appendChild(h("td", { class: "fixed mono", title: `message ID of ${idBytes} byte${idBytes === 1 ? "" : "s"}: as many data bytes as the fitting definitions use to tell this message from its siblings (1 when nothing fits)` }, row.row.id || ""));
-  for (const c of columns) {
-    const byte = cur[c.part][c.byte];
-    if (byte === undefined) { telegramRow.appendChild(h("td", { class: "hex muted" }, c.bit === null ? "··" : "·")); continue; }
-    if (c.bit === null) telegramRow.appendChild(h("td", { class: "hex mono", title: readings(cur[c.part], c.byte, c.part) }, byte.toString(16).padStart(2, "0")));
-    else telegramRow.appendChild(h("td", { class: `hex bit mono ${(byte >> c.bit) & 1 ? "on" : ""}`, title: `bit ${c.bit} of 0x${byte.toString(16).padStart(2, "0")}` }, String((byte >> c.bit) & 1)));
-  }
+  const older = h("button", { class: "small", title: "the previous (older) recorded telegram", onclick: () => { paint(index + 1); ctx.onTelegram?.(index); } }, "◀ older");
+  const newer = h("button", { class: "small", title: "the next (newer) recorded telegram", onclick: () => { paint(index - 1); ctx.onTelegram?.(index); } }, "newer ▶");
+  const counter = h("span", { class: "mono muted" });
+  const info = h("span", { class: "muted" });
+  telegramRow.appendChild(h("td", { class: "fixed label" }, h("b", {}, "telegram"), h("div", { class: "stepper" }, older, counter, newer, info)));
+  const addrCell = h("td", { class: "fixed mono" });
+  const cmdCell = h("td", { class: "fixed mono" });
+  telegramRow.append(addrCell, cmdCell, h("td", { class: "fixed mono", title: `message ID of ${idBytes} byte${idBytes === 1 ? "" : "s"}: as many data bytes as the fitting definitions use to tell this message from its siblings (1 when nothing fits)` }, row.row.id || ""));
+  const hexCells = columns.map((c) => { const td = h("td", { class: "hex muted" }); telegramRow.appendChild(td); return { ...c, td }; });
   body.insertBefore(telegramRow, body.firstChild);
   if (ctx.onNew) {
     body.appendChild(h("tr", { class: "newdef" }, h("td", { class: "fixed label", colspan: 4 },
       h("button", { class: "small primary", title: "a line of your own for this message: one raw field per part, to carve into fields here", onclick: () => ctx.onNew() }, "＋ a definition of your own")),
-      h("td", { colspan: columns.length, class: "muted" }, "starts with the bytes as they are; then give the fields a type (the tooltip of a byte in the telegram row says what it could be), a name, a divisor, a unit")));
+      h("td", { colspan: columns.length, class: "muted" }, "starts with the bytes as they are; give a field a type (the tooltip of a byte in the telegram row says what it could be: a shorter type leaves the rest as a raw field), a name, a divisor, a unit")));
   }
 
+  /** Show one recorded telegram: the bytes, and what every definition decodes from it. Nothing else is touched. */
+  function paint(i) {
+    index = Math.max(0, Math.min(sorted.length - 1, i));
+    const current = sorted[index] || null;
+    const cur = bytesOf(current);
+    older.disabled = index >= sorted.length - 1;
+    newer.disabled = index <= 0;
+    counter.textContent = sorted.length ? `${fmt.count(index + 1)} of ${fmt.count(sorted.length)} distinct` : "no telegram";
+    info.textContent = current ? `${current.n ? `×${fmt.count(current.n)}` : "pasted"} · last ${current.last_ms ? fmt.dateTime(current.last_ms, true) : "?"}` : "";
+    info.title = current?.line || "";
+    const master = current?.master || "";
+    const cmd = master ? commandInfo(master.slice(4, 8)) : null;
+    addrCell.title = master ? `${describeAddress(master.slice(0, 2), { devices, own })}\n\n${describeAddress(master.slice(2, 4), { devices, own })}` : "";
+    addrCell.replaceChildren(...(master ? [`${master.slice(0, 2)} ${master.slice(2, 4)}`, h("div", { class: "addrname" }, `${nameOf(master.slice(0, 2))} → ${nameOf(master.slice(2, 4))}`)] : []));
+    cmdCell.title = master ? describeCommand(master.slice(4, 8)) : "";
+    cmdCell.replaceChildren(master.slice(4, 8), cmd?.service || cmd?.primary ? h("div", { class: "addrname" }, cmd.service || cmd.primary) : "");
+    for (const c of hexCells) {
+      const byte = cur[c.part][c.byte];
+      if (byte === undefined) { c.td.className = "hex muted"; c.td.textContent = c.bit === null ? "··" : "·"; c.td.title = ""; }
+      else if (c.bit === null) { c.td.className = "hex mono"; c.td.textContent = byte.toString(16).padStart(2, "0"); c.td.title = readings(cur[c.part], c.byte, c.part); }
+      else { const on = (byte >> c.bit) & 1; c.td.className = `hex bit mono ${on ? "on" : ""}`; c.td.textContent = String(on); c.td.title = `bit ${c.bit} of 0x${byte.toString(16).padStart(2, "0")}`; }
+    }
+    for (const d of defCells) {
+      const dec = current ? decoder.decodesOf(current.line)?.get(d.defKey) : null;
+      d.label.replaceChildren(dec ? (dec.result === "ok" ? "decodes" : h("span", { class: "err" }, `does not decode: ${dec.result}`)) : d.pending ? h("span", { class: "muted" }, h("span", { class: "spinner" }), " checking…") : "not decoded yet");
+      for (const c of d.cells) {
+        const value = dec && dec.result === "ok" && dec.fields && c.field in dec.fields ? dec.fields[c.field] : null;
+        c.td.replaceChildren(dec ? (dec.result === "ok" ? (value === null || value === undefined ? "–" : `${value}${c.unit && typeof value === "number" ? ` ${c.unit}` : ""}`) : h("span", { class: "err", title: dec.result }, "✗")) : h("span", { class: "muted" }, "…"));
+      }
+    }
+  }
+  paint(index);
+
   const root = h("div", { class: "inspector-wrap" }, table);
+  root.showTelegram = paint;
+  root.index = () => index;
+  root.lineAt = (i) => sorted[i]?.line || null;
+  root.indexOfLine = (line) => sorted.findIndex((t) => t.line === line);
+  /** Mark the field whose chart is open (or none). */
+  root.markSelected = (defKey, field) => {
+    for (const cells of fieldCells.values()) for (const td of cells) td.classList.remove("sel");
+    if (defKey) for (const td of fieldCells.get(`${defKey}|${field}`) || []) td.classList.add("sel");
+  };
   // the sparklines need the recording
   ctx.view.loadSeries(row).then((data) => {
     if (!data || !root.isConnected) return;

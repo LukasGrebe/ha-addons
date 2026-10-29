@@ -71,6 +71,7 @@ export class Decoder {
     this.filters = {};            // source -> {filesId, filter}: the commands a small source defines (see filterOf)
     this.newTelegrams = 0;        // telegrams read from the recording since the list was last drawn
     this.lastUi = 0;              // when the views were last told about new decodings during a long decode
+    this.priorityLines = new Set();   // the telegrams of the inspected message: decoded first when a source is added
     this.meta = { key: "current", source: "", lastSync: null, scan: {} };
     this.syncing = false;
     this.decoding = false;
@@ -292,11 +293,12 @@ export class Decoder {
     this.error = null;
     if (dropped.length) await this.dropSources(dropped);
     try {
-      await this.store.putAll("compiles", [{ ...build, id: BUILD_KEY, buildId: build.id }]);
+      // without the files: they are megabytes, and the builder provides them again before anything is decoded
+      await this.store.putAll("compiles", [{ ...build, id: BUILD_KEY, buildId: build.id, sources: (build.sources || []).map((s) => ({ ...s, files: undefined })) }]);
     } catch (err) { console.warn("storing the build failed:", err); }
     this.rebuildEntries(true);
     this.emit("build");
-    await this.decodePending();
+    this.decodePending();   // in the background: whoever changed the build gets the page back at once
   }
 
   /** Forget the decodings of some sources (they are decoded again when the source is back). */
@@ -374,7 +376,9 @@ export class Decoder {
     if (!this.build || !this.buildChecked || this.decoding) return;
     const sources = this.enabledSources().filter((s) => s.files && Object.keys(s.files).length);
     if (!sources.length) return;
-    const work = sources.map((s) => ({ source: s, pending: [...this.telegrams.values()].filter((t) => !this.isDone(t, s)).sort(byFirst) })).filter((w) => w.pending.length);
+    const prio = this.priorityLines;
+    const order = (a, b) => ((prio.has(b.line) ? 1 : 0) - (prio.has(a.line) ? 1 : 0)) || byFirst(a, b);
+    const work = sources.map((s) => ({ source: s, pending: [...this.telegrams.values()].filter((t) => !this.isDone(t, s)).sort(order) })).filter((w) => w.pending.length);
     const stale = sources.filter((s) => !this.scanFresh.has(`${s.filesId}|${s.id}`));
     if (!work.length && !stale.length) return;
     this.decoding = true;

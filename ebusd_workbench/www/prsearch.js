@@ -23,6 +23,8 @@ export class PrSearch {
   constructor() {
     this.states = new Map();   // row key -> {rowKey, label, progress, done, error, results: [{id, number, stamp, lines, title, url, author, updated, decodes, error, partial, cached}], skipped, started, at}
     this.loading = new Set();
+    this.autoTried = new Set();   // row keys searched by themselves this page
+    this.adding = new Map();      // source id -> {text, done, error} while a pull request becomes a source
     this.token = 0;
     this.running = null;
   }
@@ -143,6 +145,45 @@ export class PrSearch {
     }
   }
 
+  /** A message nothing is set up for: the last search, else a search by itself (once per message and page, never over a running one). */
+  auto(row, telegrams, onChange) {
+    if (this.states.has(row.key) || this.autoTried.has(row.key)) return;
+    this.autoTried.add(row.key);
+    this.restore(row).then((s) => { if (s) onChange?.(s); else if (!this.running) this.run(row, telegrams, onChange); });
+  }
+
+  /** "+ add as a source": the device fetches the pull request, the browser compiles and decodes it; the inspector shows its rows by itself, this says how far it is. */
+  async addSource(result, row) {
+    const id = `pr/${result.number}`;
+    if (this.adding.has(id)) return;
+    const state = { text: "asking the device to fetch the pull request…", done: false, error: null };
+    this.adding.set(id, state);
+    const show = () => {
+      const el = document.querySelector(`.prsearch [data-adding="${id}"]`);
+      if (!el) return;
+      el.replaceChildren(state.error ? h("span", { class: "err" }, state.error) : state.done ? h("span", { class: "ok" }, state.text) : [h("span", { class: "spinner" }), ` ${state.text}`]);
+    };
+    show();
+    await app.views.sources?.add(String(result.number));
+    const t0 = Date.now();
+    const lines = new Set((row.lines || []));
+    const tick = () => {
+      const src = (app.status?.sources?.sources || []).find((s) => s.id === id);
+      const built = app.decoder.status().build?.sources.find((s) => s.id === id);
+      const fits = [...app.decoder.candidatesOf([...lines]).values()].some((c) => c.def.source === id);
+      if (src?.state === "error") { state.error = `fetching failed: ${src.error || "?"}`; state.done = true; }
+      else if (fits) { state.text = "done: its definitions are rows of the inspector now; tick “in setup” on the one you want"; state.done = true; }
+      else if (!src || src.state === "fetching" || src.state === "missing") state.text = `fetching from GitHub… ${fmt.duration(Date.now() - t0)}`;
+      else if (app.compileState?.busy) state.text = app.compileState.text;
+      else if (!built) state.text = "compiling…";
+      else if (built.pending) state.text = `decoding the recording: ${Math.round((built.decoded / Math.max(1, built.decoded + built.pending)) * 100)} % (the telegrams of this message first)`;
+      else { state.text = "decoded: no definition of it fits this message after all"; state.done = true; }
+      show();
+      if (!state.done && Date.now() - t0 < 20 * 60_000) setTimeout(tick, 1000);
+    };
+    tick();
+  }
+
   /** The section of the inspector: a button, the progress, and what was found (the last search until a new one runs). */
   section(row, telegrams, onChange) {
     let st = this.forRow(row.key);
@@ -169,7 +210,8 @@ export class PrSearch {
       append(box, h("div", { class: "hit" },
         h("div", { class: "row" }, h("a", { href: r.url || "#", target: "_blank", rel: "noopener", class: "mono" }, `#${r.number}`), h("span", { class: "title" }, r.title), h("span", { class: "muted" }, `${r.author || ""} · ${String(r.updated || "").slice(0, 10)}`),
           r.partial ? h("span", { class: "tbadge warn", title: "an old base: only the files this pull request changes were compiled" }, "partial") : null,
-          h("span", { style: "margin-left:auto" }), h("button", { class: "small primary", title: "add this pull request as a source: its definitions are decoded over the whole recording and show up as rows of the inspector", onclick: () => app.views.sources?.add(String(r.number)) }, "+ add as a source")),
+          h("span", { style: "margin-left:auto" }), this.adding.has(`pr/${r.number}`) ? null : h("button", { class: "small primary", title: "add this pull request as a source: its definitions are decoded over the whole recording (the telegrams of this message first) and show up as rows of the inspector", onclick: () => this.addSource(r, row) }, "+ add as a source")),
+        this.adding.has(`pr/${r.number}`) ? h("div", { class: "hint", "data-adding": `pr/${r.number}` }) : null,
         r.decodes.map((f) => h("div", { class: "frow" },
           chip(f.circuit, f.name), h("span", { class: "badge kind" }, accessKind(f)), h("span", { class: "mono muted" }, f.file.replace(/^.*\//, "")),
           f.available && f.inScanFile ? h("span", { class: "tbadge active", title: "with this pull request ebusd would use this definition" }, "ebusd's choice") : h("span", { class: "tbadge", title: f.available ? "in a file ebusd would not load for this device: pick it by hand" : "its condition was not met: pick it by hand" }, "hidden"),
@@ -177,6 +219,10 @@ export class PrSearch {
           f.latest ? h("span", { class: "mono muted ex", title: f.latest.text }, f.latest.text.slice(0, 140)) : null))));
     }
     if (st.done && failed.length) append(box, h("details", {}, h("summary", { class: "hint" }, `${failed.length} pull requests could not be checked`), failed.map((r) => h("div", { class: "hint" }, `#${r.number} ${r.title}: ${r.error}`))));
+    for (const [id, state] of this.adding) {   // a pull request on its way to being a source: its state, drawn into the box
+      const el = box.querySelector(`[data-adding="${id}"]`);
+      if (el) el.replaceChildren(state.error ? h("span", { class: "err" }, state.error) : state.done ? h("span", { class: "ok" }, state.text) : [h("span", { class: "spinner" }), ` ${state.text}`]);
+    }
     return box;
   }
 }

@@ -221,11 +221,17 @@ one raw field per part; carve it into fields by giving them types, names, diviso
 
 Cells where a definition reads the same bytes differently from the message's definition are
 highlighted, so two definitions of one message are compared by eye. Click any field, value or
-sparkline for the **chart** of that field below the table (hover for a value, click a point to
-show that telegram in the table) and its values as a list.
+sparkline for the **chart** of that field over the whole recording: it opens as a box over the
+lower part of the inspector; hovering it shows that telegram in the table above (the bytes and
+what every definition decodes follow the pointer), a click keeps that telegram in the table, Esc
+or ✕ closes the box.
 
 The inspector only redraws when something about it changed (another definition fits, your pick
-changed), never while you type; what you selected and where you scrolled stays.
+changed, a line of your own changed), never while you type; what you selected and where you
+scrolled stays. Stepping through the telegrams repaints only the telegram row and the values.
+Nothing waits for ebusd's library: a line of your own shows as a row the moment it is saved,
+marked *checking* until it has been decoded (the progress is in the sources strip and the top
+bar); a shorter type on a raw field (`HEX:9` → `HEX:5`) leaves the rest as a raw field of its own.
 
 Statuses of a definition:
 
@@ -245,7 +251,9 @@ setup* and *copy* as well.
 
 ### Searching the open pull requests for a message
 
-Below the table, **search the open pull requests for this message** asks every open pull
+The open pull requests are the way to a definition: their search sits right under the table and
+runs by itself for a message nothing is set up for (once per message and page, never over a
+running search). **search the open pull requests for this message** asks every open pull
 request of ebusd-configuration (the ones that are not sources yet) whether it decodes the
 message: the device fetches them once (a tarball each, cached), the browser compiles each once
 per commit (cached) and runs ebusd's decoder over the recorded telegrams of the message with it.
@@ -255,7 +263,10 @@ with a new commit or more telegrams of the message (a pull request compiled befo
 loaded from the device again). The result lists the pull requests
 that decode the message, with the definition's name, whether ebusd would use it with that pull
 request (or it is hidden in a file for another variant) and the latest decoded value; **+ add as
-a source** makes it a source like the others. This is how a message no source understands, or
+a source** makes it a source like the others and says what happens: the device fetches it from
+GitHub, the browser compiles it and decodes the recording with the telegrams of the inspected
+message first, so its rows appear in the inspector after the first batch while the rest goes on
+in the background. This is how a message no source understands, or
 one that another pull request may name better (an outside temperature called `temp_2`), is found
 without reading the pull requests by hand.
 
