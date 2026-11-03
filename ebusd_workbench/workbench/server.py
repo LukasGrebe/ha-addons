@@ -40,7 +40,7 @@ def route(method, pattern):
     return register
 
 
-HEAVY_PATHS = ("/api/telegrams", "/api/events", "/api/export/rawlog")   # queries that scan the recording
+HEAVY_PATHS = ("/api/telegrams", "/api/events")   # queries that scan the recording
 HEAVY_LIMIT = 3                  # at most this many at once; the device may be a Raspberry Pi
 
 
@@ -92,11 +92,15 @@ def api_health(ctx, req):
 
 @route("GET", "/api/status")
 def api_status(ctx, req):
+    db = ctx.db.info()
+    since = req.query.get("since")
+    if since:
+        db = dict(db, telegrams_since=ctx.db.count_since(int(since)))
     return {
         "version": __version__,
         "now_ms": int(time.time() * 1000),
         "uptime_s": int(time.time() - ctx.started),
-        "db": ctx.db.info(),
+        "db": db,
         "ha": ctx.ha.status() if ctx.ha else {"configured": False, "connected": False, "entities": []},
         "sources": ctx.sources.status(),
         "deploy_dir": ctx.deploy_dir,
@@ -118,43 +122,6 @@ def api_settings_put(ctx, req):
     if entities_changed and ctx.ha:
         ctx.ha.resubscribe()
     return ctx.settings.as_dict()
-
-
-@route("GET", "/api/telegrams/histogram")
-def api_histogram(ctx, req):
-    from_ms, to_ms = window(req.query, 10 * 86400_000)
-    bucket = max(1, min(86400, int(req.query.get("bucket", 3600))))
-    return {"from_ms": from_ms, "to_ms": to_ms, "bucket_s": bucket, "buckets": ctx.db.histogram(from_ms, to_ms, bucket)}
-
-
-@route("GET", "/api/telegrams/runs")
-def api_runs(ctx, req):
-    from_ms, to_ms = window(req.query)
-    settings = ctx.settings.as_dict()
-    id_bytes = int(req.query.get("idbytes", settings["id_bytes"]))
-    overrides = dict(settings["id_overrides"])
-    if "overrides" in req.query:
-        overrides = {}
-        for item in req.query["overrides"].split(","):
-            if ":" in item:
-                pbsb, length = item.split(":", 1)
-                overrides[pbsb.strip().lower()] = int(length)
-    max_rows = max(1000, min(2_000_000, int(req.query.get("max", 200_000))))
-    return ctx.db.runs(from_ms, to_ms, id_bytes=id_bytes, id_overrides=overrides, max_rows=max_rows,
-                       id_rules=settings.get("id_rules") or {}, buckets=int(req.query.get("buckets", 1500)))
-
-
-@route("GET", "/api/telegrams")
-def api_telegrams(ctx, req):
-    from_ms, to_ms = window(req.query)
-    q = req.query
-    def addr(name):
-        value = q.get(name)
-        return NO_VALUE if value == "--" else None if value in (None, "", "*") else int(value, 16)
-
-    return {"telegrams": ctx.db.telegrams(
-        from_ms, to_ms, qq=addr("qq"), zz=addr("zz"), pb=addr("pb"), sb=addr("sb"), id_prefix=q.get("id") or None,
-        limit=int(q.get("limit", 500)), order=q.get("order", "DESC"))}
 
 
 @route("GET", "/api/telegrams/series")
@@ -218,20 +185,6 @@ def api_events_delete(ctx, req):
     if not ctx.db.delete_marker(int(req.params["id"])):
         raise ApiError("no such event", HTTPStatus.NOT_FOUND)
     return {"ok": True}
-
-
-@route("GET", "/api/export/rawlog")
-def api_export_rawlog(ctx, req):
-    """The telegrams of a window as ebusd message-mode raw log (the input of ebus-evidence)."""
-    from_ms, to_ms = window(req.query, 86400_000)
-    if to_ms - from_ms > 31 * 86400_000:
-        raise ApiError("at most 31 days at once")
-    own = int(req.query.get("own") or ctx.settings.data.get("own_address", "31"), 16)
-    name = "ebusd-%s-%s.raw" % (time.strftime("%Y%m%d-%H%M", time.localtime(from_ms / 1000)),
-                                time.strftime("%Y%m%d-%H%M", time.localtime(to_ms / 1000)))
-    req.handler.send_stream(ctx.db.rawlog(from_ms, to_ms, own_address=own, include_broken=req.query.get("all") == "1"),
-                            "text/plain; charset=utf-8", name)
-    return None
 
 
 @route("GET", "/api/ha/entities")

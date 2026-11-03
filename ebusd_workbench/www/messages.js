@@ -1,41 +1,43 @@
 // The bus as a list of messages, the way a definition sees them: one row per destination,
 // command and message ID (whoever asked), built from the browser store. Leads with what needs a
 // look: messages ebusd does not understand today, and messages only another source (the upcoming
-// release, a pull request, your scratchpad) understands. The devices on the bus head the list,
+// release, a pull request, your own lines) could understand. The devices on the bus head the list,
 // each with what ebusd loads for it and how much of its traffic is understood. A click on a row
-// opens the inspector of the message under its row.
+// opens the inspector of the message under its row. What the list shows is not decoded yet is
+// checked in the background, in the list's order.
 import { app, append, bus, fmt, h } from "./app.js";
 import { seriesQuery } from "./chart.js";
-import { idLengthOf, messageColors } from "./colors.js";
+import { messageColors } from "./colors.js";
 import { accessKind } from "./compare.js";
 import { MINE, setup } from "./setup.js";
 import { addressName } from "./ebus-spec.js";
 
 const FILTERS = [
-  ["attention", "needs a look", "messages ebusd does not understand today: unknown ones (most traffic first) and ones another source understands"],
+  ["attention", "needs a look", "messages ebusd does not understand today: unknown ones (most traffic first) and ones another source could understand"],
   ["unknown", "unknown everywhere", "messages no source decodes: start a definition of your own from their bytes in the inspector"],
   ["new", "other sources know them", "messages ebusd does not understand, but the upcoming release, a pull request or a definition of your own does"],
   ["all", "all messages", "every message on the bus, by device"],
   ["setup", "in my setup", "messages whose definition is in your setup"],
 ];
+const SORTS = [["auto", "what matters", "the most traffic first on the attention filters, by device otherwise"], ["last", "last received", "the newest telegram first"]];
 const GROUP_MIN = 8;
 const hexByte = (n) => (n === null || n === undefined ? "--" : n.toString(16).padStart(2, "0"));
 const chip = (circuit, name) => { const c = messageColors(circuit, name); return h("span", { class: "chip-msg", style: `color:${c.text};background:${c.background};border-color:${c.border}` }, `${circuit} ${name}`); };
 const remembered = (key, fallback) => { try { const v = localStorage.getItem(key); return v === null ? fallback : v === "1"; } catch { return fallback; } };
 const remember = (key, value) => { try { localStorage.setItem(key, value ? "1" : "0"); } catch { /* ignore */ } };
-const srcBadge = (source, label) => h("span", { class: `tbadge ${source === MINE ? "custom" : source === "release" ? "" : "src"}` }, source === MINE ? "mine" : label || source);
+const srcBadge = (source, label, maybe = false) => h("span", { class: `tbadge ${source === MINE ? "custom" : source === "release" ? "" : "src"} ${maybe ? "maybe" : ""}`, title: maybe ? `${label || source}: a definition fits, not checked with ebusd's library yet` : `${label || source} understands this message` }, source === MINE ? "mine" : label || source);
 
 export class MessagesView {
   constructor(root) {
     this.root = root;
     this.kind = "table";
     this.filter = "attention";
+    this.sort = "auto";
     this.query = "";
     this.device = null;          // zz to show, or null for all
     this.devicesOpen = remembered("workbench.devicesOpen", true);   // the devices with their numbers, or one line
     this.openGroups = new Set(); // zz+pbsb of the commands unfolded in the list
     this.selected = null;
-    this.preview = null;         // {key, defKey} while a card is hovered: the row shows that decoding
     this.allRows = [];
     this.devices = [];
     this.seriesCache = new Map();
@@ -45,28 +47,47 @@ export class MessagesView {
     bus.on("decodes-changed", (reason) => { if (reason !== "progress") this.schedule(); });
     bus.on("setup-changed", () => this.schedule());
     bus.on("settings-changed", () => this.schedule());
-    bus.on("status", () => { if (!this.allRows.length) this.schedule(); });
+    bus.on("status", () => { this.renderLoad(); if (!this.allRows.length) this.schedule(); });
     this.schedule();
   }
 
-  get settings() { return app.settings || { id_bytes: 1, id_overrides: {} }; }
-
-  /** The time window of the view: none, the table is the whole recording (the history charts show no band). */
+  /** The time window of the view: none, the table is the whole recording (the chart shows no band). */
   window() { return null; }
 
   visible() { return this.root.clientWidth > 0; }
 
-  schedule() { clearTimeout(this.timer); this.timer = setTimeout(() => { this.buildRows(); this.render(); }, 250); }
+  /** Build and draw again, at most every 400 ms however often the core reports new decodings. */
+  schedule() { if (this.timer) return; this.timer = setTimeout(() => { this.timer = null; this.buildRows(); this.render(); }, 400); }
 
   build() {
     const el = (this.el = {});
     el.filters = h("span", { class: "seg group" }, FILTERS.map(([id, label, title]) => h("button", { class: id === this.filter ? "active" : "", title, "data-filter": id, onclick: () => { this.filter = id; this.device = null; this.render(true); } }, label)));
+    el.sorts = h("span", { class: "seg group", title: "the order of the list" }, SORTS.map(([id, label, title]) => h("button", { class: id === this.sort ? "active" : "", title, "data-sort": id, onclick: () => { this.sort = id; this.render(true); } }, label)));
     el.search = h("input", { type: "search", placeholder: "filter: name, circuit, address, command…", size: 28, oninput: () => { this.query = el.search.value.trim().toLowerCase(); this.render(true); } });
     el.info = h("span", { class: "hint" });
-    el.toolbar = h("div", { class: "toolbar msg-toolbar" }, el.filters, h("span", { class: "group" }, el.search), h("span", { class: "group", style: "margin-left:auto" }, el.info));
+    el.load = h("span", { class: "group load" });
+    el.toolbar = h("div", { class: "toolbar msg-toolbar" }, el.filters, el.sorts, h("span", { class: "group" }, el.search), h("span", { class: "group", style: "margin-left:auto" }, el.info), el.load);
     el.devices = h("div", { class: "devices" });
     el.list = h("div", { class: "msg-list" });
     append(this.root, el.toolbar, el.devices, el.list);
+    this.renderLoad();
+  }
+
+  /** The button that reads newer telegrams from the recording (the list never changes by itself). */
+  renderLoad() {
+    const el = this.el.load;
+    const d = app.decoder;
+    const db = app.status?.db;
+    const st = d?.status();
+    el.replaceChildren();
+    if (!db?.has_telegram_table) return;
+    if (st?.syncing) { append(el, h("span", { class: "hint" }, h("span", { class: "spinner" }), ` ${st.progress || "reading the recording…"}`)); return; }
+    const lastSync = d?.meta?.lastSync;
+    const known = lastSync ? db.telegrams_since : db.telegrams;   // the device counts what was recorded since the browser last read
+    const maybe = lastSync && known === undefined && (db.last_ms || 0) > lastSync + 60e3;   // not counted yet (the next status will)
+    const newer = known ?? 0;
+    append(el, h("button", { class: `small ${newer || maybe ? "primary" : ""}`, disabled: !newer && !maybe, title: newer ? `${fmt.count(newer)} telegrams were recorded since this browser last read the recording` : maybe ? "newer telegrams were recorded" : "this browser has every recorded telegram", onclick: () => d?.sync() },
+      newer ? `↻ load ${fmt.count(newer)} newer telegram${newer === 1 ? "" : "s"}` : maybe ? "↻ load newer telegrams" : "↻ up to date"));
   }
 
   // -- the rows: one per message as the definitions identify it -------------------------------------------
@@ -75,20 +96,15 @@ export class MessagesView {
     const d = app.decoder;
     if (!d) { this.allRows = []; this.devices = []; return; }
     const primary = d.primary;
-    const settings = this.settings;
     const rows = new Map();
     const senders = new Map();   // qq -> telegrams sent (to tell the masters on the bus)
     for (const t of d.telegrams.values()) {
-      if (!t.master || t.manual) continue;
-      const map = d.decodesOf(t.line);
-      let idlen = 0;
-      if (map) for (const x of map.values()) { const def = d.def(x.defKey); if (def && def.idlen > idlen) idlen = def.idlen; }
-      if (!map || !map.size) idlen = idLengthOf(t.master, settings);
-      const zz = t.master.slice(2, 4), pbsb = t.master.slice(4, 8), id = t.master.slice(10, 10 + idlen * 2);
-      const key = `${zz}${pbsb}:${id}`;
+      if (!t.master) continue;
+      const key = d.rowKeyOf(t);
+      const zz = t.master.slice(2, 4), pbsb = t.master.slice(4, 8), id = key.slice(7);
       let row = rows.get(key);
       if (!row) {
-        rows.set(key, (row = { kind: "telegram", key, zz, pbsb, id, label: `${zz} ${pbsb}${id ? " " + id : ""}`, n: 0, distinct: 0, senders: new Map(), first: null, latest: null, candidates: new Map(), knownBy: new Set(), lines: [],
+        rows.set(key, (row = { kind: "telegram", key, zz, pbsb, id, label: `${zz} ${pbsb}${id ? " " + id : ""}`, n: 0, distinct: 0, senders: new Map(), first: null, latest: null, candidates: new Map(), knownBy: new Set(), maybeBy: new Set(), lines: [],
           row: { qq: null, zz: parseInt(zz, 16), pb: parseInt(pbsb.slice(0, 2), 16), sb: parseInt(pbsb.slice(2), 16), id, anyQq: true }, anyQq: true, runs: [] }));
       }
       const qq = t.master.slice(0, 2);
@@ -99,16 +115,16 @@ export class MessagesView {
       if (t.first_ms !== null && t.first_ms !== undefined) row.first = row.first === null ? t.first_ms : Math.min(row.first, t.first_ms);
       if (t.last_ms && (!row.latest || t.last_ms > row.latest.last_ms)) row.latest = t;
       row.lines.push(t.line);
-      if (map) {
-        for (const [k, x] of map) {
-          const def = d.def(k);
-          if (!def) continue;
-          let c = row.candidates.get(k);
-          if (!c) row.candidates.set(k, (c = { def, ok: 0, errors: 0, used: 0, usedIn: 0, last: x }));
-          if (x.result === "ok") c.ok++; else c.errors++;
-          if (x.used) { c.usedIn++; row.knownBy.add(x.source); if (x.source === primary) c.used++; }
-          c.last = x;
-        }
+      if (t.primary?.hash) row.knownBy.add(primary);
+      const results = d.results.get(t.line);
+      for (const hash of d.matchesOf(t)) {
+        let c = row.candidates.get(hash);
+        if (!c) { const def = d.def(hash); if (!def) continue; row.candidates.set(hash, (c = { def, ok: 0, errors: 0, pending: 0, used: 0, usedIn: def.available ? def.loadedIn.length : 0, last: null })); }
+        const r = results?.get(hash);
+        if (!r) c.pending++; else { if (r.result === "ok") c.ok++; else c.errors++; c.last = { ...r, defKey: hash, used: t.primary?.hash === hash }; }
+        if (t.primary?.hash === hash) c.used++;
+        // other sources that would use this line for the message (a file ebusd loads for the device, condition met)
+        if (c.def.available) for (const s of c.def.loadedIn) { if (s === primary) continue; if (r ? r.result === "ok" : true) (r ? row.knownBy : row.maybeBy).add(s); }
       }
     }
     const included = new Set(setup.includedKeys(d.entries));
@@ -118,14 +134,17 @@ export class MessagesView {
       row.qq = [...row.senders.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;   // the usual sender (for defining the message)
       row.row.qq = row.qq ? parseInt(row.qq, 16) : null;
       row.known = row.knownBy.has(primary);
+      for (const s of row.knownBy) row.maybeBy.delete(s);
       row.newIn = [...row.knownBy].filter((s) => s !== primary).sort((a, b) => (order[a] ?? 99) - (order[b] ?? 99));
+      row.maybeIn = [...row.maybeBy].sort((a, b) => (order[a] ?? 99) - (order[b] ?? 99));
+      row.pending = [...row.candidates.values()].some((c) => c.pending > 0);
       row.defKey = this.rowDefinition(row, included, primary, order);
       row.def = row.defKey ? d.def(row.defKey) : null;
       row.name = row.def ? `${setup.circuitOf(row.def)} ${setup.exportName(row.def)}` : "";
       row.inSetup = [...row.candidates.keys()].some((k) => included.has(k));
       // 0 handled (ebusd understands it, or you put a definition into your setup), 1 something fits but ebusd would not use it,
-      // 2 another source understands it, 3 nothing fits
-      row.attention = row.known || row.inSetup ? 0 : row.newIn.length ? 2 : row.candidates.size ? 1 : 3;
+      // 2 another source understands it (or could: not checked yet), 3 nothing fits
+      row.attention = row.known || row.inSetup ? 0 : row.newIn.length || row.maybeIn.length ? 2 : row.candidates.size ? 1 : 3;
       // ebusd's own scan of the devices: the identification, and for Vaillant the serial number in four parts; nothing to define
       row.scan = row.pbsb === "0704" || (row.pbsb === "b509" && /^2[4-7]$/.test(row.id) && row.senders.has(own));
       if (row.scan) row.attention = 0;
@@ -133,6 +152,9 @@ export class MessagesView {
     this.allRows = [...rows.values()];
     this.senders = senders;
     this.devices = this.deviceList();
+    // what the list shows is checked in the background, what needs a look first
+    const todo = this.allRows.filter((r) => r.pending).sort((a, b) => (b.attention - a.attention) || b.n - a.n);
+    d.enqueueRows(todo.map((r) => ({ key: r.key, lines: r.lines })));
   }
 
   /** The definition a row is shown with: the chosen one, else ebusd's choice, else one in the setup, else what another source would use. */
@@ -144,7 +166,7 @@ export class MessagesView {
     for (const [key, c] of row.candidates) if (c.used && (!best || c.used > row.candidates.get(best).used)) best = key;
     if (best) return best;
     for (const key of row.candidates.keys()) if (included.has(key)) return key;
-    const others = [...row.candidates.values()].filter((c) => c.usedIn > 0).sort((a, b) => (order[a.def.source] ?? 99) - (order[b.def.source] ?? 99));
+    const others = [...row.candidates.values()].filter((c) => c.usedIn > 0 && c.ok > 0).sort((a, b) => (order[a.def.source] ?? 99) - (order[b.def.source] ?? 99));
     return others[0]?.def.key || null;
   }
 
@@ -159,8 +181,7 @@ export class MessagesView {
       let dev = byZz.get(row.zz);
       if (!dev) byZz.set(row.zz, (dev = { zz: row.zz, messages: 0, n: 0, known: 0, knownN: 0, newOnly: 0, newN: 0, unknown: 0, unknownN: 0, newIn: new Set() }));
       dev.messages++; dev.n += row.n;
-      // understood: by ebusd today, or with what you put into your setup
-      if (row.attention === 0) { dev.known++; dev.knownN += row.n; } else if (row.attention === 2) { dev.newOnly++; dev.newN += row.n; for (const s of row.newIn) dev.newIn.add(s); } else { dev.unknown++; dev.unknownN += row.n; }
+      if (row.attention === 0) { dev.known++; dev.knownN += row.n; } else if (row.attention === 2) { dev.newOnly++; dev.newN += row.n; for (const s of [...row.newIn, ...row.maybeIn]) dev.newIn.add(s); } else { dev.unknown++; dev.unknownN += row.n; }
     }
     const list = [...byZz.values()].map((dev) => {
       const ident = idents[dev.zz] || null;
@@ -180,13 +201,15 @@ export class MessagesView {
     else if (this.filter === "new") rows = rows.filter((r) => r.attention === 2);
     else if (this.filter === "setup") rows = rows.filter((r) => r.inSetup);
     if (q) rows = rows.filter((r) => `${r.label} ${r.zz}${r.pbsb} ${r.name} ${r.def ? `${r.def.circuit} ${r.def.name}` : ""} ${[...r.candidates.values()].map((c) => `${c.def.circuit} ${c.def.name}`).join(" ")}`.toLowerCase().includes(q));
-    if (this.filter === "attention" || this.filter === "unknown" || this.filter === "new") rows.sort((a, b) => b.n - a.n);   // the most traffic first: what matters most
+    if (this.sort === "last") rows.sort((a, b) => (b.latest?.last_ms || 0) - (a.latest?.last_ms || 0));
+    else if (this.filter === "attention" || this.filter === "unknown" || this.filter === "new") rows.sort((a, b) => b.n - a.n);   // the most traffic first: what matters most
     else rows.sort((a, b) => a.zz.localeCompare(b.zz) || b.n - a.n);
     return rows;
   }
 
   /** Rows of one command with many messages (the registers of b524) fold into one line unless unfolded. */
   grouped(rows) {
+    if (this.sort === "last") return rows;
     const byCommand = new Map();
     for (const r of rows) { const k = `${r.zz}${r.pbsb}`; byCommand.set(k, (byCommand.get(k) || 0) + 1); }
     const out = [];
@@ -209,7 +232,9 @@ export class MessagesView {
   render(force = false) {
     const el = this.el;
     for (const b of el.filters.querySelectorAll("button")) b.classList.toggle("active", b.dataset.filter === this.filter);
+    for (const b of el.sorts.querySelectorAll("button")) b.classList.toggle("active", b.dataset.sort === this.sort);
     this.renderDevices();
+    this.renderLoad();
     if (this.selected && this.inspHost && !force) return;   // the list stays put while you inspect a message
     const rows = this.shownRows();
     if (this.selected && force && !rows.some((r) => r.key === this.selected.key)) { bus.emit("select-row", null); return; }
@@ -217,10 +242,9 @@ export class MessagesView {
     const total = this.allRows.length;
     el.info.textContent = total ? `${fmt.count(rows.length)} of ${fmt.count(total)} messages${this.device ? ` of ${this.device}` : ""}` : "";
     el.list.replaceChildren();
-    if (!d?.build) { append(el.list, h("div", { class: "empty" }, d?.telegrams.size ? "Waiting for definitions to decode the recording…" : "Reading the recording into the browser…")); return; }
-    if (!total) { append(el.list, h("div", { class: "empty" }, app.status?.db?.exists ? "No telegrams yet." : h("span", {}, "No telegrams recorded yet. Set ", h("code", {}, `sqlite_db: ${app.status?.db?.path || "/share/ebusd/telegrams.db"}`), " in the eBUSd app configuration (SQLite telegram log) and restart it."))); return; }
+    if (!total) { append(el.list, this.emptyState()); return; }
     if (!rows.length) {
-      const text = this.filter === "attention" ? "ebusd understands every message on your bus (with the sources you have). Look at “all messages” to rename or add things, or add a pull request that may know more." : this.filter === "setup" ? "Nothing in your setup fits a message yet." : "Nothing matches.";
+      const text = this.filter === "attention" ? "ebusd understands every message on your bus (with the sources you have). Look at “all messages” to rename or add things." : this.filter === "setup" ? "Nothing in your setup fits a message yet." : "Nothing matches.";
       append(el.list, h("div", { class: "empty" }, text));
       return;
     }
@@ -228,8 +252,18 @@ export class MessagesView {
       h("th", { style: "width:18px" }), h("th", {}, "message"), h("th", {}, "understood by"), h("th", {}, "latest value"), h("th", { class: "num" }, "telegrams"), h("th", { class: "num", title: "distinct telegrams (values) seen" }, "values"), h("th", {}, "last seen"), h("th", { class: "num", title: "definitions that fit this message, from every source" }, "fits"), h("th", { title: "part of your setup" }, "setup"))),
       h("tbody", {}, this.grouped(rows).map((r) => (r.kind === "group" ? this.groupRow(r) : this.row(r)))));
     append(el.list, table);
-    app.decoder?.markDrawn?.();
+    d?.markDrawn?.();
     this.placeInspector();
+  }
+
+  /** What the list says while there is nothing to list: what the browser holds, what is loading, what the recording has. */
+  emptyState() {
+    const st = app.decoder?.status();
+    const db = app.status?.db;
+    if (st?.loading) return h("div", { class: "empty" }, h("span", { class: "spinner" }), ` ${st.loading}`);
+    if (st?.syncing) return h("div", { class: "empty" }, h("span", { class: "spinner" }), ` ${st.progress || "reading the recording…"}`);
+    if (!db?.exists || !db.has_telegram_table) return h("div", { class: "empty" }, h("span", {}, "No telegrams recorded yet. Set ", h("code", {}, `sqlite_db: ${db?.path || "/share/ebusd/telegrams.db"}`), " in the eBUSd app configuration (SQLite telegram log) and restart it."));
+    return h("div", { class: "empty" }, `Nothing in this browser yet; the recording has ${fmt.count(db.telegrams)} telegrams. `, h("button", { class: "small primary", onclick: () => app.decoder?.sync() }, "↻ read the recording"));
   }
 
   /** The inspector of the selected message sits in a row of its own right under the message. */
@@ -279,33 +313,26 @@ export class MessagesView {
       h("td", {}), h("td", { class: "num" }, fmt.count(g.n)), h("td", {}), h("td", {}), h("td", {}), h("td", {}));
   }
 
-  /** The decoding shown for the latest telegram of a row: the previewed candidate's, else the row's definition's. */
+  /** The decoding shown for the latest telegram of a row: the row's definition's. */
   decodeOf(row, run = null) {
     const t = run?.line ? { line: run.line } : row.latest;
-    if (!t || !app.decoder) return null;
-    const key = this.preview && this.preview.key === row.key ? this.preview.defKey : row.defKey;
-    if (!key) return null;
-    return app.decoder.decodesOf(t.line)?.get(key) || null;
-  }
-
-  runLabel(row, run) {
-    const d = this.decodeOf(row, run);
-    if (!d) return run?.label || "";
-    return d.result === "ok" ? (d.text || "(empty)") : `✗ ${d.result}`;
+    if (!t || !app.decoder || !row.defKey) return null;
+    return app.decoder.decodesOf(t.line)?.get(row.defKey) || null;
   }
 
   row(r) {
     const d = app.decoder;
-    const primary = d.primary;
     const dec = this.decodeOf(r);
     const latestHex = r.latest ? `${r.latest.master.slice(10 + r.id.length)}${r.latest.slave ? " / " + r.latest.slave.slice(2) : ""}` : "";
     const value = dec ? (dec.result === "ok" ? dec.text || "(empty)" : `✗ ${dec.result}`) : latestHex;
     const understood = [];
     if (r.known) understood.push(h("span", { class: "tbadge active", title: "ebusd understands this message today" }, "ebusd"));
     for (const s of r.newIn) understood.push(srcBadge(s, d.source(s)?.label));
+    for (const s of r.maybeIn.slice(0, 4)) understood.push(srcBadge(s, d.source(s)?.label, true));
+    if (r.maybeIn.length > 4) understood.push(h("span", { class: "muted", title: r.maybeIn.slice(4).map((s) => d.source(s)?.label || s).join(", ") }, `+${r.maybeIn.length - 4}`));
     if (!r.known && r.inSetup) understood.push(h("span", { class: "tbadge custom", title: "a definition of your setup" }, "my setup"));
     if (r.scan && !r.known) understood.push(h("span", { class: "tbadge active", title: "ebusd's own scan of the device: the identification (07 04) and, for Vaillant, the serial number in four parts (b5 09 24…27, vaillant/scan.csv). Nothing to define." }, "ebusd's scan"));
-    if (!r.known && !r.newIn.length && !r.inSetup && !r.scan) understood.push(h("span", { class: r.candidates.size ? "warn" : "err" }, r.candidates.size ? "fits, but ebusd would not use it" : "nothing"));
+    if (!r.known && !r.newIn.length && !r.maybeIn.length && !r.inSetup && !r.scan) understood.push(h("span", { class: r.candidates.size ? "warn" : "err" }, r.candidates.size ? (r.pending ? "fits, not checked yet" : "fits, but ebusd would not use it") : "nothing"));
     const devices = this.idents || {}, own = app.settings?.own_address || "31";
     const senders = [...r.senders.keys()].map((q) => `${q} (${addressName(q, { devices, own })})`).join(", ");
     const title = `${r.label}${r.def ? `\n${r.def.circuit} ${r.def.name} (${r.def.sourceLabel || r.def.source}, ${r.def.file.replace(/^.*\//, "")})` : ""}\nasked by ${senders}\n${fmt.count(r.candidates.size)} definition${r.candidates.size === 1 ? "" : "s"} fit: click to compare and choose`;
@@ -318,11 +345,11 @@ export class MessagesView {
       h("td", { class: "num" }, fmt.count(r.n)),
       h("td", { class: "num" }, fmt.count(r.distinct)),
       h("td", { class: "muted nowrap" }, r.latest?.last_ms ? fmt.duration(Math.max(0, Date.now() - r.latest.last_ms)) + " ago" : ""),
-      h("td", { class: "num" }, r.candidates.size ? h("span", { class: "cands" }, `${r.candidates.size}`) : ""),
+      h("td", { class: "num" }, r.candidates.size ? h("span", { class: `cands ${r.pending ? "pending" : ""}`, title: r.pending ? "some of them are not checked with ebusd's library yet" : "" }, `${r.candidates.size}`) : ""),
       h("td", {}, r.defKey ? h("input", { type: "checkbox", checked: r.inSetup, title: r.inSetup ? "in your setup" : "add to your setup", onclick: (e) => e.stopPropagation(), onchange: (e) => setup.include(r.defKey, e.target.checked, d.entries) }) : ""));
   }
 
-  // -- the selection, for the scratchpad -------------------------------------------------------------------
+  // -- the selection, for the inspector -------------------------------------------------------------------
 
   select(row, run = null, emit = false) {
     if (emit && row && this.selected?.key === row.key) { bus.emit("select-row", null); return; }   // a click on the selected message closes its inspector
@@ -333,14 +360,6 @@ export class MessagesView {
       tr.classList.toggle("selected", on);
       const fold = tr.querySelector(".fold"); if (fold) fold.textContent = on ? "▾" : "";
     }
-  }
-
-  setPreview(row, defKey) {
-    const next = defKey ? { key: row.key, defKey } : null;
-    if ((this.preview?.defKey || null) === (next?.defKey || null)) return;
-    this.preview = next;
-    const tr = [...this.el.list.querySelectorAll("tr.msg")].find((x) => x.dataset.key === row.key);
-    if (tr) { const cell = tr.querySelector("td.value"); const dec = this.decodeOf(row); if (cell && dec) cell.textContent = (dec.result === "ok" ? dec.text || "(empty)" : `✗ ${dec.result}`).slice(0, 90); }
   }
 
   /** The value history of a message over the whole recording, loaded once per message and recording state. */
@@ -359,9 +378,6 @@ export class MessagesView {
     }
     return pending;
   }
-
-  /** The rows of this view mentioned by the scratchpad: nothing to split, the rows already follow the definitions. */
-  splitLikeDefinitions() {}
 }
 
 export const hexOf = hexByte;

@@ -14,7 +14,8 @@ const remembered = (key, fallback) => { try { const v = localStorage.getItem(key
 const remember = (key, value) => { try { localStorage.setItem(key, value ? "1" : "0"); } catch { /* ignore */ } };
 
 const STATUS_HELP = {
-  active: "ebusd's choice with this source (file chosen by the scan, condition met)",
+  active: "ebusd's choice today (file chosen by the scan, condition met)",
+  pending: "fits the recorded telegrams, not checked with ebusd's library yet",
   variant: "from a file of another device variant: ebusd would not load it, but it decodes the recorded telegrams",
   conditional: "its condition was not met by the recorded telegrams, but it decodes them",
   hidden: "in the file ebusd loads, but another definition takes precedence",
@@ -22,7 +23,7 @@ const STATUS_HELP = {
   companion: "not seen on the bus: the counterpart of a seen definition (usually for writing)",
   custom: "your own definition",
 };
-const STATUS_ORDER = { active: 0, custom: 1, hidden: 2, conditional: 3, variant: 4, error: 5, companion: 6 };
+const STATUS_ORDER = { active: 0, custom: 1, hidden: 2, pending: 3, conditional: 4, variant: 5, error: 6, companion: 7 };
 
 function download(name, text, type = "text/plain") {
   const a = h("a", { href: URL.createObjectURL(new Blob([text], { type })), download: name });
@@ -34,7 +35,7 @@ async function copyText(text) {
 }
 
 const msgChip = (circuit, name, extra = "") => { const c = messageColors(circuit, name); return h("span", { class: "chip-msg", style: `color:${c.text};background:${c.background};border-color:${c.border}` }, `${circuit ? circuit + " " : ""}${name}${extra}`); };
-const srcBadge = (m) => h("span", { class: `tbadge ${m.source === MINE ? "custom" : m.source === "release" ? "" : "src"}`, title: `from ${m.sourceLabel || m.source}` }, m.source === MINE ? "mine" : m.sourceLabel || m.source);
+const srcBadge = (m) => (m.sources || [m.source]).slice(0, 2).map((id) => h("span", { class: `tbadge ${id === MINE ? "custom" : id === "release" ? "" : "src"}`, title: `from ${app.decoder?.source(id)?.label || id}${(m.sources || []).length > 2 ? ` and ${m.sources.length - 2} more` : ""}` }, id === MINE ? "mine" : app.decoder?.source(id)?.label || id));
 
 export class SetupPanel {
   constructor(root) {
@@ -45,13 +46,16 @@ export class SetupPanel {
     this.folded = remembered("workbench.setupFolded", false);
     this.yielding = false;    // folded while a message is inspected: the inspector takes the width
     bus.on("select-row", (sel) => { this.yielding = !!sel; this.render(); });
-    bus.on("decodes-changed", (reason) => { if (reason !== "progress") this.render(); });
+    bus.on("decodes-changed", (reason) => { if (reason !== "progress") this.schedule(); });
     bus.on("setup-changed", () => this.render());
     bus.on("status", () => this.render());
     this.render();
   }
 
   get entries() { return app.decoder?.entries || []; }
+
+  /** Draw again, at most every second while decodings stream in. */
+  schedule() { if (this.timer) return; this.timer = setTimeout(() => { this.timer = null; this.render(); }, 1000); }
 
   sourceLabels() { return Object.fromEntries((app.decoder?.sources() || []).map((s) => [s.id, s.label])); }
 
@@ -63,7 +67,7 @@ export class SetupPanel {
       generator: `ebusd Config Workbench ${app.status?.version || ""}`.trim(),
       created: new Date().toISOString(),
       note: "Which definitions this installation uses and where each one comes from. Written next to the CSV files; ebusd ignores it.",
-      sources: (d?.sources() || []).filter((s) => s.enabled !== false).map((s) => ({ id: s.id, label: s.label, kind: s.kind, head: s.head || null, title: s.title || null, url: s.url || null })),
+      sources: (d?.sources() || []).filter((s) => s.enabled !== false && !s.error).map((s) => ({ id: s.id, label: s.label, kind: s.kind, head: s.head || null, title: s.title || null, url: s.url || null })),
       devices: d?.devices() || {},
       recording: { distinct_telegrams: d?.telegrams.size || 0, from: iso(app.status?.db?.first_ms), to: iso(app.status?.db?.last_ms) },
       own_definitions: app.settings?.custom?.trim() ? app.settings.custom : undefined,
@@ -73,7 +77,7 @@ export class SetupPanel {
         return {
           circuit: setup.circuitOf(m), name: setup.exportName(m), upstream_circuit: m.circuit, upstream_name: m.name,
           field_names: fields && Object.keys(fields).length ? fields : undefined,
-          access: accessKind(m), source: m.source, file: m.file, condition: m.condition || undefined, status: m.status,
+          access: accessKind(m), source: m.source, sources: m.sources, file: m.file, condition: m.condition || undefined, status: m.status,
           recorded: { variants: m.distinct, decoded_ok: m.ok, decode_errors: m.errors, telegrams: m.occurrences, first: iso(m.first_ms), last: iso(m.last_ms) },
         };
       }),
@@ -119,19 +123,19 @@ export class SetupPanel {
   /** Your own definition lines: where they fit, and a box to paste more. */
   mineSection(entries) {
     const lines = mineLines();
-    const byKey = new Map(entries.filter((e) => e.source === MINE).map((e) => [e.key, e]));
+    const byKey = new Map(entries.filter((e) => e.sources?.includes(MINE)).map((e) => [e.key, e]));
     const area = h("textarea", { rows: 3, class: "rawcsv", spellcheck: "false", placeholder: "r,hmu,MyTemp,my temperature,,08,b511,01,temp,s,D2C,,°C,\none ebusd CSV line per message" });
     return h("details", { class: "mine", open: this.open.mine, ontoggle: (e) => { this.open.mine = e.target.open; } },
       h("summary", {}, h("b", {}, `My definitions: ${lines.length}`), h("span", { class: "muted" }, ` line${lines.length === 1 ? "" : "s"} of your own, edited in the inspector of their message`)),
       h("div", { class: "list" }, lines.map((l) => { const def = byKey.get(l.key); return h("div", { class: "item" }, h("div", { class: "line" },
-        def ? msgChip(def.circuit, def.name, kindSuffix(def)) : h("span", { class: "mono" }, l.line.split(",").slice(1, 3).join(" ")),
-        def ? h("span", { class: def.errors ? "warn" : "ok" }, def.errors ? `${def.ok} of ${def.distinct} decode` : `decodes ${fmt.count(def.occurrences)}`) : h("span", { class: "muted" }, "fits no recorded telegram"),
+        msgChip(l.parsed.circuit, l.parsed.name, def ? kindSuffix(def) : ""),
+        def?.error ? h("span", { class: "err", title: def.error }, "rejected by ebusd") : def ? h("span", { class: def.errors ? "warn" : def.pending && !def.ok ? "muted" : "ok" }, def.errors ? `${def.ok} of ${def.distinct} decode` : def.pending && !def.ok ? "checking…" : `decodes ${fmt.count(def.occurrences)}`) : h("span", { class: "muted" }, "fits no recorded telegram"),
         h("span", { style: "margin-left:auto" }), h("button", { class: "small", title: "remove this line", onclick: async () => { if (confirm(`Remove ${l.line.slice(0, 60)}…?`)) await removeMine(l.key); } }, "✕"))); })),
       h("div", { class: "pad8" }, h("div", { class: "muted" }, "Paste definition lines (from a forum post, an issue, a file):"), area,
         h("div", { class: "row" }, h("button", { class: "small primary", onclick: async () => {
           const text = area.value.trim();
           if (!text) return;
-          try { for (const line of text.split("\n")) if (line.trim() && !line.trim().startsWith("#")) await upsertMine(line); area.value = ""; toast("added to your definitions and decoded over the recording"); } catch (err) { toast(err.message, "err", 6000); }
+          try { for (const line of text.split("\n")) if (line.trim() && !line.trim().startsWith("#")) await upsertMine(line); area.value = ""; toast("added to your definitions; they are checked on the messages they fit"); } catch (err) { toast(err.message, "err", 6000); }
         } }, "Add"))));
   }
 
@@ -178,7 +182,7 @@ export class SetupPanel {
       for (const m of defs.sort((a, b) => setup.exportName(a).localeCompare(setup.exportName(b)) || (a.write ? 1 : 0) - (b.write ? 1 : 0))) {
         const colors = messageColors(m.circuit, m.name);
         const exportName = setup.exportName(m);
-        append(list, h("div", { class: `item ${m.write ? "write" : ""}`, title: `${m.file} (${m.sourceLabel || m.source})\n${STATUS_HELP[m.status] || ""}` },
+        append(list, h("div", { class: `item ${m.write ? "write" : ""}`, title: `${m.file} (${(m.sources || [m.source]).map((id) => app.decoder?.source(id)?.label || id).join(", ")})\n${STATUS_HELP[m.status] || ""}` },
           h("div", { class: "line" },
             h("span", { class: "chip-msg", style: `color:${colors.text};background:${colors.background};border-color:${colors.border}` }, exportName, kindSuffix(m)),
             exportName !== m.name ? h("span", { class: "muted", title: "upstream name" }, m.name) : null,
@@ -200,7 +204,7 @@ export class SetupPanel {
     const others = entries.filter((m) => !current.has(m.key));
     const q = this.filter.trim().toLowerCase();
     const hideFailing = !!app.settings?.ui?.hideFailing;
-    const rows = others.filter((m) => !(hideFailing && m.errors > 0 && !m.companion) && (!q || `${m.circuit} ${m.name} ${setup.exportName(m)} ${m.file} ${m.sourceLabel} ${describeConditions(m)}`.toLowerCase().includes(q)))
+    const rows = others.filter((m) => !(hideFailing && m.errors > 0 && !m.companion) && (!q || `${m.circuit} ${m.name} ${setup.exportName(m)} ${m.file} ${(m.sources || []).join(" ")} ${describeConditions(m)}`.toLowerCase().includes(q)))
       .sort((a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) || a.zz.localeCompare(b.zz) || a.circuit.localeCompare(b.circuit) || a.name.localeCompare(b.name));
     const plausible = others.filter((m) => m.errors === 0 && m.ok > 0 && !["error", "companion"].includes(m.status));
     const counterparts = others.filter((m) => m.status === "companion" && m.companionOf.some((k) => current.has(k)));
@@ -211,11 +215,11 @@ export class SetupPanel {
         h("button", { class: "small", disabled: !plausible.length, title: "also the hidden definitions and the ones of other sources that decode every recorded telegram they match without error", onclick: () => setup.setIncluded([...setup.includedKeys(entries), ...plausible.map((m) => m.key)], entries) }, `+ ${plausible.length} plausible`),
         h("button", { class: "small", disabled: !counterparts.length, title: "the write (and other direction) definitions belonging to included ones; they were not seen on the bus. Writing to a device with a definition of another variant can be harmful: include only what you are sure about.", onclick: () => setup.setIncluded([...setup.includedKeys(entries), ...counterparts.map((m) => m.key)], entries) }, `+ ${counterparts.length} counterparts`)),
       h("div", { class: "row pad8" }, search),
-      h("div", { class: "list" }, rows.slice(0, 400).map((m) => h("div", { class: `item ${m.write ? "write" : ""}`, title: `${m.file} (${m.sourceLabel || m.source})${m.condition ? `\nonly when ${describeConditions(m)}` : ""}\n${STATUS_HELP[m.status] || ""}` },
+      h("div", { class: "list" }, rows.slice(0, 400).map((m) => h("div", { class: `item ${m.write ? "write" : ""}`, title: `${m.file} (${(m.sources || [m.source]).map((id) => app.decoder?.source(id)?.label || id).join(", ")})${m.condition ? `\nonly when ${describeConditions(m)}` : ""}\n${STATUS_HELP[m.status] || ""}` },
         h("div", { class: "line" },
           h("button", { class: "small", title: "add to the setup", onclick: () => setup.include(m.key, true, entries) }, "+"),
           msgChip(m.circuit, m.name, kindSuffix(m)), srcBadge(m), h("span", { class: `badge ${m.status}` }, m.status),
-          h("span", { class: "muted", style: "margin-left:auto" }, m.companion ? "not seen" : m.errors ? h("span", { class: m.ok ? "warn" : "err" }, `${m.ok} ok, ${m.errors} ✗`) : h("span", { class: "ok" }, `${fmt.count(m.occurrences)} ok`))),
+          h("span", { class: "muted", style: "margin-left:auto" }, m.companion ? "not seen" : m.error ? h("span", { class: "err", title: m.error }, "rejected") : m.errors ? h("span", { class: m.ok ? "warn" : "err" }, `${m.ok} ok, ${m.errors} ✗`) : m.pending && !m.ok ? "not checked yet" : h("span", { class: "ok" }, `${fmt.count(m.occurrences)} ok`))),
         m.examples?.[0] ? h("div", { class: "mono muted example" }, m.examples[0].slice(0, 100)) : null)),
       rows.length > 400 ? h("div", { class: "hint pad8" }, `showing 400 of ${rows.length}: narrow the filter`) : null));
   }

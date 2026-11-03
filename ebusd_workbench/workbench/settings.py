@@ -8,15 +8,11 @@ from .sources import SourceError, parse_ref
 
 DEFAULTS = {
     "entities": [],               # Home Assistant entities whose state changes are logged
-    "id_bytes": 1,                # message ID length (data bytes after PBSB) used to group telegrams
-    "id_overrides": {"b509": 3, "b524": 6},  # per PBSB or ZZ+PBSB: Vaillant register access carries a longer ID
-    "id_rules": {},               # per message: {"zzpbsb:prefix": ID length}: rows split or combined at a byte in the timeline
     "deploy_subdir": "",
     "setup": {},                  # the definitions chosen for this installation, their names and the choices per row
     "sources": [],                # where definitions come from: [{id: "release" | "next" | "pr/660" | "gh/owner/repo#branch", enabled}]
-    "evidence_profile": "",       # ebus-evidence profile YAML last imported
-    "custom": "",                 # the scratchpad: own definitions (ebusd CSV lines) decoded over the recording like any other source
-    "own_address": "31",          # ebusd's own address on this bus (--address), for raw logs and evidence checks
+    "custom": "",                 # own definitions (ebusd CSV lines), a source of the pool like the others
+    "own_address": "31",          # ebusd's own address on this bus (--address)
     "ui": {},
 }
 
@@ -73,28 +69,6 @@ class Settings:
                 if not isinstance(value, list):
                     raise ValueError("entities must be a list")
                 base[key] = sorted({v.strip() for v in value if _valid_entity(v.strip())})
-            elif key == "id_bytes":
-                base[key] = max(0, min(8, int(value)))
-            elif key == "id_overrides":
-                if not isinstance(value, dict):
-                    raise ValueError("id_overrides must be an object")
-                result = {}
-                for pbsb, length in value.items():
-                    pbsb = str(pbsb).lower()
-                    if len(pbsb) not in (4, 6) or any(c not in "0123456789abcdef" for c in pbsb):
-                        raise ValueError(f"invalid command {pbsb} (PBSB or ZZPBSB in hex)")
-                    result[pbsb] = max(0, min(8, int(length)))
-                base[key] = result
-            elif key == "id_rules":
-                if not isinstance(value, dict) or len(value) > 5000:
-                    raise ValueError("id_rules must be an object with at most 5000 entries")
-                rules = {}
-                for rule, length in value.items():
-                    command, colon, prefix = str(rule).lower().partition(":")
-                    if not colon or len(command) != 6 or len(prefix) % 2 or len(prefix) > 32 or any(c not in "0123456789abcdef" for c in command + prefix):
-                        raise ValueError(f"invalid ID rule {rule} (zzpbsb:prefix in hex)")
-                    rules[f"{command}:{prefix}"] = max(0, min(16, int(length)))
-                base[key] = rules
             elif key == "deploy_subdir":
                 base[key] = str(value).strip("/ ")[:200]
             elif key == "setup":
@@ -103,8 +77,6 @@ class Settings:
                 if len(json.dumps(value)) > 2_000_000:
                     raise ValueError("setup too large")
                 base[key] = value
-            elif key == "evidence_profile":
-                base[key] = str(value)[:200_000]
             elif key == "custom":
                 base[key] = str(value)[:200_000]
             elif key == "own_address":
@@ -131,5 +103,5 @@ class Settings:
                 if not isinstance(value, dict):
                     raise ValueError("ui must be an object")
                 base[key] = value if len(json.dumps(value)) < 20000 else base[key]
-            # unknown keys (also the ones of earlier versions: compile, layers, test_files, upstream_url) are ignored
+            # unknown keys (also the ones of earlier versions: id_bytes, id_overrides, id_rules, evidence_profile, …) are ignored
         return base

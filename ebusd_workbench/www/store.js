@@ -1,22 +1,19 @@
-// Browser-side store of the recording and its decodings (IndexedDB, in memory when unavailable).
-//
-// Telegrams are stored once per distinct master/slave pair ("line", as in ebusd's hex notation)
-// with how often and when they were seen; the runs the timeline fetched are stored as
-// occurrences pointing at a line, so repeats cost a few bytes. Every decoding of a telegram with a
-// definition is stored with the definition's key, its source (the release, a pull request, the
-// scratchpad, …) and the files it came from, so that candidates can be compared and chosen without
-// decoding again.
+// Browser-side store (IndexedDB, in memory when unavailable): the distinct telegrams of the
+// recording, the decode results per telegram and definition line (by content hash, so the same
+// line in several files or sources is decoded once), the parsed pool of every source (per stamp),
+// per-source flags of lines (a condition met or not), the compiled TypeSpec outputs, and meta.
 const DB_NAME = "ebusd-workbench";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORES = {
   telegrams: { keyPath: "line", indexes: [["first_ms", "first_ms"]] },
-  occurrences: { keyPath: ["line", "t0"], indexes: [["t0", "t0"], ["line", "line"]] },
-  decodes: { keyPath: "id", indexes: [["line", "line"], ["defKey", "defKey"], ["compileId", "compileId"]] },
-  definitions: { keyPath: "key", indexes: [] },
+  results: { keyPath: "line", indexes: [] },        // {line, byHash: {hash: {result, text, fields}}}
+  pool: { keyPath: "id", indexes: [] },             // {id: stamp, source, lines: [line], refs: [{hash, file}], defaults, scan}
+  flags: { keyPath: "id", indexes: [] },            // {id: "hash|source", available}
+  rows: { keyPath: "key", indexes: [] },            // {key: message, stamp}: decoded with this pool
   compiles: { keyPath: "id", indexes: [] },
   meta: { keyPath: "key", indexes: [] },
-  searches: { keyPath: "id", indexes: [] },   // the last search over the pull requests per message
 };
+const OLD_STORES = ["occurrences", "decodes", "definitions", "searches"];
 
 function request(req) {
   return new Promise((resolve, reject) => {
@@ -40,7 +37,7 @@ class IndexedStore {
 
   async getAll(store, index = null, range = null) {
     const source = this.db.transaction(store).objectStore(store);
-    return request(index ? source.index(index).getAll(range) : source.getAll(range));
+    return request((index ? source.index(index) : source).getAll(range || undefined));
   }
 
   async count(store) { return request(this.db.transaction(store).objectStore(store).count()); }
@@ -70,18 +67,17 @@ class IndexedStore {
   async clearAll() { for (const name of Object.keys(STORES)) await this.clear(name); }
 }
 
-/** The same interface on Maps, for browsers without IndexedDB (private windows, old WebViews). */
 class MemoryStore {
   constructor() { this.kind = "memory"; this.data = Object.fromEntries(Object.keys(STORES).map((n) => [n, new Map()])); }
   keyOf(store, item) {
-    const kp = STORES[store].keyPath;
-    return Array.isArray(kp) ? JSON.stringify(kp.map((k) => item[k])) : item[kp];
+    const path = STORES[store].keyPath;
+    return Array.isArray(path) ? JSON.stringify(path.map((p) => item[p])) : item[path];
   }
   async get(store, key) { return this.data[store].get(Array.isArray(key) ? JSON.stringify(key) : key); }
   async getAll(store, index = null, range = null) {
-    let items = [...this.data[store].values()];
-    if (index && range) items = items.filter((i) => range.includes(i[index]));
-    return items;
+    const all = [...this.data[store].values()];
+    if (!index || !range) return all;
+    return all.filter((item) => (range.lower === undefined || item[index] >= range.lower) && (range.upper === undefined || item[index] <= range.upper));
   }
   async count(store) { return this.data[store].size; }
   async putAll(store, items) { for (const item of items) this.data[store].set(this.keyOf(store, item), item); }
@@ -96,6 +92,7 @@ export async function openStore() {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
+      for (const name of OLD_STORES) if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name);
       for (const [name, spec] of Object.entries(STORES)) {
         if (db.objectStoreNames.contains(name)) continue;
         const os = db.createObjectStore(name, { keyPath: spec.keyPath });
@@ -110,5 +107,3 @@ export async function openStore() {
     return new MemoryStore();
   }
 }
-
-export const storeNames = Object.keys(STORES);

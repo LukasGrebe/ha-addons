@@ -1,9 +1,7 @@
-// Defining a message from the recording: a definition prefilled with what the telegrams of a row
-// tell (type, circuit, address, command, ID, the data bytes), the possible decodings of every byte
-// with their values over the whole history, and the CSV line for ebusd.
-//
-// The data bytes after the message ID are tiled by segments (the fields of the definition). A
-// new definition starts as one HEX field per part; interpreting a byte as a type splits it out.
+// Defining a message from the recording: a definition prefilled with what the telegrams of a
+// message tell (type, circuit, address, command, ID, the data bytes), the number types of ebusd in
+// plain words with what they read from the bytes, and the CSV line for ebusd. A new definition
+// starts as one raw HEX field per part; the inspector carves it into fields.
 
 const hex2 = (n) => n.toString(16).padStart(2, "0");
 const s8 = (b) => (b[0] > 127 ? b[0] - 256 : b[0]);
@@ -38,11 +36,7 @@ export const RAW_INFO = {
 /** The plain name, the explanation and the CSV shorthand of a type. */
 export const typeInfo = (code) => ({ code, ...(TYPES[code] || RAW_INFO[code] || { name: code, label: "" }) });
 
-/** Dropdown text: the plain name, the explanation, then the shorthand ebusd's CSV uses. */
-export const typeOption = (code) => { const t = typeInfo(code); return `${t.name} · ${t.label} · ${code}`; };
-
 export const hexToBytes = (hex) => Uint8Array.from((hex || "").match(/../g) || [], (h) => parseInt(h, 16));
-export const bytesToHex = (bytes) => [...bytes].map(hex2).join("");
 
 /** Whether an eBUS address is a master address (the 25 combinations of priority class and sub address). */
 export function isMasterAddress(a) {
@@ -104,36 +98,9 @@ export function interpretations(samples, part, offset) {
 
 // -- segments: the fields of a definition tile the data bytes of a part -----------------------------
 
-export const segmentLength = (seg) => (TYPES[seg.type] ? TYPES[seg.type].len : seg.len);
-
 /** A new part: one raw HEX field over all bytes. */
 export function initialSegments(length) {
   return length ? [{ offset: 0, len: length, type: "HEX", name: "", divisor: "", unit: "", comment: "" }] : [];
-}
-
-/** Give the bytes from offset the type (a number type covers its length, raw types the given length); what is left of overlapped fields stays raw. */
-export function applyType(segments, length, offset, type, len = 1) {
-  if (offset >= length) return segments;
-  const span = TYPES[type] ? TYPES[type].len : Math.max(1, len);
-  const end = Math.min(length, offset + span);
-  const raw = (o, l) => ({ offset: o, len: l, type: "HEX", name: "", divisor: "", unit: "", comment: "" });
-  const out = [];
-  for (const seg of segments) {
-    const segEnd = seg.offset + seg.len;
-    if (segEnd <= offset || seg.offset >= end) { out.push(seg); continue; }
-    if (seg.offset < offset) out.push(TYPES[seg.type] ? raw(seg.offset, offset - seg.offset) : { ...seg, len: offset - seg.offset });
-    if (segEnd > end) out.push(TYPES[seg.type] ? raw(end, segEnd - end) : { ...seg, offset: end, len: segEnd - end });
-  }
-  out.push({ offset, len: end - offset, type, name: "", divisor: "", unit: "", comment: "" });
-  out.sort((a, b) => a.offset - b.offset);
-  // neighbouring raw pieces of the same kind become one field again
-  const merged = [];
-  for (const seg of out) {
-    const prev = merged[merged.length - 1];
-    if (prev && !TYPES[prev.type] && prev.type !== "STR" && prev.type === seg.type && prev.name === seg.name && prev.offset + prev.len === seg.offset) prev.len += seg.len;
-    else merged.push({ ...seg });
-  }
-  return merged;
 }
 
 /** Field names that are unique within the part and valid for ebusd. */
@@ -180,5 +147,3 @@ export function defaultHeader(row, samples, { scan = {}, own = "31" } = {}) {
   return { type, circuit, name: "NewMessage", comment: `from the recording: ${qq || "--"} to ${zz || "--"} ${hex(row.pb)}${hex(row.sb)} ${row.id || ""}`.trim(), qq: "", zz, pbsb: `${hex(row.pb)}${hex(row.sb)}`, id: row.id || "" };
 }
 
-/** The key the decoder gives a definition of the scratchpad, to pick it after it was added. */
-export { mineKey as customKey } from "./setup.js";

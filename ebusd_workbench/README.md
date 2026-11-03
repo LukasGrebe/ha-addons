@@ -7,12 +7,14 @@ eBUS devices, without being an ebusd expert.
   messages that leads with what ebusd does not understand today, by device and by traffic.
 - **Every definition that fits, from every source, side by side**: ebusd's own definitions
   ([ebus.github.io](https://ebus.github.io), what the eBUSd app loads), the upcoming release,
-  open pull requests of [ebusd-configuration](https://github.com/john30/ebusd-configuration)
+  every open pull request of [ebusd-configuration](https://github.com/john30/ebusd-configuration)
   and branches of other repositories. Each one is fetched as a snapshot from GitHub (no git),
-  compiled in your browser when it is TypeSpec, and used to decode the whole recording with
-  ebusd's own message library (WebAssembly). The list shows the decoded values; the inspector of
-  a message lays its telegram out byte by byte with every definition that fits as a row: the
-  fields over the bytes they read, what each decodes, a sparkline per field over the recording.
+  compiled in your browser when it is TypeSpec, and parsed into one pool of definition lines. A
+  line is a candidate for the messages it fits, whatever source it came from; ebusd's own message
+  library (WebAssembly) judges the candidates, once over the whole recording with ebusd's own
+  definitions and otherwise per message on demand. The list shows the decoded values; the
+  inspector of a message lays its telegram out byte by byte with every definition that fits as a
+  row: the fields over the bytes they read, what each decodes, a sparkline per field.
 - **Tune and name**: every field in the inspector is editable: a name becomes the name in your
   config, a changed type, divisor or unit makes a copy of your own that ebusd's decoder checks
   against every recorded telegram at once; a message no definition knows gets a definition of

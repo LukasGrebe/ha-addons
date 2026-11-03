@@ -74,11 +74,6 @@ table.plain th { background: var(--bg); color: var(--muted); font-weight: 500; }
 .src-add { margin: 6px 0 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: #fafbfc; }
 .src-add .row { margin: 2px 0; }
 .src-add input[type=text] { min-width: 240px; }
-.pulls { max-height: 260px; overflow: auto; margin-top: 6px; }
-.pull { display: flex; align-items: center; gap: 8px; padding: 2px 4px; border-bottom: 1px solid #eef1f4; }
-.pull.fits { background: #f3f9ff; }
-.pull .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pull .badge { margin-left: 4px; }
 
 /* the page: the bus and the scratchpad on the left, my setup on the right, the rest below */
 .page { flex: 1; min-height: 0; display: flex; }
@@ -170,9 +165,6 @@ table.plain th { background: var(--bg); color: var(--muted); font-weight: 500; }
 
 /* the scratchpad: head, notes, cards */
 .pad-head { display: flex; align-items: center; gap: 10px; padding: 5px 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; background: var(--panel); position: sticky; top: 0; z-index: 3; }
-.pad-head .key { font-weight: 600; }
-.pad-head .name { color: var(--accent); }
-.pad-head label { color: var(--muted); }
 .dtl-run { max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-box { margin: 6px 10px 0; padding: 5px 8px; background: #fff8e1; border: 1px solid #ffe082; border-radius: 4px; color: #6d4c00; }
 .paste { padding: 8px 10px; }
@@ -197,32 +189,10 @@ table.plain th { background: var(--bg); color: var(--muted); font-weight: 500; }
 .dtl-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); align-items: start; }
 .dcol { min-width: 0; overflow: hidden; border-right: 1px solid #eef1f4; border-bottom: 1px solid #eef1f4; }
 .dcol.edit { grid-column: 1 / -1; border-right: none; border-bottom: none; }
-.dsec table { width: 100%; table-layout: fixed; }
-.dsec td, .dsec th, .dsec dd { overflow-wrap: anywhere; }
-.dsec dl.kv dd { word-break: normal; font-family: inherit; }
-.dsec .frow .mono { overflow: hidden; text-overflow: ellipsis; }
 .dcol:last-child { border-right: none; }
 .dsec { padding: 6px 12px 10px; }
 .dsec h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
-.dsec dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 6px 0; }
-.dsec dl.kv dt { color: var(--muted); } .dsec dl.kv dd { margin: 0; }
 .frow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 2px 0; }
-.dsec table.cmp { border-collapse: collapse; }
-.dsec table.cmp td, .dsec table.cmp th { padding: 2px 8px 2px 0; border-bottom: 1px solid #eef1f4; text-align: left; white-space: normal; word-break: break-word; overflow-wrap: anywhere; font-weight: normal; }
-.dsec table.cmp th { color: var(--muted); }
-.dsec table.cmp th:first-child { width: 22%; }
-.dsec table.cmp tr.diff td { background: #fff8e1; }
-.dsec table.cmp tr.names td { font-style: italic; color: var(--muted); }
-.dsec .verdict { margin: 4px 0; font-weight: 600; }
-.dsec .row select { max-width: 100%; }
-.dsec .history canvas { display: block; cursor: crosshair; width: 100%; }
-.vlist { max-height: 190px; overflow: auto; border: 1px solid #eef1f4; border-radius: 4px; margin-top: 4px; }
-.vlist table { border-collapse: collapse; width: 100%; }
-.vlist table { table-layout: auto; }
-.vlist table td { padding: 1px 8px; border-bottom: 1px solid #f3f5f7; }
-.vlist table td:last-child { white-space: normal; overflow-wrap: anywhere; width: 100%; }
-.vlist tr { cursor: pointer; } .vlist tr:hover { background: #f7f9fb; }
-.vlist tr.hl { background: var(--accent-soft); font-weight: 600; }
 .names { margin: 8px 0 0; padding-top: 6px; border-top: 1px dashed #eef1f4; display: flex; flex-direction: column; gap: 4px; }
 .names .kv-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .names table.fieldnames { border-collapse: collapse; width: 100%; table-layout: fixed; }
@@ -233,18 +203,8 @@ table.plain th { background: var(--bg); color: var(--muted); font-weight: 500; }
 .names .kv-row input { width: auto; }
 
 /* editors: a definition as a form and as CSV (csved), a new one read off the bytes (definer) */
-.csved table.segs, .definer table.segs { border-collapse: collapse; font-size: 12px; width: 100%; }
-.csved table.segs th, .definer table.segs th { text-align: left; color: var(--muted); font-weight: 500; padding: 2px 8px 2px 0; }
-.csved table.segs td, .definer table.segs td { padding: 2px 8px 2px 0; border-top: 1px solid #eef1f4; }
-.csved table.segs input, .csved table.segs select, .csved select.wide, .definer table.segs input, .definer table.segs select { font-family: var(--mono); font-size: 12px; text-overflow: ellipsis; }
-.csved table.segs select.wide { max-width: 260px; }
-.csved table.segs, .definer table.segs { table-layout: auto; }
-.csved .row > select.wide, .definer select.wide { max-width: 100%; }
 .definer table.segs select.wide { max-width: 340px; text-overflow: ellipsis; }
 .definer table.segs tr.sel td { background: var(--accent-soft); }
-.csved .check, .definer .check { margin: 8px 0; padding: 6px 8px; border-radius: 4px; background: #f7f9fb; }
-.csved .check.ok, .definer .check.ok { background: #e8f5e9; } .csved .check.warn, .definer .check.warn { background: #fff8e1; } .csved .check.err, .definer .check.err { background: #ffebee; }
-.csved .actions, .definer .actions { margin-top: 6px; }
 .definer h3 { margin: 12px 0 4px; }
 .definer .bytes { display: flex; flex-wrap: wrap; gap: 2px; margin: 4px 0; }
 .definer button.byte { display: inline-flex; flex-direction: column; align-items: center; width: 34px; padding: 2px 0; border: 1px solid var(--line); border-radius: 3px; font-family: var(--mono); cursor: pointer; }
@@ -296,8 +256,6 @@ table.plain th { background: var(--bg); color: var(--muted); font-weight: 500; }
 .picker .list .name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kv.about { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 12px; }
 .kv.about dt { color: var(--muted); } .kv.about dd { margin: 0; font-family: var(--mono); word-break: break-all; }
-.overrides .ov { display: flex; gap: 6px; align-items: center; margin: 3px 0; }
-.overrides input { width: 70px; }
 
 /* the bus: the list of messages, with the inspector of the selected one under its row */
 .bus-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -402,8 +360,6 @@ table.msgs tr.insp > td { padding: 0; background: #fbfcfd; border-bottom: 3px so
 .insp-host { font-size: 12px; contain: inline-size; }   /* its width comes from the list, never the other way round */
 .insp-host .pad-head { position: static; }
 .insp-host .inspector-wrap { max-width: 100%; }
-.insp-host .dsec { padding: 6px 12px 10px; }
-.insp-host .history canvas { display: block; cursor: crosshair; }
 .setup.rail { width: 34px; min-width: 34px; max-width: 34px; overflow: hidden; display: flex; align-items: flex-start; justify-content: center; }
 .setup.rail .railbtn { border: none; background: none; padding: 10px 4px; cursor: pointer; color: var(--muted); width: 100%; height: 100%; text-align: left; }
 .setup.rail .railbtn:hover { color: var(--accent); }
@@ -428,3 +384,19 @@ table.inspector td.fixed .addrname { font-family: var(--sans, system-ui, sans-se
 .chartbox canvas { display: block; cursor: crosshair; max-width: 100%; }
 table.inspector tr.def.pending td.label { background: #fffdf5; }
 table.inspector .defmeta .spinner { vertical-align: middle; }
+
+/* the inspector's head, the lists of pull requests, what is still being checked */
+.pad-head { display: flex; align-items: center; gap: 10px; padding: 5px 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; background: var(--panel); }
+.pad-head .key { font-weight: 600; }
+.pad-head .name { color: var(--accent); }
+.pad-head label { color: var(--muted); }
+.tbadge.maybe { opacity: .7; border-style: dashed; }
+.cands.pending { color: var(--muted); font-style: italic; }
+.msg-toolbar .load { margin-left: 8px; }
+.src.pulls { cursor: pointer; }
+.src.pulls .fold { margin-left: 4px; color: var(--muted); }
+.pulls { display: flex; flex-direction: column; gap: 2px; padding: 4px 10px 8px; max-height: 40vh; overflow: auto; background: #f7f9fb; border-top: 1px solid var(--line); }
+.pull { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 2px 0; }
+.pull .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pull.fits .title { font-weight: 600; }
+.src-add { padding: 6px 10px; border-top: 1px solid var(--line); background: #f7f9fb; }

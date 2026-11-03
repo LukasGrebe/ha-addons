@@ -15,7 +15,6 @@ import threading
 import time
 
 NS_PER_MS = 1_000_000
-MAX_RUN_ROWS = 200_000  # telegrams of a window up to which its runs are exact; beyond it they are summed up in steps of time
 MAX_ATTRIBUTES = 4096  # bytes of JSON attributes stored per state change
 MASTER_NIBBLES = (0x0, 0x1, 0x3, 0x7, 0xF)
 
@@ -77,25 +76,6 @@ def hexbyte(value):
 
 def is_master(address):
     return (address & 0x0F) in MASTER_NIBBLES and (address >> 4) in MASTER_NIBBLES
-
-
-def telegram_type(zz):
-    if zz is None:
-        return None
-    return "BC" if zz == 0xFE else "MM" if is_master(zz) else "MS"
-
-
-def escape(data):
-    """eBUS byte stuffing: the symbols A9 and AA are sent as A9 00 and A9 01."""
-    out = bytearray()
-    for byte in data:
-        if byte == 0xA9:
-            out += b"\xa9\x00"
-        elif byte == 0xAA:
-            out += b"\xa9\x01"
-        else:
-            out.append(byte)
-    return bytes(out)
 
 
 class Schema:
@@ -203,203 +183,21 @@ class Database:
 
     # -- telegrams --------------------------------------------------------------
 
-    def histogram(self, from_ms, to_ms, bucket_s):
-        """Telegram counts per time bucket: [[bucket_start_ms, total, not_ok], ...]."""
-        bucket_ns = max(1, int(bucket_s)) * 1_000_000_000
-        if not self.has_telegrams():
-            return []
+    def count_since(self, since_ms):
+        """How many telegrams were recorded after a time (what a browser has not read yet)."""
+        if not self.exists():
+            return 0
         conn = self.connect()
         try:
-            rows = conn.execute(
-                "SELECT (ts / ?) * ? AS bucket, count(*), sum(status != 'ok') FROM telegram "
-                "WHERE ts >= ? AND ts < ? GROUP BY bucket ORDER BY bucket",
-                (bucket_ns, bucket_ns, from_ms * NS_PER_MS, to_ms * NS_PER_MS)).fetchall()
-            return [[ms(b), n, bad or 0] for b, n, bad in rows]
+            if not self.has_telegrams(conn):
+                return 0
+            return conn.execute("SELECT count(*) FROM telegram WHERE ts >= ?", (int(since_ms) * NS_PER_MS,)).fetchone()[0]
         finally:
             conn.close()
-
-    @staticmethod
-    def _id_length_sql(id_bytes, id_overrides, id_rules=None, dd_sql="dd"):
-        """SQL expression for the message ID length in hex digits and its parameters.
-
-        id_overrides maps "pbsb" or "zzpbsb" (hex) to a length in bytes; the more specific one wins.
-        id_rules refine that per message: {"zzpbsb:prefix": length}, the telegrams of that command
-        whose data starts with prefix get that ID length (the longest matching prefix wins). They are
-        what splitting or combining a row in the timeline stores.
-        """
-        overrides = {}
-        for key, length in (id_overrides or {}).items():
-            try:
-                overrides[str(key).lower()] = max(0, min(8, int(length)))
-            except (ValueError, TypeError):
-                continue
-        default = max(0, min(8, int(id_bytes)))
-        cases, params = [], []
-        # rules by command, grouped by (prefix length, resulting ID length): "substr(...) IN (...)" stays fast with many rules
-        by_command = {}
-        for key, length in (id_rules or {}).items():
-            try:
-                command, _, prefix = str(key).lower().partition(":")
-                if len(command) != 6 or len(prefix) % 2 or len(prefix) > 32:
-                    continue
-                int(command, 16), int(prefix or "0", 16)
-                by_command.setdefault(command, {}).setdefault((len(prefix), max(0, min(16, int(length)))), []).append(prefix)
-            except (ValueError, TypeError):
-                continue
-        for command, groups in by_command.items():
-            fallback = overrides.get(command, overrides.get(command[2:], default))
-            inner = []
-            inner_params = []
-            for (plen, length), prefixes in sorted(groups.items(), key=lambda kv: -kv[0][0]):
-                inner.append("WHEN substr(%s, 1, ?) IN (%s) THEN ?" % (dd_sql, ",".join("?" * len(prefixes))))
-                inner_params += [plen] + prefixes + [length * 2]
-            cases.append("WHEN zz = ? AND pb = ? AND sb = ? THEN (CASE %s ELSE ? END)" % " ".join(inner))
-            params += [int(command[0:2], 16), int(command[2:4], 16), int(command[4:6], 16)] + inner_params + [fallback * 2]
-        for key, length in sorted(overrides.items(), key=lambda kv: -len(kv[0])):
-            try:
-                if len(key) == 6:
-                    cases.append("WHEN zz = ? AND pb = ? AND sb = ? THEN ?")
-                    params += [int(key[0:2], 16), int(key[2:4], 16), int(key[4:6], 16), length * 2]
-                elif len(key) == 4:
-                    cases.append("WHEN pb = ? AND sb = ? THEN ?")
-                    params += [int(key[0:2], 16), int(key[2:4], 16), length * 2]
-            except (ValueError, TypeError):
-                continue
-        params.append(default * 2)
-        return ("(CASE %s ELSE ? END)" % " ".join(cases) if cases else "?"), params
-
-    def runs(self, from_ms, to_ms, id_bytes=1, id_overrides=None, max_rows=MAX_RUN_ROWS, id_rules=None, buckets=1500):
-        """Group the telegrams of a time window into rows (one per source, destination, command and
-        message ID) and collapse consecutive identical values into runs.
-
-        A run is a sequence of telegrams of one row whose data (master payload, slave answer and
-        status) did not change: [first_ms, last_ms, count, value, mean_interval_ms, min_interval_ms].
-
-        A window with more than max_rows telegrams is not cut: it is summed up in `buckets` steps
-        of time instead (see _runs_bucketed), so that the whole window is there, at a coarser grain.
-        """
-        schema = self.schema()
-        if schema is None:
-            return {"rows": [], "scanned": 0, "bucket_ms": None, "from_ms": from_ms, "to_ms": to_ms}
-        id_len, id_params = self._id_length_sql(id_bytes, id_overrides, id_rules, f"coalesce({schema.dd}, '')")
-        conn = self.connect()
-        try:
-            scanned = conn.execute("SELECT count(*) FROM telegram WHERE ts >= ? AND ts < ?",
-                                   (from_ms * NS_PER_MS, to_ms * NS_PER_MS)).fetchone()[0]
-            if scanned > max_rows:
-                return self._runs_bucketed(conn, schema, id_len, id_params, from_ms, to_ms, scanned, max(10, min(5000, int(buckets))))
-            return self._runs_exact(conn, schema, id_len, id_params, from_ms, to_ms, scanned)
-        finally:
-            conn.close()
-
-    def _runs_exact(self, conn, schema, id_len, id_params, from_ms, to_ms, scanned):
-        sql = f"""
-WITH t AS (
-  SELECT {schema.id} AS id, ts, qq, zz, pb, sb, status,
-         substr(coalesce({schema.dd}, ''), 1, {id_len}) AS kid,
-         substr(coalesce({schema.dd}, ''), {id_len} + 1) || '/' || coalesce({schema.s_dd}, '') || '/' || status AS value
-  FROM telegram WHERE ts >= ? AND ts < ? ORDER BY ts
-), w AS (
-  SELECT *, lag(value) OVER win AS prev, lag(ts) OVER win AS prev_ts FROM t
-  WINDOW win AS (PARTITION BY qq, zz, pb, sb, kid ORDER BY ts, id)
-), c AS (
-  SELECT *, sum(CASE WHEN prev IS NULL OR prev != value THEN 1 ELSE 0 END)
-         OVER (PARTITION BY qq, zz, pb, sb, kid ORDER BY ts, id ROWS UNBOUNDED PRECEDING) AS run
-  FROM w
-)
-SELECT qq, zz, pb, sb, kid, min(ts) AS t0, max(ts) AS t1, count(*) AS n, value,
-       avg(CASE WHEN prev = value THEN ts - prev_ts END) AS mean_interval,
-       min(CASE WHEN prev = value THEN ts - prev_ts END) AS min_interval
-FROM c GROUP BY qq, zz, pb, sb, kid, run ORDER BY qq, zz, pb, sb, kid, t0
-"""
-        params = id_params + id_params + [from_ms * NS_PER_MS, to_ms * NS_PER_MS]  # the ID length expression appears twice
-        rows = {}
-        for r in conn.execute(sql, params):
-            entry = self._row_entry(rows, r)
-            entry["n"] += r["n"]
-            entry["runs"].append([ms(r["t0"]), ms(r["t1"]), r["n"], r["value"],
-                                  None if r["mean_interval"] is None else int(r["mean_interval"]) // NS_PER_MS,
-                                  ms(r["min_interval"])])
-        return {"rows": list(rows.values()), "scanned": scanned, "bucket_ms": None, "from_ms": from_ms, "to_ms": to_ms}
-
-    @staticmethod
-    def _row_entry(rows, r):
-        key = (r["qq"], r["zz"], r["pb"], r["sb"], r["kid"])
-        entry = rows.get(key)
-        if entry is None:
-            entry = rows[key] = {"qq": r["qq"], "zz": r["zz"], "pb": r["pb"], "sb": r["sb"], "id": r["kid"], "n": 0, "runs": []}
-        return entry
-
-    def _runs_bucketed(self, conn, schema, id_len, id_params, from_ms, to_ms, scanned, buckets):
-        """The runs of a window too big for the exact ones: per row and step of time one entry, which
-        is a run of its single value when the row had one value in the step and else a run of the
-        steps with several, marked by its 7th element (the most different values in one step).
-        Neighbouring steps with the same single value are one run, as in the exact runs; the value
-        of a run with several values is the latest one."""
-        bucket_ms = max(1000, -(-(to_ms - from_ms) // buckets))
-        bucket_ns = bucket_ms * NS_PER_MS
-        sql = f"""
-SELECT qq, zz, pb, sb, kid, b, count(*) AS n, max(ts) AS t1, count(DISTINCT value) AS k, value
-FROM (
-  SELECT ts, qq, zz, pb, sb,
-         substr(coalesce({schema.dd}, ''), 1, {id_len}) AS kid,
-         substr(coalesce({schema.dd}, ''), {id_len} + 1) || '/' || coalesce({schema.s_dd}, '') || '/' || status AS value,
-         (ts - ?) / ? AS b
-  FROM telegram WHERE ts >= ? AND ts < ?)
-GROUP BY qq, zz, pb, sb, kid, b ORDER BY qq, zz, pb, sb, kid, b
-"""
-        params = id_params + id_params + [from_ms * NS_PER_MS, bucket_ns, from_ms * NS_PER_MS, to_ms * NS_PER_MS]
-        rows = {}
-        for r in conn.execute(sql, params):
-            entry = self._row_entry(rows, r)
-            entry["n"] += r["n"]
-            t1 = ms(r["t1"])
-            t0 = t1 if r["n"] == 1 else min(t1, from_ms + r["b"] * bucket_ms)   # the step's start: exact to a step
-            many = r["k"] if r["k"] > 1 else 0
-            runs = entry["runs"]
-            last = runs[-1] if runs else None
-            if last and ((many and last[6]) or (not many and not last[6] and last[3] == r["value"])):
-                last[1] = t1                    # the same single value, or steps with several values: one run
-                last[2] += r["n"]
-                last[3] = r["value"]
-                last[6] = max(last[6], many)
-            else:
-                runs.append([t0, t1, r["n"], r["value"], None, None, many])
-        for entry in rows.values():
-            for run in entry["runs"]:
-                if run[2] > 1:
-                    run[4] = (run[1] - run[0]) // (run[2] - 1)
-        return {"rows": list(rows.values()), "scanned": scanned, "bucket_ms": bucket_ms, "from_ms": from_ms, "to_ms": to_ms}
 
     def _telegram_select(self, schema):
         return (f"SELECT {schema.id} AS id, ts, qq, zz, pb, sb, nn, {schema.dd} AS dd, crc, ack, s_nn, "
                 f"{schema.s_dd} AS s_dd, s_crc, s_ack, status FROM telegram")
-
-    def telegrams(self, from_ms, to_ms, qq=None, zz=None, pb=None, sb=None, id_prefix=None, limit=500, order="DESC"):
-        """Raw telegrams of a window, newest first by default, with ebusd's hex notation added."""
-        schema = self.schema()
-        if schema is None:
-            return []
-        where = ["ts >= ?", "ts < ?"]
-        params = [from_ms * NS_PER_MS, to_ms * NS_PER_MS]
-        for column, value in (("qq", qq), ("zz", zz), ("pb", pb), ("sb", sb)):
-            if value is NO_VALUE:     # telegrams too broken to tell the address (shown as "--")
-                where.append(f"{column} IS NULL")
-            elif value is not None:
-                where.append(f"{column} = ?")
-                params.append(int(value))
-        if id_prefix:
-            where.append(f"substr({schema.dd}, 1, ?) = ?")
-            params += [len(id_prefix), id_prefix]
-        order = "ASC" if str(order).upper() == "ASC" else "DESC"
-        conn = self.connect()
-        try:
-            rows = conn.execute(
-                f"{self._telegram_select(schema)} WHERE {' AND '.join(where)} ORDER BY ts {order} LIMIT ?",
-                params + [max(1, min(5000, int(limit)))]).fetchall()
-            return [self._telegram_dict(r) for r in rows]
-        finally:
-            conn.close()
 
     @staticmethod
     def master_hex(r):
@@ -412,12 +210,6 @@ GROUP BY qq, zz, pb, sb, kid, b ORDER BY qq, zz, pb, sb, kid, b
         if r["s_dd"] is None or r["s_nn"] is None:
             return None
         return "%02x%s" % (r["s_nn"], r["s_dd"])
-
-    def _telegram_dict(self, r):
-        return {"id": r["id"], "ms": ms(r["ts"]), "type": telegram_type(r["zz"]), "qq": r["qq"], "zz": r["zz"],
-                "pb": r["pb"], "sb": r["sb"], "nn": r["nn"], "dd": r["dd"], "ack": hexbyte(r["ack"]),
-                "s_nn": r["s_nn"], "s_dd": r["s_dd"], "s_ack": hexbyte(r["s_ack"]), "status": r["status"],
-                "master": self.master_hex(r), "slave": self.slave_hex(r)}
 
     def series(self, from_ms, to_ms, qq=None, zz=None, pb=None, sb=None, id_prefix=None, max_points=20000):
         """The complete telegrams of one row over a time range as a time series.
@@ -488,60 +280,6 @@ GROUP BY qq, zz, pb, sb, kid, b ORDER BY qq, zz, pb, sb, kid, b
                      "last_ms": ms(r["t1"])} for r in rows]
         finally:
             conn.close()
-
-    def rawlog(self, from_ms, to_ms, own_address=0x31, include_broken=False):
-        """Yield the telegrams of a window as lines of ebusd's message-mode raw data log
-        (--lograwdata), the input of ebus-evidence.
-
-        Telegrams sent by ebusd itself (own_address) are split into the direction changes ebusd logs:
-        `>` master part, `<` ACK and slave answer, `>` ACK of the answer. Telegrams that are not
-        complete and correct are left out unless include_broken is set; those carry the bytes as
-        they were on the wire.
-        """
-        schema = self.schema()
-        if schema is None:
-            return
-        conn = self.connect()
-        try:
-            cursor = conn.execute(
-                f"SELECT ts, qq, zz, pb, sb, nn, dd, crc, ack, s_nn, s_dd, s_crc, s_ack, status, {schema.raw} AS raw "
-                "FROM telegram WHERE ts >= ? AND ts < ? ORDER BY ts",
-                (from_ms * NS_PER_MS, to_ms * NS_PER_MS))
-            for r in cursor:
-                stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r["ts"] // 1_000_000_000))
-                stamp += ".%03d " % (r["ts"] // NS_PER_MS % 1000)
-                if r["status"] != "ok":
-                    if not include_broken:
-                        continue
-                    raw = r["raw"]
-                    if raw is None:
-                        continue
-                    if not schema.version2:
-                        raw = bytes.fromhex(raw)
-                    yield stamp + "<" + raw.hex() + "\n"
-                    continue
-                dd = r["dd"] if schema.version2 else bytes.fromhex(r["dd"] or "")
-                master = bytes([r["qq"], r["zz"], r["pb"], r["sb"], r["nn"]]) + escape(dd) + bytes([r["crc"]])
-                tail = b""
-                if r["ack"] is not None:
-                    tail = bytes([r["ack"]])
-                answer = b""
-                if r["s_nn"] is not None:
-                    s_dd = r["s_dd"] if schema.version2 else bytes.fromhex(r["s_dd"] or "")
-                    answer = bytes([r["s_nn"]]) + escape(s_dd) + bytes([r["s_crc"]])
-                if r["qq"] == own_address:
-                    line = ">" + master.hex()
-                    if tail:
-                        line += "<" + (tail + answer).hex()
-                    if r["s_ack"] is not None:
-                        line += ">" + bytes([r["s_ack"]]).hex()
-                else:
-                    line = "<" + (master + tail + answer + (bytes([r["s_ack"]]) if r["s_ack"] is not None else b"")).hex()
-                yield stamp + line + "\n"
-        finally:
-            conn.close()
-
-    # -- events (notes) -------------------------------------------------------------
 
     def markers(self, from_ms, to_ms, limit=5000):
         """Notes from the `event` table (the eBUSd terminal's `log` command and the Workbench)."""

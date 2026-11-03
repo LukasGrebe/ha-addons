@@ -1,38 +1,23 @@
 // The inspector of the selected message and what goes with it, inserted under the message's row in
 // the list: the telegram byte by byte with every definition that fits as a row (see inspector.js),
-// the search over the open pull requests (the way to find a definition, started by itself when
-// nothing is set up for the message), the definitions that fail, and the chart of a field as a
-// box over the table when a sparkline is clicked (hovering it shows that telegram in the table).
-// It stays put: the list freezes while a message is selected, and the inspector is only drawn
-// again when its structure changes (another definition fits, the pick changed, a line of your own
-// changed) or on your own actions, never while you type. Nothing waits for ebusd's library: a
-// line of your own shows the moment it is saved, marked "checking" until it has been decoded.
+// the definitions that fail, and the chart of a field as a box over the table when a sparkline is
+// clicked (hovering it shows that telegram in the table). The candidates come from the pool of every
+// source at once; the ones not checked with ebusd's library yet show as "checking" while the core
+// decodes them, this message first. It stays put: the list freezes while a message is selected, and
+// the inspector is only drawn again when its structure changes (a definition was checked, the pick
+// changed, a line of your own changed) or on your own actions, never while you type.
 import { app, append, bus, fmt, h, toast } from "./app.js";
 import { drawChart, nearestPoint, seriesFields, seriesValues } from "./chart.js";
-import { accessKind, groupCandidates, rowTelegrams, whyNot } from "./compare.js";
+import { accessKind, coverage, rowTelegrams, whyNot } from "./compare.js";
 import { messageColors } from "./colors.js";
 import { analyzeBytes, buildCsv, defaultHeader, initialSegments, samplesOf } from "./define.js";
-import { parseDefinition } from "./definition-edit.js";
-import { MINE, MINE_FILE, setup } from "./setup.js";
-import { mineLines, upsertMine } from "./mine.js";
-import { prSearch } from "./prsearch.js";
+import { MINE, setup } from "./setup.js";
+import { upsertMine } from "./mine.js";
 import { inspector } from "./inspector.js";
 
 const base = (file) => file.replace(/^.*\//, "");
 const chip = (circuit, name) => { const c = messageColors(circuit, name); return h("span", { class: "chip-msg", style: `color:${c.text};background:${c.background};border-color:${c.border}` }, `${circuit} ${name}`); };
-const sourceBadge = (def) => h("span", { class: `tbadge ${def.source === MINE ? "custom" : def.source === "release" ? "" : "src"}`, title: `from ${def.sourceLabel || def.source}` }, def.source === MINE ? "mine" : def.sourceLabel || def.source);
-
-/** Whether a line of your own (its header) is for this message. */
-function lineFits(header, row) {
-  const id = (header.id || "").toLowerCase(), rowId = row.id || "";
-  return (header.pbsb || "").toLowerCase() === row.pbsb && (!header.zz || header.zz.toLowerCase() === row.zz) && (!id || rowId.startsWith(id) || id.startsWith(rowId));
-}
-
-/** A line of your own the decoder has not checked yet, as a definition the inspector can show. */
-function pendingDef(line, header) {
-  return { key: line.key, source: MINE, sourceLabel: "my definitions", circuit: header.circuit, name: header.name, csv: line.line, file: MINE_FILE, status: "custom", pending: true,
-    write: /w/i.test(header.type), passive: /u/i.test(header.type), conditions: [], available: true, inScanFile: true, zz: header.zz, pbsb: header.pbsb, idlen: (header.id || "").length / 2 };
-}
+const sourceBadges = (def) => def.sources.slice(0, 3).map((s) => h("span", { class: `tbadge ${s === MINE ? "custom" : s === "release" ? "" : "src"}`, title: `from ${app.decoder.source(s)?.label || s}` }, s === MINE ? "mine" : app.decoder.source(s)?.label || s));
 
 export class Scratchpad {
   constructor(view) {
@@ -69,7 +54,6 @@ export class Scratchpad {
     this.model = null;
     this.key = null;
     this.inspectorEl = null;
-    if (app.decoder) app.decoder.priorityLines = new Set();
     this.host.replaceChildren();
     this.view.select(null);
     this.view.unmountInspector();
@@ -79,46 +63,41 @@ export class Scratchpad {
 
   refreshModel() {
     const { row } = this.state;
-    const decoder = app.decoder;
-    const telegrams = rowTelegrams(decoder, row.row);
-    const all = decoder.candidatesOf(telegrams.map((t) => t.line));
-    for (const [key, c] of row.candidates || []) if (!all.has(key)) all.set(key, c);
-    const candidates = [...all.values()];
-    const usedKey = candidates.find((c) => c.used)?.def.key || null;
-    const { groups } = groupCandidates(decoder, candidates, telegrams, { chosenKey: row.defKey, usedKey });
+    const core = app.decoder;
+    const telegrams = rowTelegrams(core, row.row);
+    const lines = telegrams.map((t) => t.line);
+    const candidates = [...core.candidatesOf(lines).values()];
+    // a line of your own whose fields do not add up to the telegrams' length is no candidate for ebusd, but it is yours: it stays in view, with the reason
+    for (const hash of core.ownLinesFor(row)) if (!candidates.some((c) => c.def.key === hash)) { const def = core.def(hash); if (def) candidates.push({ def: { ...def, nomatch: true }, ok: 0, errors: 0, pending: 0, used: 0, usedIn: 0, last: null }); }
+    for (const c of candidates) c.cov = coverage(core, telegrams, c.def.key);
+    const usedKey = candidates.find((c) => c.used > 0)?.def.key || null;
     const hideFailing = !!app.settings?.ui?.hideFailing;
-    const shown = groups.filter((g) => !g.failed && !(hideFailing && g.coverage.errors > 0 && !g.hasChosen));
-    const hidden = groups.filter((g) => !shown.includes(g));
-    const included = new Set(setup.includedKeys(decoder.entries));
+    const included = new Set(setup.includedKeys(core.entries));
     const chosen = setup.chosenFor(row.key);
-    // lines of your own for this message that the decoder has not been over yet: rows at once, "checking"
-    const pending = row.kind === "telegram" ? mineLines().map((l) => ({ l, header: parseDefinition(l.line).header })).filter(({ l, header }) => !all.has(l.key) && lineFits(header, row)).map(({ l, header }) => pendingDef(l, header)) : [];
-    const keys = [...candidates.map((c) => c.def.key), ...pending.map((p) => p.key)];
-    const defKey = chosen && keys.includes(chosen) ? chosen : usedKey || candidates.find((c) => included.has(c.def.key))?.def.key || pending.find((p) => included.has(p.key))?.key || null;
-    this.model = { telegrams, candidates, usedKey, groups, shown, hidden, included, defKey, pending, keys, mineText: app.settings?.custom || "", total: telegrams.reduce((n, t) => n + (t.n || 0), 0),
-      current: groups.find((g) => g.members.some((m) => m.def.key === defKey)) || groups.find((g) => g.hasUsed) || shown[0] || null };
-    // the telegrams of the inspected message are decoded first when a source is added
-    decoder.priorityLines = new Set(telegrams.map((t) => t.line));
+    // a line that decodes none of the telegrams goes to the failing card, except your own lines and lines ebusd rejected: those stay in view, with the reason
+    const failed = (c) => c.cov.decoded > 0 && c.cov.ok === 0 && !c.def.mine && !c.def.error && !c.def.nomatch;
+    const shown = candidates.filter((c) => !failed(c) && !(hideFailing && c.cov.errors > 0 && c.def.key !== chosen));
+    const hidden = candidates.filter((c) => !shown.includes(c));
+    const order = Object.fromEntries(core.sources().map((s, i) => [s.id, i]));
+    shown.sort((a, b) => ((b.def.key === chosen) - (a.def.key === chosen)) || ((b.def.key === usedKey) - (a.def.key === usedKey)) || (b.cov.ok - a.cov.ok) || ((order[a.def.source] ?? 99) - (order[b.def.source] ?? 99)));
+    const keys = candidates.map((c) => c.def.key);
+    const defKey = chosen && keys.includes(chosen) ? chosen : usedKey || candidates.find((c) => included.has(c.def.key))?.def.key || null;
+    this.model = { telegrams, lines, candidates, usedKey, shown, hidden, included, defKey, keys, total: telegrams.reduce((n, t) => n + (t.n || 0), 0) };
+    core.ensureDecoded(row.key, lines, "now");   // this message first
   }
 
   /** What the inspector is made of: a change of this is the only reason to draw it again by itself. */
   structureKey() {
     const m = this.model;
-    return JSON.stringify([app.decoder.build?.id, m.shown.map((g) => [g.members.map((x) => x.def.key), g.coverage?.ok, g.coverage?.errors]), m.hidden.length, m.defKey, [...m.included].filter((k) => m.keys.includes(k)), m.telegrams.length, m.pending.map((p) => p.key), m.mineText]);
-  }
-
-  preferred(g) {
-    const order = Object.fromEntries(app.decoder.sources().map((s, i) => [s.id, i]));
-    return g.members.find((m) => m.def.key === this.model.defKey) || g.members.find((m) => m.def.key === this.model.usedKey)
-      || g.members.slice().sort((a, b) => (order[a.def.source] ?? 99) - (order[b.def.source] ?? 99))[0];
+    return JSON.stringify([app.decoder.poolStamp, m.shown.map((c) => [c.def.key, c.cov.ok, c.cov.errors, c.cov.pending, c.def.error, c.def.csv]), m.hidden.length, m.defKey, [...m.included].filter((k) => m.keys.includes(k)), m.telegrams.length]);
   }
 
   telegramsNewestFirst() { return this.model.telegrams.slice().sort((a, b) => (b.last_ms || 0) - (a.last_ms || 0)); }
 
-  /** Something changed on the bus or in the setup: draw again only when the structure changed, and never while typing. */
+  /** Something changed on the bus or in the setup: draw again only when the structure changed, and never while typing (at most every 300 ms, however often it is told). */
   refresh() {
-    clearTimeout(this.refreshTimer);
-    this.refreshTimer = setTimeout(() => this.refreshNow(), 300);
+    if (this.refreshTimer) return;
+    this.refreshTimer = setTimeout(() => { this.refreshTimer = null; this.refreshNow(); }, 300);
   }
 
   refreshNow() {
@@ -144,7 +123,7 @@ export class Scratchpad {
     const scroll = keep ? { list: list?.scrollTop ?? 0, wrap: wrap?.scrollLeft ?? 0 } : null;
     host.replaceChildren();
     this.inspectorEl = null;
-    if (st.row.kind === "event") this.renderEvent(host); else this.renderRow(host);
+    this.renderRow(host);
     this.key = this.model ? this.structureKey() : null;
     if (scroll) {
       if (list) list.scrollTop = scroll.list;
@@ -152,22 +131,10 @@ export class Scratchpad {
     }
   }
 
-  renderEvent(el) {
-    const { row, run } = this.state;
-    append(el, h("div", { class: "pad-head" },
-      h("span", { class: "mono key" }, row.label), row.name ? h("span", { class: "name" }, row.name) : null,
-      h("span", { style: "margin-left:auto" }), h("button", { class: "small", onclick: () => this.close() }, "✕")),
-      h("table", { class: "plain" }, h("thead", {}, h("tr", {}, h("th", {}, "time"), h("th", {}, "state"), h("th", {}, "previous"), h("th", {}, "source"), h("th", {}, "attributes"))),
-        h("tbody", {}, row.runs.filter((r) => !run || r === run).map((r) => h("tr", {},
-          h("td", { class: "mono" }, fmt.dateTime(r.t0, true)), h("td", {}, r.event.state ?? ""), h("td", {}, r.event.previous ?? ""), h("td", {}, r.event.source),
-          h("td", { class: "mono", style: "white-space:normal" }, JSON.stringify(r.event.attributes || {}).slice(0, 300)))))));
-  }
-
   renderRow(el) {
     const st = this.state, m = this.model;
     const { row } = st;
     const senders = row.senders ? [...row.senders.keys()].join(", ") : null;
-    const prHost = h("div");
     this.chartAnchor = h("div", { class: "chart-anchor" });
     append(el,
       h("div", { class: "pad-head" },
@@ -182,31 +149,27 @@ export class Scratchpad {
       this.notes(),
       this.inspectorSection(),
       this.chartAnchor,
-      prHost,
       m.hidden.length ? h("div", { class: "cards" }, this.failingCard()) : null);
-    // the search over the pull requests draws its own box as it goes, not the whole inspector
-    const prChanged = () => { if (this.state?.row.key === row.key && prHost.isConnected) prHost.replaceChildren(prSearch.section(row, m.telegrams, prChanged)); };
-    prHost.appendChild(prSearch.section(row, m.telegrams, prChanged));
-    // nothing set up for this message: the pull requests are the way to find a definition, so look by ourselves
-    if (!m.defKey && !row.scan && !m.pending.length) prSearch.auto(row, m.telegrams, prChanged);
     if (st.chart) this.openChart(st.chart.defKey, st.chart.field);
   }
 
   notes() {
     const { row } = this.state;
+    const m = this.model;
     const out = [];
     if (row.scan) out.push(h("div", { class: "note-box" }, row.pbsb === "0704"
       ? "ebusd's scan: the identification every device answers (manufacturer, device id, software and hardware version). Nothing to define."
       : "ebusd's scan of a Vaillant device: its serial number in four parts as text (b5 09 24, 25, 26 and 27; vaillant/scan.csv, Scan Id), asked by ebusd itself right after the identification. Nothing to define."));
-    if (!row.defKey && this.model.candidates.length) out.push(h("div", { class: "note-box" }, "ebusd itself has no definition for this message: none of these would be used as they are. Tick one for your setup, or change a copy of it."));
-    if (!this.model.candidates.length && !this.model.pending.length && !row.scan) out.push(h("div", { class: "note-box" }, "No definition of any source decodes this message. The open pull requests are searched below; or start one of your own from the bytes (the tooltip of a byte says what it could be)."));
+    const checking = m.candidates.filter((c) => c.cov.decoded === 0 && c.cov.pending > 0).length;
+    if (!m.usedKey && m.candidates.length && checking < m.candidates.length) out.push(h("div", { class: "note-box" }, "ebusd itself has no definition for this message: none of these would be used as they are. Tick one for your setup, or change a copy of it."));
+    if (!m.candidates.length && !row.scan) out.push(h("div", { class: "note-box" }, "No definition of any source fits this message: not ebusd's own, not the upcoming release, not an open pull request. Start one of your own from the bytes (the tooltip of a byte says what it could be)."));
     return out.length ? h("div", {}, out) : null;
   }
 
   /** The inspector: the telegram byte by byte, every fitting definition as a row, with the values and sparklines. */
   inspectorSection() {
     const st = this.state, m = this.model;
-    const defs = [...m.shown.map((g) => ({ def: this.preferred(g).def, group: g })), ...m.pending.map((def) => ({ def, group: null }))];
+    const defs = m.shown.map((c) => ({ def: c.def, coverage: c.cov }));
     const usedDef = m.candidates.find((c) => c.def.key === m.usedKey)?.def || null;
     this.inspectorEl = inspector({
       row: st.row, telegrams: m.telegrams, defs, decoder: app.decoder, view: this.view, telegramIndex: st.tIndex, selected: st.chart,
@@ -229,7 +192,7 @@ export class Scratchpad {
     header.name = `New_${row.pbsb || ""}${row.id || ""}`.replace(/[^A-Za-z0-9_]/g, "");
     const parts = { m: initialSegments(analyzeBytes(samples, "m").length), s: initialSegments(analyzeBytes(samples, "s").length) };
     try {
-      const key = await upsertMine(buildCsv(header, parts));   // saved; the decoder checks it in the background
+      const key = await upsertMine(buildCsv(header, parts));   // saved; the core checks it right away
       setup.choose(row.key, key, this.model.keys, app.decoder.entries);
       this.state.chart = null;
       this.refreshNow();
@@ -244,7 +207,7 @@ export class Scratchpad {
     this.closeChart({ keepState: true });
     st.chart = { defKey, field };
     this.inspectorEl.markSelected(defKey, field);
-    const def = app.decoder.def(defKey) || this.model.pending.find((p) => p.key === defKey);
+    const def = app.decoder.def(defKey);
     if (!def) return;
     const info = h("span", { class: "hint" }, "loading the recording…");
     const canvas = h("canvas");
@@ -283,7 +246,7 @@ export class Scratchpad {
     const summary = () => {
       const values = series.points.map((p) => p.value);
       const range = series.numeric && values.length ? ` · ${Math.min(...values)} … ${Math.max(...values)}` : "";
-      info.textContent = `${fmt.count(series.points.length)} telegrams${data.stride > 1 ? ` (every ${data.stride}th of ${fmt.count(data.total)})` : ""}${range}`;
+      info.textContent = `${fmt.count(series.points.length)} telegrams${data.stride > 1 ? ` (every ${data.stride}th of ${fmt.count(data.total)})` : ""}${range}${series.points.length < data.points.length ? " · telegrams not decoded with this definition are left out" : ""}`;
     };
     const lineAt = (ms) => { const p = nearestPoint(series, ms); if (!p) return null; const idx = data.points.findIndex(([pm]) => pm === p.ms); return { p, line: idx >= 0 ? data.lines[data.points[idx][1]] : null }; };
     canvas.addEventListener("mousemove", (e) => {
@@ -311,15 +274,15 @@ export class Scratchpad {
     const entries = app.decoder.entries;
     const otherKeys = this.model.keys;
     const usedDef = this.model.candidates.find((c) => c.def.key === this.model.usedKey)?.def || null;
-    const members = this.model.hidden.flatMap((g) => g.members.map((m) => ({ m, g })));
+    const members = this.model.hidden;
     const head = h("div", { class: "card-head muted", onclick: (e) => { if (e.target.closest("button, input, a")) return; this.state.failingOpen = !open; this.render(true); } },
       h("span", { class: "fold" }, open ? "▾" : "▸"), h("span", {}, `${members.length} definition${members.length === 1 ? "" : "s"} that fail on some or all recorded telegrams`));
-    const body = open ? h("div", { class: "card-body single" }, members.map(({ m, g }) => h("div", { class: "frow" },
-      h("label", { class: "muted" }, h("input", { type: "checkbox", checked: this.model.included.has(m.def.key), title: "use it anyway", onchange: (e) => (e.target.checked ? setup.choose(row.key, m.def.key, otherKeys, entries) : setup.include(m.def.key, false, entries)) }), " in setup"),
-      chip(m.def.circuit, m.def.name), h("span", { class: "badge kind" }, accessKind(m.def)), sourceBadge(m.def), h("span", { class: "mono muted" }, base(m.def.file)), h("span", { class: `badge ${m.def.status}` }, m.def.status),
-      h("span", { class: g.failed ? "err" : "warn" }, g.failed ? "decodes none of this message's telegrams" : `fails on ${m.coverage.errors} of ${m.coverage.distinct} recorded variants (${[...m.coverage.errorKinds.entries()].map(([k, n]) => `${k} ×${n}`).join(", ")})`),
-      h("button", { class: "small", title: "a copy of your own, to fix it in the table", onclick: async () => { try { await upsertMine(m.def.csv); this.refresh(); } catch (err) { toast(err.message, "err"); } } }, "copy"),
-      h("div", { class: "muted", style: "flex-basis:100%;margin-left:24px" }, whyNot(m.def, app.decoder.scan?.[m.def.source] || {}, g.failed ? m.coverage.errorKinds : null, usedDef))))) : null;
+    const body = open ? h("div", { class: "card-body single" }, members.map((c) => h("div", { class: "frow" },
+      h("label", { class: "muted" }, h("input", { type: "checkbox", checked: this.model.included.has(c.def.key), title: "use it anyway", onchange: (e) => (e.target.checked ? setup.choose(row.key, c.def.key, otherKeys, entries) : setup.include(c.def.key, false, entries)) }), " in setup"),
+      chip(c.def.circuit, c.def.name), h("span", { class: "badge kind" }, accessKind(c.def)), sourceBadges(c.def), h("span", { class: "mono muted" }, base(c.def.file)), h("span", { class: `badge ${c.def.status}` }, c.def.status),
+      h("span", { class: c.cov.ok === 0 ? "err" : "warn" }, c.cov.ok === 0 ? "decodes none of this message's telegrams" : `fails on ${c.cov.errors} of ${c.cov.distinct} recorded variants (${[...c.cov.errorKinds.entries()].map(([k, n]) => `${k} ×${n}`).join(", ")})`),
+      h("button", { class: "small", title: "a copy of your own, to fix it in the table", onclick: async () => { try { await upsertMine(c.def.csv); this.refresh(); } catch (err) { toast(err.message, "err"); } } }, "copy"),
+      h("div", { class: "muted", style: "flex-basis:100%;margin-left:24px" }, whyNot(c.def, app.decoder.scanOf(c.def.source) || {}, c.cov.ok === 0 ? c.cov.errorKinds : null, usedDef))))) : null;
     return h("div", { class: `card ${open ? "open" : ""}` }, head, body);
   }
 }

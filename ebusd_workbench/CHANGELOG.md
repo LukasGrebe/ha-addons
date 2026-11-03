@@ -1,6 +1,40 @@
-# 0.5.4 (unreleased)
+# 0.6.0 (unreleased)
+
+A new backbone: a definition is a line of CSV, wherever it comes from, and ebusd's library judges
+it on demand. Everything this browser decoded before is decoded again, once (the browser store
+changes shape); changes of the setup made with earlier versions are dropped, since definitions
+are identified by their line now.
 
 ## Features
+* **The pool**: every source (ebusd's release, the upcoming release, every open pull request of
+  ebusd-configuration, your own lines) is parsed into one pool of distinct definition lines, each
+  with where it comes from. A line is a candidate for the messages it fits (destination, command,
+  message ID, lengths), with its sources as badges; the same line in several files or sources is
+  one row. The list knows what fits without decoding anything. A line shorter than the telegram
+  fits (ebusd reads what its fields need and leaves the rest), one longer does not; a line of
+  your own that needs more bytes than the telegram has stays on its row and says so
+* **Decoded on demand**: ebusd's library runs once over the whole recording with ebusd's own
+  definitions (what it understands today, which definition it picks) and otherwise per message:
+  the open inspector first, then the list in attention order in the background, each a small tree
+  of that message's candidate lines over its telegrams. Results are kept per telegram and line,
+  so nothing is decoded twice, whatever source adds it. Adding a pull request costs nothing
+* **Every open pull request is in**: fetched by the device and compiled here once per commit;
+  its lines are candidates with a PR badge wherever they fit. The search over the pull requests
+  and "add as a source" are gone; *+ add* keeps a pull request after it is merged or closed, or
+  adds a branch of another repository. The strip has one chip for the open pull requests with
+  the list when unfolded (each one can be left out)
+* **Instant start**: the list shows the telegrams this browser holds within a second, with the
+  rest loading; the recording is read by itself on the first visit only, afterwards on request
+  with **↻ load N newer telegrams** (the count is live). No polling of the recording any more
+* **Sort by last received**: the list can be ordered by the newest telegram first
+* **Lines of your own** are one file each for ebusd's library, so a line it rejects only loses
+  itself; the reason shows on its row ("ebusd rejects this line: unknown field type UNI"). A
+  field given a longer type takes its bytes from the raw fields after it (`UCH, HEX:1, HEX:1,
+  HEX:7` with `UIN` on the first becomes `UIN, HEX:7`), a shorter one leaves a raw field behind
+* The timeline, its grouping settings (ID bytes per command, ID rules), the research extras
+  (ebus-evidence profiles, raw log export, pasted telegrams) and their endpoints are gone
+
+## Features of 0.5.4
 * **Nothing waits for ebusd's library any more.** A line of your own shows as a row of the
   inspector the moment it is saved, marked *checking* with a spinner until it has been decoded
   (the page is given back at once; the decode runs in the background with its progress in the

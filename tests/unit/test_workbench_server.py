@@ -80,23 +80,16 @@ class Api(unittest.TestCase):
         self.assertEqual(self.request("DELETE", "/api/status")[0], 405)
 
     def test_telegrams(self):
-        runs = self.get_json(f"/api/telegrams/runs?from={self.end_ms - 3600_000}&to={self.end_ms}")
-        self.assertTrue(runs["rows"])
-        hist = self.get_json(f"/api/telegrams/histogram?from={self.end_ms - 7200_000}&to={self.end_ms}&bucket=3600")
-        self.assertEqual(len(hist["buckets"]), 2)
         distinct = self.get_json(f"/api/telegrams/distinct?from={self.end_ms - 3600_000}&to={self.end_ms}")
         self.assertTrue(all("master" in t for t in distinct["telegrams"]))
-        raw = self.get_json(f"/api/telegrams?from={self.end_ms - 3600_000}&to={self.end_ms}&pb=b5&sb=11&limit=5")
-        self.assertEqual(len(raw["telegrams"]), 5)
-        self.assertEqual(self.request("GET", "/api/telegrams/runs?from=5&to=1")[0], 400)
-
-    def test_telegrams_of_rows_without_address(self):
-        # rows of telegrams too broken to tell source or destination are shown as "--" and can be listed
-        body = self.get_json(f"/api/telegrams?from={self.end_ms - 86400_000}&to={self.end_ms}&qq=--&zz=--&pb=--&sb=--&limit=5")
-        self.assertIsInstance(body["telegrams"], list)
-        for t in body["telegrams"]:
-            self.assertIsNone(t["qq"])
-        self.assertEqual(self.request("GET", f"/api/telegrams?from=0&to=1&qq=zz")[0], 400)
+        self.assertEqual(self.request("GET", "/api/telegrams/distinct?from=5&to=1")[0], 400)
+        self.assertEqual(self.request("GET", "/api/telegrams?from=0&to=1")[0], 404, "the window listing is gone")
+        self.assertEqual(self.request("GET", "/api/telegrams/runs?from=0&to=1")[0], 404, "the timeline is gone")
+        # what a browser that read the recording up to a time has not seen yet
+        status = self.get_json(f"/api/status?since={self.end_ms - 3600_000}")
+        self.assertGreater(status["db"]["telegrams_since"], 0)
+        self.assertLess(status["db"]["telegrams_since"], status["db"]["telegrams"])
+        self.assertNotIn("telegrams_since", self.get_json("/api/status")["db"])
 
     def test_series_endpoint(self):
         body = self.get_json(f"/api/telegrams/series?from={self.end_ms - 3600_000}&to={self.end_ms}&qq=10&zz=08&pb=b5&sb=10&id=00")
@@ -130,29 +123,12 @@ class Api(unittest.TestCase):
         for note in self.get_json("/api/notes?limit=50")["notes"]:
             if note["message"] in ("Dampf vom Abtauen", None):
                 self.request("DELETE", f"/api/events/{note['id']}")
-        code, _, body = self.request("PUT", "/api/settings", {"id_overrides": {"08b509": 5}, "sources": ["660", {"id": "next", "enabled": False}]})
+        code, _, body = self.request("PUT", "/api/settings", {"deploy_subdir": "/sub/", "id_overrides": {"08b509": 5}, "sources": ["660", {"id": "next", "enabled": False}]})
         self.assertEqual(code, 200)
-        self.assertEqual(json.loads(body)["id_overrides"], {"08b509": 5})
+        self.assertEqual(json.loads(body)["deploy_subdir"], "sub")
+        self.assertNotIn("id_overrides", json.loads(body), "settings of the timeline are ignored")
         self.assertEqual(json.loads(body)["sources"], [{"id": "pr/660", "enabled": True}, {"id": "next", "enabled": False}])
         self.assertEqual(self.request("PUT", "/api/settings", {"entities": "x"})[0], 400)
-
-    def test_rawlog_export(self):
-        code, headers, body = self.request("GET", f"/api/export/rawlog?from={self.end_ms - 3600_000}&to={self.end_ms}")
-        self.assertEqual(code, 200)
-        self.assertIn("attachment", headers["Content-Disposition"])
-        lines = body.decode().splitlines()
-        self.assertGreater(len(lines), 50)
-        self.assertRegex(lines[0], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} ([<>][0-9a-f]+)+$")
-        self.assertEqual(self.request("GET", "/api/export/rawlog?from=0&to=99999999999999")[0], 400)
-        # ebusd's own address comes from the settings unless given: its telegrams are split into direction changes
-        own_lines = [l for l in lines if ">" in l]
-        self.assertEqual(self.request("PUT", "/api/settings", {"own_address": "10"})[0], 200)
-        code, _, body = self.request("GET", f"/api/export/rawlog?from={self.end_ms - 3600_000}&to={self.end_ms}")
-        self.assertEqual(code, 200)
-        as_10 = [l for l in body.decode().splitlines() if ">" in l]
-        self.assertNotEqual(len(own_lines), len(as_10))
-        self.assertTrue(all(l.split(" ", 2)[2].startswith(">10") for l in as_10), as_10[:2])
-        self.request("PUT", "/api/settings", {"own_address": "31"})
 
     def test_client_gone_stops_queries(self):
         import socket
@@ -160,7 +136,7 @@ class Api(unittest.TestCase):
         from workbench import server as srv
         a, b = socket.socketpair()
         handler = type("H", (), {"connection": a})()
-        request = srv.Request(handler, "/api/telegrams/runs", {}, {})
+        request = srv.Request(handler, "/api/telegrams/series", {}, {})
         self.assertFalse(request.client_gone())
         b.close()                     # the browser aborted the fetch
         self.assertTrue(request.client_gone())

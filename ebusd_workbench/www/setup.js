@@ -1,46 +1,26 @@
 // The setup of this installation: ebusd's own choice (what it does today with its own
 // definitions) plus your changes: definitions added from other sources or the hidden ones,
 // definitions taken out, the candidate picked for a message, and the names messages, fields and
-// circuits get in your config. Stored in the app's settings so that every browser sees the same
-// setup. Shared by the bus, the scratchpad and the setup column.
+// circuits get in your config. A definition is identified by the content of its line (the pool's
+// hash), wherever it comes from. Stored in the app's settings so that every browser sees the same
+// setup. Shared by the list, the inspector and the setup column.
 import { api, app, bus, toast } from "./app.js";
+import { CSV_HEADER, joinCsv, splitCsv } from "./csv.js";
 
-export const CSV_HEADER = "type,circuit,name,comment,qq,zz,pbsb,id,*name,part,type,divisor/values,unit,comment";
-/** The scratchpad (your own definitions) is a source of definitions like the others: this is its id and its one file. */
+export { CSV_HEADER, joinCsv, splitCsv };
 export const MINE = "mine";
-export const MINE_FILE = "mine.csv";
-/** The key the decoder gives a definition of the scratchpad, from the header of its line (type, circuit, name). */
-export const mineKey = (header) => `${MINE}|${MINE_FILE}|${header.circuit}|${header.name}|${/w/.test(header.type) ? "w" : ""}${/u/.test(header.type) ? "u" : ""}`;
 const NAME_CHARS = /[^A-Za-z0-9_.-]/g;
 const FIELD_COLUMNS = 8;   // type,circuit,name,comment,qq,zz,pbsb,id then groups of 6 per field
 const FIELD_GROUP = 6;
-
-/** Split a CSV line as ebusd reads it (double quotes around values with commas). */
-export function splitCsv(line) {
-  const cells = [];
-  let cell = "", quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (quoted) {
-      if (ch === '"' && line[i + 1] === '"') { cell += '"'; i++; } else if (ch === '"') quoted = false; else cell += ch;
-    } else if (ch === '"') quoted = true;
-    else if (ch === ",") { cells.push(cell); cell = ""; } else cell += ch;
-  }
-  cells.push(cell);
-  return cells;
-}
-
-export function joinCsv(cells) {
-  return cells.map((c) => (/[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(",");
-}
+const isHash = (key) => /^[0-9a-f]{8}$/.test(key);
 
 export const sanitizeName = (name) => String(name || "").trim().replace(NAME_CHARS, "_").slice(0, 60);
 
 class SetupModel {
   constructor() {
     this.data = { added: [], removed: [], circuits: {}, names: {}, chosen: {} };
-    this.legacy = null;   // the whole list of included definitions as earlier versions stored it
     this.timer = null;
+    this.migrated = false;
   }
 
   /** Take the setup from the app settings (after they were loaded or changed elsewhere). */
@@ -53,16 +33,21 @@ class SetupModel {
       names: { ...(s.names || {}) },
       chosen: { ...(s.chosen || {}) },
     };
-    this.legacy = Array.isArray(s.included) ? s.included.slice() : null;
+    // keys of earlier versions (source|file|circuit|name) cannot be mapped to lines: those changes are dropped, once
+    const stale = (k) => !isHash(k);
+    const dropped = this.data.added.filter(stale).length + this.data.removed.filter(stale).length + Object.values(this.data.chosen).filter(stale).length + Object.keys(this.data.names).filter(stale).length;
+    if (dropped) {
+      this.data.added = this.data.added.filter(isHash);
+      this.data.removed = this.data.removed.filter(isHash);
+      for (const [row, key] of Object.entries(this.data.chosen)) if (stale(key)) delete this.data.chosen[row];
+      for (const key of Object.keys(this.data.names)) if (stale(key)) delete this.data.names[key];
+      if (!this.migrated) { this.migrated = true; toast(`${dropped} change${dropped === 1 ? "" : "s"} of your setup from an earlier version could not be carried over (definitions are identified by their line now)`, "info", 8000); this.save(); }
+    }
   }
-
-  /** The source whose choice is ebusd's: the decoder's primary source. */
-  get primary() { return app.decoder?.primary ?? "release"; }
 
   /** ebusd's own choice: the definitions ebusd uses today with its own definitions. */
   baselineKeys(entries) {
-    const primary = this.primary;
-    return (entries || []).filter((e) => e.status === "active" && e.source === primary).map((e) => e.key);
+    return (entries || []).filter((e) => e.status === "active").map((e) => e.key);
   }
 
   /** Whether you changed anything (otherwise ebusd's own choice is the setup). */
@@ -74,14 +59,6 @@ class SetupModel {
   /** The keys of the included definitions: ebusd's choice without what you took out, plus what you added. */
   includedKeys(entries) {
     const base = this.baselineKeys(entries);
-    if (this.legacy && entries?.length) {
-      // an earlier version stored the whole list: its additions and removals against ebusd's choice are kept
-      const wanted = new Set(this.legacy), known = new Set(entries.map((e) => e.key)), baseSet = new Set(base);
-      this.data.added = this.legacy.filter((k) => !baseSet.has(k) && known.has(k));
-      this.data.removed = base.filter((k) => !wanted.has(k));
-      this.legacy = null;
-      this.save();
-    }
     const removed = new Set(this.data.removed);
     const out = base.filter((k) => !removed.has(k));
     const seen = new Set(out);
@@ -190,10 +167,11 @@ class SetupModel {
     this.save();
   }
 
-  /** A definition's CSV line with the names of my config. */
+  /** A definition's CSV line with the names of my config, without its condition (it is chosen for this installation). */
   csvOf(def) {
     const cells = splitCsv(def.csv || "");
     if (cells.length < FIELD_COLUMNS) return def.csv || "";
+    cells[0] = cells[0].replace(/^(\[[^\]]*\])+/, "");
     cells[1] = this.circuitOf(def);
     cells[2] = this.exportName(def);
     const renames = this.data.names[def.key]?.fields || {};

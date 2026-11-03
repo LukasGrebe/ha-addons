@@ -57,24 +57,18 @@ class SettingsFile(unittest.TestCase):
             path = os.path.join(tmp, "data", "settings.json")
             settings = Settings(path)
             self.assertEqual(settings.entities, [])
-            self.assertEqual(settings.as_dict()["id_overrides"], {"b509": 3, "b524": 6})
             changed = settings.update({"entities": ["switch.pump ", "bad entity", "light.x"], "id_bytes": 99,
-                                       "id_overrides": {"B504": "2", "08b509": 5}, "unknown": 1, "deploy_subdir": "/en/"})
+                                       "id_overrides": {"B504": "2"}, "unknown": 1, "deploy_subdir": "/en/"})
             self.assertTrue(changed)
             self.assertEqual(settings.entities, ["light.x", "switch.pump"])
             self.assertFalse(settings.update({"entities": ["light.x", "switch.pump"]}))
             data = Settings(path).as_dict()
-            self.assertEqual((data["id_bytes"], data["id_overrides"], data["deploy_subdir"]), (8, {"b504": 2, "08b509": 5}, "en"))
-            for bad in ({"entities": "x"}, {"id_overrides": {"zz": 1}}, {"id_overrides": {"b509": "x"}}, [], {"sources": 1},
-                        {"own_address": "3"}, {"own_address": "zz"}):
+            self.assertEqual(data["deploy_subdir"], "en")
+            self.assertNotIn("id_overrides", data, "settings of earlier versions are ignored")
+            for bad in ({"entities": "x"}, [], {"sources": 1}, {"own_address": "3"}, {"own_address": "zz"}, {"ui": "x"}):
                 with self.assertRaises((ValueError, TypeError)):
                     settings.update(bad)
             # ebusd's own address and the setup (included definitions, chosen candidates, renames) round-trip
-            settings.update({"id_rules": {"08B51A:05FF3221": 4, "08b509:": 3}})
-            self.assertEqual(settings.as_dict()["id_rules"], {"08b51a:05ff3221": 4, "08b509:": 3})
-            for bad_rule in ({"08b51a:0": 1}, {"08b51a": 1}, {"zzzzzz:00": 1}):
-                with self.assertRaises(ValueError):
-                    settings.update({"id_rules": bad_rule})
             self.assertEqual(settings.as_dict()["own_address"], "31")
             settings.update({"own_address": " F1 "})
             setup = {"included": ["a.csv|c|Name|"], "chosen": {"10→08 b509 0d": "a.csv|c|Name|"},

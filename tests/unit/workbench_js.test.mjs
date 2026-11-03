@@ -1,6 +1,7 @@
-// Node tests of the Workbench's browser modules that need no browser: the setup model's CSV
-// renaming, the Home Assistant YAML generator with renamed messages, the evidence address
-// mapping and the line reconstruction of timeline runs. Run by test_workbench_js.py (node --test).
+// Node tests of the Workbench's browser modules that need no browser: the CSV helpers, the pool of
+// definition lines (parsing, matching, the trees ebusd decodes with), the core's bookkeeping of
+// results and definitions, the setup model's renaming, the Home Assistant YAML generator, the
+// judging helpers and the eBUS specification tables. Run by test_workbench_js.py (node --test).
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -12,24 +13,22 @@ globalThis.location = { hash: "" };
 globalThis.history = { replaceState() {} };
 globalThis.setInterval = () => 0;
 
-const { setup, splitCsv, joinCsv } = await import("../../ebusd_workbench/www/setup.js");
+const { splitCsv, joinCsv, parseDefinition, buildDefinition, splitType, fnv } = await import("../../ebusd_workbench/www/csv.js");
+const { Pool, parseFiles, parseLine, layoutFields, byteLengthOf, candidateKey, layoutOf, dropLevel } = await import("../../ebusd_workbench/www/pool.js");
+const { setup } = await import("../../ebusd_workbench/www/setup.js");
 const { generateHaYaml, generateEbusdOptions } = await import("../../ebusd_workbench/www/hayaml.js");
-const { frameMatches, parseAddressMap, runProfile } = await import("../../ebusd_workbench/www/evidence.js");
-const { lineOfRun, defKeyOf, Decoder } = await import("../../ebusd_workbench/www/decoder.js");
-const { idLengthOf, telegramRowKey } = await import("../../ebusd_workbench/www/colors.js");
 const { app } = await import("../../ebusd_workbench/www/app.js");
+const { Core, mineFiles } = await import("../../ebusd_workbench/www/core.js");
+const { keyOfLine, identityOf } = await import("../../ebusd_workbench/www/mine.js");
 const { seriesFields, seriesValues, nearestPoint, seriesQuery } = await import("../../ebusd_workbench/www/chart.js");
-const log = await import("../../ebusd_workbench/www/log.js");
 const define = await import("../../ebusd_workbench/www/define.js");
-const { differingFields, structuralSignature, rowTelegrams, coverage, groupCandidates, summarizeFields, whyNot, describeDifference, accessKind, locateSource, KIND_CODES, KIND_HELP, describeConditions, kindSuffix } = await import("../../ebusd_workbench/www/compare.js");
+const { rowTelegrams, coverage, summarizeFields, whyNot, accessKind, KIND_CODES, KIND_HELP, describeConditions, kindSuffix } = await import("../../ebusd_workbench/www/compare.js");
+const spec = await import("../../ebusd_workbench/www/ebus-spec.js");
 
-const roomTemp = { key: "release|vaillant/15.700.csv|700|Z1RoomTemp|", circuit: "700", name: "Z1RoomTemp", write: false, passive: false, status: "active", source: "release", sourceLabel: "ebusd's definitions", file: "vaillant/15.700.csv",
-  fields: ["temp"], csv: "r,700,Z1RoomTemp,Room temperature,,15,b524,020000000700,temp,s,D2C,,°C,room temperature" };
-const dayTempW = { key: "pr/660|vaillant/15.700.csv|700|Z1DayTemp|w", circuit: "700", name: "Z1DayTemp", write: true, passive: false, status: "companion", source: "pr/660", sourceLabel: "PR 660", file: "vaillant/15.700.csv",
-  fields: ["temp"], csv: "w,700,Z1DayTemp,Day temperature,,15,b524,020100000700,temp,m,D2C,,°C,day temperature" };
-const dayTemp = { ...dayTempW, key: "release|vaillant/15.700.csv|700|Z1DayTemp|", write: false, status: "active", source: "release", sourceLabel: "ebusd's definitions", csv: dayTempW.csv.replace(/^w/, "r") };
-const hidden = { key: "release|vaillant/15.700.csv|700|Other|", circuit: "700", name: "Other", write: false, passive: false, status: "hidden", source: "release", sourceLabel: "ebusd's definitions", file: "vaillant/15.700.csv", fields: ["value"], csv: "r,700,Other,,,15,b524,0200000a0700,value,s,UCH,,," };
-const entries = [roomTemp, dayTemp, dayTempW, hidden];
+const H9 = "# type (r[1-9];w;u),circuit,level,name,comment,QQ,ZZ,PBSB,ID,field1,part (m/s),datatypes/templates,divider/values,unit,comment\n";
+const H8 = "type,circuit,name,comment,qq,zz,pbsb,id,*name,part,type,divisor/values,unit,comment\n";
+
+// -- csv -------------------------------------------------------------------------------------------------------
 
 test("csv split and join keep quoted commas", () => {
   const line = 'r,c,n,"a, b",,,b509,01,value,s,UCH,"0=x, y;1=z",,';
@@ -37,16 +36,179 @@ test("csv split and join keep quoted commas", () => {
   assert.equal(joinCsv(splitCsv(line)), line);
 });
 
+test("a definition line is split into header and fields and put together again", () => {
+  const csv = "r,hmu,DateTime,date/time,,08,b504,00,dcfstate,s,UCH,0=nosignal;1=ok;2=sync;3=valid,,DCF receiver state,btime,s,BTI,,,time";
+  const parsed = parseDefinition(csv);
+  assert.deepEqual(parsed.header, { condition: "", type: "r", circuit: "hmu", name: "DateTime", comment: "date/time", qq: "", zz: "08", pbsb: "b504", id: "00" });
+  assert.equal(parsed.fields.length, 2);
+  assert.deepEqual(parsed.fields[0], { name: "dcfstate", part: "s", type: "UCH", divisor: "0=nosignal;1=ok;2=sync;3=valid", unit: "", comment: "DCF receiver state" });
+  assert.equal(buildDefinition(parsed), csv, "nothing changes unless the form changes it");
+  parsed.fields.splice(0, 1);
+  parsed.fields[0].unit = "h";
+  assert.equal(buildDefinition(parsed), "r,hmu,DateTime,date/time,,08,b504,00,btime,s,BTI,,h,time");
+  const conditional = parseDefinition("[ehp.type=3]r,ehp,Flow,,,08,b509,0d,flow,s,D2C,,°C,");
+  assert.equal(conditional.header.condition, "[ehp.type=3]");
+  assert.equal(buildDefinition(conditional), "[ehp.type=3]r,ehp,Flow,,,08,b509,0d,flow,s,D2C,,°C,", "the condition stays with the line");
+  assert.equal(parseDefinition('r,c,n,"a, b",,08,b504,00').header.comment, "a, b", "a comma in quotes stays in the cell");
+  assert.deepEqual(splitType("HEX:4"), { code: "HEX", length: "4" });
+  assert.deepEqual(splitType("d2c"), { code: "D2C", length: "" });
+  assert.deepEqual(splitType("STR:*"), { code: "STR", length: "*" });
+  assert.deepEqual(splitType("1 bad"), { code: "", length: "" });
+  assert.match(fnv("abc"), /^[0-9a-f]{8}$/);
+  assert.notEqual(fnv("abc"), fnv("abd"));
+});
+
+// -- the pool -------------------------------------------------------------------------------------------------
+
+const FILES = {
+  "vaillant/08.hmu.csv": H9 + "r,,,Status00,,,,b511,00,temp,s,D2C,,°C,,pressure,s,UCH,10,bar,\nr,,,YieldTotal,,,,b516,1801,ign,,IGN:1,,,,value,,UIN,,kWh,\nw,,,SetMode,,,,b510,00,mode,,UCH,,,,temp,,D2C,,,\n[id_08_sw>=413]r,,,Flow,,,,b511,02,flow,s,D2C,,°C,\n",
+  "vaillant/76.vwz.csv": H9 + "r,,,Status00,,,,b511,00,temp,s,D2C,,°C,,pressure,s,UCH,10,bar,\n",
+  "broadcast.csv": H9 + "u,broadcast,,datetime,Date/Time,,fe,0700,,outsidetemp,,D2B,,°C,,time,,HTI,,,,date,,HDA:3,,,\n",
+  "scan.csv": H9 + "r,scan,,,,,,0704,,mf,,manufacturer,,,,id,,STR:5,,,,sw,,PIN,,,,hw,,PIN,,,\n",
+  "vaillant/_templates.csv": "ignored,,\n",
+  "vaillant/bai.0010002315.inc": H9 + "r,,,Status00,,,,b511,00,temp,s,D2C,,°C,,pressure,s,UCH,10,bar,\n",
+  "vaillant/08.bai.csv": H9 + "!load,bai.0010002315.inc,,,\n",
+};
+
+test("ebusd's files are parsed with their level column; zz, circuit and parts are made explicit", () => {
+  assert.deepEqual(layoutOf(H9), { level: true });
+  assert.deepEqual(layoutOf(H8), { level: false });
+  assert.equal(dropLevel("r,,,Status00,,,,b511,00,temp,s,D2C"), "r,,Status00,,,,b511,00,temp,s,D2C");
+  const hmu = parseLine("r,,,Status00,,,,b511,00,temp,s,D2C,,°C,,pressure,s,UCH,10,bar,", "vaillant/08.hmu.csv", { level: true });
+  assert.deepEqual([hmu.circuit, hmu.name, hmu.zz, hmu.pbsb, hmu.id, hmu.idlen, hmu.write, hmu.passive], ["hmu", "Status00", "08", "b511", "00", 1, false, false]);
+  assert.equal(hmu.csv, "r,hmu,Status00,,,08,b511,00,temp,s,D2C,,°C,,pressure,s,UCH,10,bar,", "the line with zz and circuit from the file name");
+  assert.deepEqual([hmu.m, hmu.s], [{ bytes: 0, fixed: true }, { bytes: 3, fixed: true }]);
+  const write = parseLine("w,,,SetMode,,,,b510,00,mode,,UCH,,,,temp,,D2C,,,", "vaillant/08.hmu.csv", { level: true });
+  assert.equal(write.csv, "w,hmu,SetMode,,,08,b510,00,mode,m,UCH,,,,temp,m,D2C,,,", "a write's fields are in the message itself");
+  const broadcast = parseLine("u,broadcast,,datetime,Date/Time,,fe,0700,,outsidetemp,,D2B,,°C,,time,,HTI,,,,date,,HDA:3,,,", "broadcast.csv", { level: true });
+  assert.equal(broadcast.m.bytes, 8, "a broadcast's fields are in the message itself");
+  const mine = parseLine("r,hmu,Mine,,,08,b511,01,answer,s,HEX:9,,,", "mine/1.csv");
+  assert.deepEqual([mine.zz, mine.s], ["08", { bytes: 9, fixed: true }]);
+  const rest = parseLine("r,hmu,Rest,,,08,b511,01,head,s,UCH,,,,rest,s,HEX:*,,,", "mine/1.csv");
+  assert.deepEqual(rest.s, { bytes: 1, fixed: false });
+  const chained = parseLine("r,Scan,,Id,Scan ID,,,b509,24;25;26;27,ign,,IGN,,,,prefix,,STR:2,,,", "vaillant/scan.csv", { level: true });
+  assert.deepEqual([chained.id, chained.chained], ["24", true]);
+  const conditional = parseLine("[id_08_sw>=413]r,,,Flow,,,,b511,02,flow,s,D2C,,°C,", "vaillant/08.hmu.csv", { level: true });
+  assert.equal(conditional.condition, "[id_08_sw>=413]");
+  assert.equal(parseLine("# a comment", "x.csv"), null);
+  assert.equal(parseLine("*r,,,,,,,", "x.csv"), null, "defaults are not lines");
+  assert.equal(parseLine(H9.trim(), "x.csv"), null, "the header is not a line");
+  assert.deepEqual(layoutFields(parseDefinition("r,c,n,,,08,b511,00,a,s,UCH,,,,b,s,BI0:2,,,,c,s,BI2,,,,d,s,D2C,,,").fields).map((f) => [f.byte, f.len, f.bit, f.bits]), [[0, 1, null, null], [1, 1, 0, 2], [1, 1, 2, 1], [2, 2, null, null]]);
+  assert.deepEqual([byteLengthOf("D2C"), byteLengthOf("HEX:5"), byteLengthOf("BI3"), byteLengthOf("STR:*"), byteLengthOf("temp")], [2, 5, 0, null, null]);
+});
+
+test("the pool matches telegrams by destination, command, ID and lengths, and knows where a line comes from", () => {
+  const parsed = parseFiles(FILES);
+  assert.equal(parsed.lines.size, 8);
+  const inc = [...parsed.lines.values()].find((l) => l.circuit === "bai");
+  assert.deepEqual([inc.zz, inc.name], ["08", "Status00"], "an included file takes destination and circuit from the device file it is named after");
+  assert.ok(parsed.scan, "scan.csv is kept for the trees");
+  const pool = new Pool();
+  pool.setSource("release", "s1", parsed, 0);
+  const names = (hashes) => hashes.map((h) => `${pool.lines.get(h).circuit} ${pool.lines.get(h).name}`).sort();
+  assert.deepEqual(names(pool.matches("1008b5110100", "039b0115")), ["bai Status00", "hmu Status00"]);
+  assert.deepEqual(names(pool.matches("1076b5110100", "039b0115")), ["vwz Status00"]);
+  assert.deepEqual(pool.matches("1008b5110100", "029b01"), [], "a shorter answer than the fields need");
+  assert.deepEqual(names(pool.matches("1008b5110100", "049b011500")), ["bai Status00", "hmu Status00"], "a longer answer decodes: ebusd reads what the fields need and ignores the rest");
+  assert.deepEqual(names(pool.matches("1008b5110102", "029b01")), ["hmu Flow"], "a conditional line is a candidate too");
+  assert.deepEqual(names(pool.matches("3108b516021801", "03000a00")), ["hmu YieldTotal"]);
+  assert.equal(pool.idLengthOf("3108b516021801", "03000a00"), 2);
+  assert.equal(pool.idLengthOf("3108b516021802", "03000a00"), 0, "nothing fits: the default applies");
+  assert.deepEqual(names(pool.matches("10fe0700080080051027100811", null)), ["broadcast datetime"]);
+  assert.deepEqual(names(pool.matches("1008b51004000100ff", "00")), ["hmu SetMode"]);
+  assert.deepEqual(names(pool.matches("3108070400", "0ab5484d55303006055103")), ["scan "]);
+  // the same line in two sources is one line with two references
+  const pr = parseFiles({ "vaillant/08.hmu.csv": H9 + "r,,,Status00,,,,b511,00,temp,s,D2C,,°C,,pressure,s,UCH,10,bar,\nr,,,Status01,,,,b511,01,temp,s,D2C,,°C,\n" });
+  pool.setSource("pr/660", "p1", pr, 10);
+  const status00 = pool.matches("1008b5110100", "039b0115").find((h) => pool.lines.get(h).circuit === "hmu");
+  assert.deepEqual(pool.refs.get(status00).map((r) => r.source), ["release", "pr/660"]);
+  assert.equal(pool.preferredRef(status00).source, "release");
+  assert.deepEqual(names(pool.matches("1008b5110101", "029b01")), ["hmu Status01"]);
+  const tree = pool.treeFor([status00, pool.matches("1008b5110101", "029b01")[0]]);
+  assert.deepEqual(Object.keys(tree.files).sort(), ["pr_660__vaillant_08.hmu__2.csv", "release__vaillant_08.hmu__1.csv", "scan.csv"], "one file per line, under the line's first source");
+  assert.match(tree.files["release__vaillant_08.hmu__1.csv"], /^type,circuit,name,comment,qq,zz,pbsb,id,\*name.*\nr,hmu,Status00,,,08,b511,00,temp,s,D2C,,°C,,pressure,s,UCH,10,bar,\n$/);
+  assert.equal(tree.keys.get("release__vaillant_08.hmu__1.csv|hmu|Status00|"), status00);
+  assert.equal(candidateKey({ file: "release__vaillant_08.hmu__1.csv", circuit: "hmu", name: "Status00", write: false, passive: false }), "release__vaillant_08.hmu__1.csv|hmu|Status00|");
+  pool.removeSource("pr/660");
+  assert.deepEqual(pool.refs.get(status00).map((r) => r.source), ["release"]);
+  assert.deepEqual(pool.matches("1008b5110101", "029b01"), []);
+  assert.equal(parseFiles({ "vaillant/bai.0010002315.inc": H9 + "r,,,X,,,,b511,00,temp,s,D2C,,°C,\n" }).lines.values().next().value.circuit, "bai.0010002315", "an included file without its device file keeps its own name");
+});
+
+// -- the core's bookkeeping ------------------------------------------------------------------------------------
+
+test("the core keys results by the line's content and tells the views what fits, decodes and is ebusd's choice", () => {
+  const core = new Core();
+  core.sourceInfo.set("release", { id: "release", label: "ebusd's definitions", kind: "cdn", stamp: "s1", enabled: true, files: { "scan.csv": "x" } });
+  core.sourceInfo.set("mine", { id: "mine", label: "my definitions", kind: "mine", stamp: "m1", enabled: true });
+  core.pool.setSource("release", "s1", parseFiles(FILES), 0);
+  core.pool.setSource("mine", "m1", parseFiles(mineFiles("r,hmu,Mine,,,08,b511,00,temp,s,D2C,,°C,,rest,s,HEX:1,,,\n")), 90);
+  core.meta.scans[core.scanKeyOf(core.sourceInfo.get("release"))] = { "08": { manufacturer: "Vaillant", ident: "HMU00", sw: "0605", hw: "5103", file: "vaillant/08.hmu.csv" } };
+  const line = "1008b5110100/039b0115";
+  const release = core.pool.matches("1008b5110100", "039b0115").find((h) => core.pool.refs.get(h)[0].source === "release" && core.pool.lines.get(h).circuit === "hmu");
+  const bai = core.pool.matches("1008b5110100", "039b0115").find((h) => core.pool.lines.get(h).circuit === "bai");
+  const mine = core.pool.matches("1008b5110100", "039b0115").find((h) => core.pool.refs.get(h)[0].source === "mine");
+  const t = { line, master: "1008b5110100", slave: "039b0115", n: 12, first_ms: 1000, last_ms: 9000, primary: { stamp: "s1", hash: release } };
+  core.telegrams.set(line, t);
+  core.results.set(line, new Map([[release, { result: "ok", text: "temp=25.69 °C;pressure=1.5 bar", fields: { temp: 25.69, pressure: 1.5 } }]]));
+  assert.equal(core.primary, "release");
+  assert.equal(core.rowKeyOf(t), "08b511:00");
+  assert.equal(core.rowKeyOf({ master: "3108b509030d0f00", slave: "02aabb" }), "08b509:0d0f00", "Vaillant registers have 3 ID bytes even without a definition");
+  const candidates = core.candidatesOf([line]);
+  assert.deepEqual([...candidates.keys()].sort(), [release, bai, mine].sort());
+  assert.deepEqual([candidates.get(release).ok, candidates.get(release).used, candidates.get(release).pending], [1, 1, 0]);
+  assert.deepEqual([candidates.get(mine).ok, candidates.get(mine).pending], [0, 1], "a line of your own not checked yet is pending");
+  assert.equal(candidates.get(release).usedIn, 1, "the release would use it: the file is the one the scan chose");
+  const decoded = core.decodesOf(line);
+  assert.equal(decoded.get(release).used, true);
+  assert.equal(decoded.has(mine), false);
+  assert.equal(core.usedDecode(line).text, "temp=25.69 °C;pressure=1.5 bar");
+  core.rebuildEntries();
+  const active = core.entries.find((e) => e.key === release), own = core.entries.find((e) => e.key === mine);
+  assert.deepEqual([active.status, active.occurrences, active.ok, active.sources], ["active", 12, 1, ["release"]]);
+  assert.deepEqual([own.status, own.pending, own.mine], ["custom", 1, true]);
+  const flow = core.pool.matches("1008b5110102", "029b01")[0];
+  core.telegrams.set("1008b5110102/029b01", { line: "1008b5110102/029b01", master: "1008b5110102", slave: "029b01", n: 1, first_ms: 1, last_ms: 2, primary: { stamp: "s1", hash: null } });
+  core.results.set("1008b5110102/029b01", new Map([[flow, { result: "ok", text: "flow=25.69", fields: { flow: 25.69 } }]]));
+  core.flags.set(flow, { available: false });
+  core.rebuildEntries();
+  assert.equal(core.entries.find((e) => e.key === flow).status, "conditional", "decodes, but its condition was not met");
+  assert.ok(core.entries.some((e) => e.companion && e.name === "SetMode") === false, "a write with other fields is no counterpart");
+  assert.deepEqual(Object.keys(mineFiles("r,a,b,,,08,b511,00\n\n# c\nr,a,c,,,08,b511,01\n")), ["mine/1.csv", "mine/2.csv"]);
+  assert.equal(core.ensureDecoded("08b511:00", [line], "now"), true);
+  assert.equal(core.queue[0].key, "08b511:00");
+  assert.equal(core.keysOf("release").get("vaillant/08.hmu.csv|hmu|Status00|"), release, "ebusd's report of the full tree joins the pool by file, circuit and name");
+});
+
+test("lines of your own are keyed by content and replaced by message", () => {
+  const a = "r,hmu,Mine,,,08,b511,00,temp,s,D2C,,°C,";
+  const b = "r,hmu,Mine,,,08,b511,00,temp,s,UCH,,,";
+  assert.match(keyOfLine(a), /^[0-9a-f]{8}$/);
+  assert.notEqual(keyOfLine(a), keyOfLine(b));
+  assert.equal(identityOf(parseLine(a, "mine/1.csv")), identityOf(parseLine(b, "mine/1.csv")), "the same message");
+  assert.equal(keyOfLine("# not a line"), null);
+});
+
+// -- the setup --------------------------------------------------------------------------------------------------
+
+const roomTemp = { key: "0a0a0a01", circuit: "700", name: "Z1RoomTemp", write: false, passive: false, status: "active", source: "release", sources: ["release"], sourceLabel: "ebusd's definitions", file: "vaillant/15.700.csv",
+  fields: ["temp"], csv: "r,700,Z1RoomTemp,Room temperature,,15,b524,020000000700,temp,s,D2C,,°C,room temperature" };
+const dayTempW = { key: "0a0a0a02", circuit: "700", name: "Z1DayTemp", write: true, passive: false, status: "companion", source: "pr/660", sources: ["pr/660"], sourceLabel: "PR 660", file: "vaillant/15.700.csv",
+  fields: ["temp"], csv: "w,700,Z1DayTemp,Day temperature,,15,b524,020100000700,temp,m,D2C,,°C,day temperature" };
+const dayTemp = { ...dayTempW, key: "0a0a0a03", write: false, status: "active", source: "release", sources: ["release"], sourceLabel: "ebusd's definitions", csv: dayTempW.csv.replace(/^w/, "r") };
+const hidden = { key: "0a0a0a04", circuit: "700", name: "Other", write: false, passive: false, status: "hidden", source: "release", sources: ["release"], sourceLabel: "ebusd's definitions", file: "vaillant/15.700.csv", fields: ["value"], csv: "[id_15_sw>=1]r,700,Other,,,15,b524,0200000a0700,value,s,UCH,,," };
+const entries = [roomTemp, dayTemp, dayTempW, hidden];
+
 test("setup: ebusd's choice until customized, then choose, include and rename", () => {
-  app.settings = { setup: {} };
+  app.settings = { setup: { added: ["release|old|key"], chosen: { row: "release|old|key" } } };
   setup.load();
-  assert.equal(setup.customized, false);
+  assert.equal(setup.customized, false, "keys of an earlier version are dropped");
   assert.deepEqual(setup.includedKeys(entries), [roomTemp.key, dayTemp.key]);
   // choosing a candidate for a row includes it and drops the row's other candidates
-  setup.choose("10→15 b524 0200000a0700", hidden.key, [hidden.key, roomTemp.key], entries);
+  setup.choose("15b524:0200000a0700", hidden.key, [hidden.key, roomTemp.key], entries);
   assert.equal(setup.customized, true);
   assert.deepEqual(setup.includedKeys(entries).sort(), [hidden.key, dayTemp.key].sort());
-  assert.equal(setup.chosenFor("10→15 b524 0200000a0700"), hidden.key);
+  assert.equal(setup.chosenFor("15b524:0200000a0700"), hidden.key);
   setup.include(roomTemp.key, true, entries);
   setup.include(dayTempW.key, true, entries);
   // renaming message, field and circuit flows into the CSV, upstream names stay in the data
@@ -56,7 +218,7 @@ test("setup: ebusd's choice until customized, then choose, include and rename", 
   assert.equal(setup.exportName(roomTemp), "Zone_1_Room_Temperature");
   assert.deepEqual(setup.fieldMap(roomTemp), { temp: "temperature" });
   assert.equal(setup.csvOf(roomTemp), "r,heating,Zone_1_Room_Temperature,Room temperature,,15,b524,020000000700,temperature,s,D2C,,°C,room temperature");
-  assert.equal(setup.csvOf(dayTemp), "r,heating,Z1DayTemp,Day temperature,,15,b524,020100000700,temp,m,D2C,,°C,day temperature");
+  assert.equal(setup.csvOf(hidden), "r,heating,Other,,,15,b524,0200000a0700,value,s,UCH,,,", "the condition is dropped: the line is chosen for this installation");
   const { files } = setup.files(entries, { "pr/660": "PR 660 (HMU HW5103)" });
   assert.deepEqual(Object.keys(files), ["heating.csv"]);
   assert.match(files["heating.csv"], /^# upstream name: 700 Z1RoomTemp \(fields temp→temperature\)\nr,heating,Zone_1_Room_Temperature/m);
@@ -79,137 +241,51 @@ test("home assistant yaml follows the renamed topics and fields but keeps the ro
   assert.match(options, /filter-direction=r\|u\|\^w/);
 });
 
-test("evidence: profile addresses map to this installation", () => {
-  assert.deepEqual(parseAddressMap(" F1=31, 08=18 bad f=1"), { f1: "31", "08": "18" });
-  const frame = { source: "31", target: "08", pbsb: "b509", request: "05540200a80e", response: "0a0102030405060708090a", initiated_by_ebusd: true };
-  const rule = { source: "f1", target: "08", pbsb: "b509", request: "05540200a80e" };
-  assert.equal(frameMatches(frame, rule), false);
-  assert.equal(frameMatches(frame, rule, { f1: "31" }), true);
-  const telegrams = [{ master: "3108b50905540200a80e", slave: "0a0102030405060708090a", n: 3, first_ms: 1000, last_ms: 5000, status: "ok" }];
-  const run = runProfile({ name: "p", version: 1, checks: [{ id: "c", match: rule, value: { from: "response", type: "float32le", offset: 5 } }] }, telegrams, "31", { f1: "31" });
-  assert.equal(run.checks[0].occurrences, 3);
-  assert.equal(run.checks[0].values.size, 1);
-});
+// -- judging candidates over the whole recording -------------------------------------------------------------
 
-test("timeline runs map back to ebusd's hex notation", () => {
-  const row = { qq: 0x10, zz: 0x08, pb: 0xb5, sb: 0x11, id: "01" };
-  assert.equal(lineOfRun(row, { payload: "", slave: "38000000ff00000000", status: "ok" }), "1008b5110101/0938000000ff00000000");
-  assert.equal(lineOfRun({ ...row, id: "0d2800" }, { payload: "", slave: "", status: "ok" }), "1008b511030d2800");
-  assert.equal(lineOfRun({ ...row, zz: null }, { payload: "", slave: "", status: "ok" }), null);
-  assert.equal(lineOfRun(row, { payload: "", slave: "", status: "timeout" }), null);
-  assert.equal(defKeyOf("release", { file: "a.csv", circuit: "c", name: "n", write: true, passive: true }), "release|a.csv|c|n|wu");
-});
+const fake = (telegrams, decodes, matches = {}) => ({ telegrams: new Map(telegrams.map((t) => [t.line, t])), decodesOf: (line) => decodes[line], matchesOf: (t) => matches[t.line] || [] });
 
-// -- comparing candidates over the whole recording ---------------------------------------------------
-
-const defOf = (circuit, name, file, status, csvFieldName = "temp", extra = {}) => ({ key: `${file}|${circuit}|${name}|`, circuit, name, file, status, write: false, passive: false, zz: "15", pbsb: "b524",
-  csv: `r,${circuit},${name},comment ${name},,15,b524,020002000700,${csvFieldName},s,EXP,,°C,comment`, fields: [csvFieldName], source: "base", condition: "", conditions: [], ...extra });
-const ok = (line, key, text, fields) => ({ id: `${line}|${key}`, line, defKey: key, result: "ok", text, fields, used: false });
-const fake = (telegrams, decodes) => ({ telegrams: new Map(telegrams.map((t) => [t.line, t])), decodesOf: (line) => decodes[line] });
-
-test("structural signature ignores names, comments and circuits but not types", () => {
-  const a = "r,700,Hc1ActualFlowTempDesired,flow,,15,b524,020002000700,ign,s,IGN:4,,,,value,s,EXP,,°C,x";
-  const b = "r,720,Hc1FlowTempDesired,other comment,,15,b524,020002000700,ign,s,IGN:4,,,,flow,s,EXP,,°C,y";
-  const c = "r,720,Hc1FlowTempDesired,other,,15,b524,020002000700,ign,s,IGN:4,,,,value,s,D2C,,°C,y";
-  assert.equal(structuralSignature(a), structuralSignature(b));
-  assert.notEqual(structuralSignature(a), structuralSignature(c));
-  assert.equal(structuralSignature(`[id_sw>=413]${a}`), structuralSignature(a), "conditions are not part of what a definition is");
-});
-
-test("candidates over the whole recording are grouped by structure and decoded values", () => {
-  const lines = [["3115b52406060009010700", "0102070000000000", 100], ["3115b52406060009010700", "0102070000005041", 50], ["3115b52406060009010701", "0102070000000000", 10]];
-  const telegrams = lines.map(([m, sl, n], i) => ({ line: `${m}/${sl}`, master: m, slave: sl, n, first_ms: 1000 * (i + 1), last_ms: 2000 * (i + 1) }));
-  const other = { line: "3115b524030d2800/0000", master: "3115b524030d2800", slave: "0000", n: 5, first_ms: 1, last_ms: 2 };   // another row
-  const d700 = defOf("700", "Hc1ActualFlowTempDesired", "vaillant/15.700.csv", "active");
-  const d720 = defOf("720", "Hc1FlowTempDesired", "vaillant/15.720.csv", "variant", "flow");
-  const dBad = defOf("ehp", "Other", "vaillant/08.ehp.csv", "error", "temp", { csv: "r,ehp,Other,,,15,b524,020002000700,temp,s,UCH,,," });
-  const dDiff = defOf("hmu", "Scaled", "vaillant/08.hmu.csv", "hidden", "temp", { csv: "r,hmu,Scaled,,,15,b524,020002000700,temp,s,D2C,,°C," });
-  const decodes = {};
-  for (const t of telegrams) {
-    const n = t.master.endsWith("01") ? "0.0 °C" : t.slave.endsWith("5041") ? "13.0 °C" : "0.0 °C";
-    decodes[t.line] = new Map([
-      [d700.key, ok(t.line, d700.key, `value=${n}`, { value: parseFloat(n) })],
-      [d720.key, ok(t.line, d720.key, `flow=${n}`, { flow: parseFloat(n) })],
-      [dDiff.key, ok(t.line, dDiff.key, `temp=${n}`, { temp: parseFloat(n) * 2 })],
-      [dBad.key, { id: "x", line: t.line, defKey: dBad.key, result: "ERR_INVALID_POS", text: "", fields: null, used: false }],
-    ]);
-  }
-  const decoder = fake([...telegrams, other], decodes);
-  const row = { qq: 0x31, zz: 0x15, pb: 0xb5, sb: 0x24, id: "060009010700" };
-  assert.deepEqual(rowTelegrams(decoder, row).map((t) => t.line), [telegrams[0].line, telegrams[1].line]);
-  assert.equal(rowTelegrams(decoder, { ...row, id: "" }).length, 4, "without an ID the whole command belongs to the row");
-  const rowLines = rowTelegrams(decoder, row);
-  const cov = coverage(decoder, rowLines, d700.key);
-  assert.deepEqual([cov.distinct, cov.ok, cov.errors, cov.occurrences, cov.first_ms, cov.last_ms], [2, 2, 0, 150, 1000, 4000]);
-  assert.equal(cov.fields.get("value").max, 13);
-  assert.deepEqual(summarizeFields(cov), [{ name: "value", kind: "range", min: 0, max: 13, distinct: 2 }]);
-  const { groups, total } = groupCandidates(decoder, [d700, d720, dDiff, dBad].map((def) => ({ def })), rowLines, { chosenKey: d700.key, usedKey: d700.key });
-  assert.equal(total, 4);
-  // 700 and 720 are the same definition (names differ) and decode the same values; the scaled one differs; the failing one is last
-  assert.deepEqual(groups.map((g) => g.members.map((m) => m.def.circuit)), [["700", "720"], ["hmu"], ["ehp"]]);
-  assert.equal(groups[0].hasChosen, true);
-  assert.deepEqual(groups[0].names, ["700 Hc1ActualFlowTempDesired", "720 Hc1FlowTempDesired"]);
-  assert.deepEqual(groups[0].fieldNames, ["temp", "flow"], "differently named fields are shown");
-  assert.equal(groups[1].fieldNames, null);
-  assert.equal(groups[2].failed, true);
-  assert.equal(groups[2].coverage.errorKinds.get("ERR_INVALID_POS"), 2);
+test("coverage of a definition over the telegrams of a message, with what is still to check", () => {
+  const telegrams = [{ line: "a", master: "3115b52406060009010700", n: 100, first_ms: 1, last_ms: 5 }, { line: "b", master: "3115b52406060009010700", n: 50, first_ms: 2, last_ms: 9 }, { line: "c", master: "3115b52406060009010700", n: 1, first_ms: 3, last_ms: 4 }];
+  const ok = (text, fields) => ({ result: "ok", text, fields });
+  const core = fake(telegrams, { a: new Map([["k", ok("v=7", { v: 7 })]]), b: new Map([["k", ok("v=9", { v: 9 })], ["x", { result: "ERR_INVALID_POS" }]]) }, { c: ["k"] });
+  const cov = coverage(core, telegrams, "k");
+  assert.deepEqual([cov.ok, cov.errors, cov.pending, cov.occurrences, cov.okOccurrences], [2, 0, 1, 150, 150]);
+  assert.equal(cov.latest.text, "v=9");
+  assert.deepEqual([...cov.values.keys()], ["v=7", "v=9"]);
+  assert.deepEqual(summarizeFields(cov), [{ name: "v", kind: "range", min: 7, max: 9, distinct: 2 }]);
+  const bad = coverage(core, telegrams, "x");
+  assert.deepEqual([bad.ok, bad.errors, [...bad.errorKinds]], [0, 1, [["ERR_INVALID_POS", 1]]]);
+  assert.equal(rowTelegrams(core, { qq: null, zz: 0x15, pb: 0xb5, sb: 0x24, id: "060009", anyQq: true }).length, 3);
+  assert.equal(rowTelegrams(core, { qq: null, zz: 0x15, pb: 0xb5, sb: 0x24, id: "0601", anyQq: true }).length, 0);
 });
 
 test("why a candidate is not what ebusd uses", () => {
-  const scan = { "15": { manufacturer: "Vaillant", ident: "BASV2", sw: "0507", hw: "1704", file: "vaillant/15.700.csv" } };
-  assert.match(whyNot({ ...defOf("720", "X", "vaillant/15.720.csv", "variant"), zz: "15" }, scan), /only loaded for another device variant.*BASV2.*SW 0507.*loads 15\.700\.csv/);
-  assert.match(whyNot(defOf("720", "X", "vaillant/15.720.csv", "variant"), {}), /No identification of device 15 was recorded/);
-  const conditional = defOf("ehp", "X", "vaillant/50.ehp.csv", "conditional", "temp", { condition: "[Ehp_heatpumptype=3]",
-    conditions: [{ name: "Ehp_heatpumptype", circuit: "ehp", message: "HeatPumpType", field: "type", value: [3] }, { name: "id_sw", circuit: "scan", message: "scan", field: "SW", value: [413, 4294967295] }] });
-  assert.match(whyNot(conditional, scan), /\[Ehp_heatpumptype=3\].*ehp HeatPumpType type = 3 and the device identification SW ≥ 413/);
-  assert.match(whyNot(defOf("a", "b", "a.csv", "hidden"), scan), /finds another definition first/);
-  const used = { ...defOf("hmu", "SetMode", "vaillant/08.hmu.HW5103.csv", "active"), passive: true, write: true };
-  assert.match(whyNot(defOf("hmu", "SetMode", "vaillant/08.hmu.HW5103.csv", "hidden"), scan, null, used), /finds hmu SetMode \(passive write\) from 08\.hmu\.HW5103\.csv first/);
-  assert.match(whyNot(defOf("a", "b", "a.csv", "error"), scan, new Map([["ERR_INVALID_POS", 2]])), /ERR_INVALID_POS ×2/);
+  const scan = { 15: { manufacturer: "Vaillant", ident: "70000", sw: "0413", hw: "6903", file: "vaillant/15.700.csv" } };
+  assert.match(whyNot({ status: "variant", zz: "15", file: "vaillant/15.720.csv" }, scan), /15\.720\.csv is only loaded for another device variant.*identifies as Vaillant 70000.*loads 15\.700\.csv/);
+  assert.match(whyNot({ status: "variant", zz: "26", file: "vaillant/26.vr_70.csv" }, scan), /No identification of device 26/);
+  assert.match(whyNot({ status: "conditional", condition: "[id_sw>=413]", conditions: [{ circuit: "scan", message: "scan", field: "SW", value: [413, 4294967295] }], file: "x.csv" }, scan), /condition \[id_sw>=413\] was not met.*SW ≥ 413/);
+  assert.match(whyNot({ status: "hidden", file: "x.csv" }, scan, null, { circuit: "700", name: "Z1RoomTemp", file: "vaillant/15.700.csv", write: false, passive: false }), /finds 700 Z1RoomTemp \(active read\) from 15\.700\.csv first/);
+  assert.match(whyNot({ status: "error", file: "x.csv" }, scan, new Map([["ERR_INVALID_POS", 3]])), /does not decode.*ERR_INVALID_POS ×3/);
+  assert.match(whyNot({ status: "error", file: "x.csv", error: "element not found, field type UNI in field 0" }, scan), /rejects this line: element not found/);
+  assert.equal(whyNot({ status: "active", file: "x.csv" }, scan), "ebusd uses this definition.");
+  assert.match(whyNot({ status: "pending", file: "x.csv" }, scan), /Not checked/);
 });
 
-test("two groups that decode the same values are told apart by access kind and structure", () => {
-  const passive = { circuit: "hmu", name: "SetMode", passive: true, write: true, csv: "uw,hmu,SetMode,Operation mode,,08,b510,00,hcmode,m,UCH,0=auto;1=off,,mode,flow,m,D1C,,°C," };
-  const active = { circuit: "hmu", name: "SetMode", passive: false, write: true, csv: "w,hmu,SetMode,Operation mode,,08,b510,00,hcmode,m,UCH,0=auto;1=off,,mode,flow,m,D1C,,°C," };
-  assert.deepEqual([accessKind(passive), accessKind(active)], ["passive write", "active write"]);
-  assert.notEqual(structuralSignature(passive.csv), structuralSignature(active.csv));
-  const diff = describeDifference(passive, active);
-  assert.equal(diff.length, 1);
-  assert.match(diff[0], /^passive write \(ebusd only listens.*\) instead of active write \(ebusd sends this value/);
-  const retyped = { ...active, csv: active.csv.replace("D1C", "D2C") };
-  assert.deepEqual(describeDifference(active, retyped), ["field flow: D1C °C instead of D2C °C"]);
-  assert.deepEqual(describeDifference(active, { ...active }), []);
+test("conditions and kinds are put in words", () => {
+  const def = { conditions: [{ name: "Ehp_heatpumptype", circuit: "ehp", message: "HeatPumpType", field: "type", value: [3] }, { name: "id_sw", circuit: "scan", message: "scan", field: "SW", value: [413, 4294967295] }] };
+  assert.equal(describeConditions(def), "ehp HeatPumpType type = 3 and the device identification SW ≥ 413");
+  assert.equal(describeConditions({}), "");
+  assert.equal(kindSuffix({ passive: false, write: false }), "");
+  assert.equal(kindSuffix({ passive: true, write: true }), " · passive write");
+  assert.equal(accessKind({ passive: true, write: false }), "passive read");
+  const kinds = Object.entries(KIND_CODES).map(([k, code]) => `${k} · ${KIND_HELP[k]} · ${code}`);
+  assert.equal(kinds[0], "active read · ebusd polls this value from the device · r");
 });
 
-test("prefix rules decide the message ID length of a telegram, the longest prefix wins", () => {
-  const settings = { id_bytes: 1, id_overrides: { b509: 3 }, id_rules: { "08b51a:05ff3221": 4, "08b51a:05": 2, "08b509:0d0f": 2 } };
-  const m = (zz, cmd, data) => `31${zz}${cmd}${(data.length / 2).toString(16).padStart(2, "0")}${data}`;
-  assert.equal(idLengthOf(m("08", "b51a", "05ff32210000"), settings), 4);
-  assert.equal(idLengthOf(m("08", "b51a", "05ff32300000"), settings), 2);
-  assert.equal(idLengthOf(m("08", "b51a", "04003400"), settings), 1, "no rule: the default");
-  assert.equal(idLengthOf(m("08", "b509", "0d0f0000"), settings), 2, "a rule beats the command's length");
-  assert.equal(idLengthOf(m("08", "b509", "0d020000"), settings), 3, "other telegrams of the command keep it");
-  assert.equal(idLengthOf(m("15", "b51a", "05ff32210000"), settings), 1, "rules are per destination");
-  assert.equal(telegramRowKey(m("08", "b51a", "05ff32210000"), settings), "3108b51a05ff3221");
-});
+// -- the value history ---------------------------------------------------------------------------------------
 
-test("rows follow the definitions: rules only where the grouping differs", () => {
-  const decoder = new Decoder();
-  decoder.build = { id: "b", sources: [{ id: "release", label: "ebusd's definitions", kind: "csv", filesId: "release@1", files: {} }] };
-  assert.equal(decoder.primary, "release");
-  const line = (data) => `3108b51a${(data.length / 2).toString(16).padStart(2, "0")}${data}/0100`;
-  const known = line("05ff32210000"), unknown = line("04003400");
-  decoder.telegrams = new Map([known, unknown].map((l) => [l, { line: l, master: l.split("/")[0] }]));
-  const def = { key: "release|08.hmu.csv|hmu|Yield|", source: "release", idlen: 4 };
-  decoder.defs = new Map([[def.key, def]]);
-  decoder.decodes = new Map([[known, new Map([[def.key, { defKey: def.key, source: "release", result: "ok", used: true }]])], [unknown, new Map()]]);
-  const settings = { id_bytes: 1, id_overrides: {}, id_rules: {} };
-  assert.deepEqual([...decoder.idRules(settings)], [["08b51a:05ff3221", 4]]);
-  assert.deepEqual([...decoder.idRules({ ...settings, id_rules: { "08b51a:05ff3221": 4 } })], [], "already grouped like the definition");
-  assert.deepEqual([...decoder.idRulesFor([...decoder.telegrams.values()], settings)], [["08b51a:05ff3221", 4]]);
-});
-
-test("value history: points of a row get the values a definition decoded", () => {
+test("value history: points of a message get the values a definition decoded", () => {
   const data = { lines: ["a", "b", "c"], points: [[1000, 0], [2000, 1], [3000, 0], [4000, 2]], total: 4, stride: 1 };
   const ok = (value) => ({ result: "ok", fields: { temp: value }, text: `temp=${value}` });
   const decoder = { decodesOf: (line) => ({ a: new Map([["k", ok(10)]]), b: new Map([["k", ok(12.5)]]), c: new Map([["k", { result: "ERR_INVALID_POS" }]]) })[line] };
@@ -227,7 +303,7 @@ test("value history: points of a row get the values a definition decoded", () =>
 
 // -- defining a message from the recording -------------------------------------------------------------
 
-test("a definition is prefilled from the row and the telegrams", () => {
+test("a definition is prefilled from the message and the telegrams", () => {
   const row = { qq: 0x10, zz: 0x08, pb: 0xb5, sb: 0x11, id: "01" };
   const telegram = (answer, ms) => ({ line: `1008b5110101/${answer}`, master: "1008b5110101", slave: answer, n: 5, first_ms: ms, last_ms: ms + 100 });
   const samples = define.samplesOf([telegram("04380200", 1000), telegram("04380300", 2000)], 1);
@@ -241,9 +317,10 @@ test("a definition is prefilled from the row and the telegrams", () => {
   const broadcast = { qq: 0x10, zz: 0xfe, pb: 0xb5, sb: 0x16, id: "00" };
   assert.equal(define.defaultHeader(broadcast, [{ s: null }], {}).type, "u", "broadcast: passive");
   assert.equal(define.defaultHeader(broadcast, [{ s: null }], {}).circuit, "broadcast");
-  assert.equal(define.defaultHeader({ qq: 0x10, zz: 0x15, pb: 0xb5, sb: 0x24, id: "" }, [{ s: [1] }], {}).circuit, "dev15");
   assert.equal(define.isMasterAddress(0x31), true);
   assert.equal(define.isMasterAddress(0x08), false);
+  const csv = define.buildCsv({ type: "r", circuit: "hmu", name: "Test", comment: "c, d", qq: "", zz: "08", pbsb: "b511", id: "01" }, { m: [], s: define.initialSegments(3) });
+  assert.equal(csv, 'r,hmu,Test,"c, d",,08,b511,01,answer,s,HEX:3,,,');
 });
 
 test("bytes are analysed and interpreted over the history", () => {
@@ -252,113 +329,31 @@ test("bytes are analysed and interpreted over the history", () => {
   const a = define.analyzeBytes(samples, "s");
   assert.equal(a.length, 3);
   assert.deepEqual(a.bytes.map((b) => b.distinct), [1, 3, 1]);
-  assert.equal(a.latest.last_ms, 3);
   const d2c = define.interpretations(samples, "s", 1).find((i) => i.type === "D2C");
   assert.equal(d2c.latest, 0x01c8 / 16);
   assert.equal(d2c.name, "16 bit divided by 16", "the plain name travels with the interpretation");
   assert.deepEqual([d2c.min, d2c.max], [0x01a0 / 16, 0x01c8 / 16]);
   assert.equal(define.interpretations(samples, "s", 1).find((i) => i.type === "ULG"), undefined, "a type that needs more bytes than there are does not fit");
-  assert.equal(define.interpretations([sample("ff", 1)], "s", 0).find((i) => i.type === "D1C").validRatio, 0, "0xff is the replacement value of D1C");
-});
-
-test("segments tile the bytes; interpreting a byte splits the raw field; the CSV follows", () => {
-  const shape = (segs) => segs.map((s) => [s.offset, s.len, s.type]);
-  let segs = define.initialSegments(5);
-  assert.deepEqual(shape(segs), [[0, 5, "HEX"]]);
-  segs = define.applyType(segs, 5, 1, "D2C");
-  assert.deepEqual(shape(segs), [[0, 1, "HEX"], [1, 2, "D2C"], [3, 2, "HEX"]]);
-  segs = define.applyType(segs, 5, 2, "UCH");                // overlaps the D2C field: what is left of it becomes raw again
-  assert.deepEqual(shape(segs), [[0, 2, "HEX"], [2, 1, "UCH"], [3, 2, "HEX"]]);
-  segs = define.applyType(segs, 5, 3, "IGN", 2);
-  assert.deepEqual(shape(segs), [[0, 2, "HEX"], [2, 1, "UCH"], [3, 2, "IGN"]]);
-  assert.equal(segs.reduce((n, s) => n + s.len, 0), 5, "the segments always cover every byte");
-  const named = define.nameSegments(define.applyType(define.applyType(define.initialSegments(4), 4, 0, "D2C"), 4, 2, "D2C"), "s");
-  assert.deepEqual(named.map((s) => s.name), ["value", "value2"], "unnamed fields get valid unique names");
-  const header = { type: "r", circuit: "hmu", name: "Test", comment: "c, d", qq: "", zz: "08", pbsb: "b511", id: "01" };
-  const csv = define.buildCsv(header, { m: [], s: define.applyType(define.initialSegments(3), 3, 1, "D2C") });
-  assert.equal(csv, 'r,hmu,Test,"c, d",,08,b511,01,answer,s,HEX:1,,,,value1,s,D2C,,,');
-  assert.equal(define.customKey({ circuit: "hmu", name: "Test", type: "uw" }), "mine|mine.csv|hmu|Test|wu");
-});
-
-test("a compiled definition is traced back to the line of its TypeSpec model", () => {
-  const files = {
-    "vaillant/08.hmu.tsp": "import x;\n\nnamespace Hmu {\n  /** comment */\n  model SetMode {\n  }\n  model TotalEnergyUsage {\n  }\n}\n",
-    "vaillant/08.bai.tsp": "namespace Bai {\n  model SetMode {\n  }\n}\n",
-    "vaillant/_templates.tsp": "alias Common = 1;\n",
-  };
-  assert.deepEqual(locateSource(files, { file: "vaillant/08.hmu.csv", name: "TotalEnergyUsage" }), { path: "vaillant/08.hmu.tsp", line: 7 });
-  assert.deepEqual(locateSource(files, { file: "vaillant/08.bai.csv", name: "SetMode" }), { path: "vaillant/08.bai.tsp", line: 2 }, "the file named like the CSV wins");
-  assert.deepEqual(locateSource(files, { file: "vaillant/08.ehp.csv", name: "SetMode" }), { path: "vaillant/08.hmu.tsp", line: 5 }, "else a neighbour that has the model");
-  assert.equal(locateSource(files, { file: "vaillant/08.hmu.csv", name: "Missing" }), null);
-});
-
-// -- noting events like the terminal's log command ------------------------------------------------------------
-
-test("the form turns into the terminal's log command", () => {
-  const today = new Date(2026, 9, 27, 12, 0, 0);
-  const at = (h, m, s = 0, ms = 0, d = 27) => new Date(2026, 9, d, h, m, s, ms).getTime();
-  assert.equal(log.durationText(500), "500ms");
-  assert.equal(log.durationText(2000), "2s");
-  assert.equal(log.durationText(600_000), "10m");
-  assert.equal(log.durationText(3600_000), "1h");
-  assert.equal(log.durationText(90_000), "90s");
-  assert.deepEqual([log.fromMs(600_000), log.fromMs(500), log.fromMs(7200_000)], [{ value: 10, unit: "min" }, { value: 500, unit: "ms" }, { value: 2, unit: "h" }]);
-  assert.equal(log.toMs(10, "min"), 600_000);
-  const base = { today, beforeMs: 500, afterMs: 500 };
-  assert.equal(log.logCommand({ ...base, message: "Modus auf Einschaltempfehlung geändert", now: true }), "log Modus auf Einschaltempfehlung geändert");
-  assert.equal(log.logCommand({ ...base, message: "Modus geändert", ms: at(8, 52, 23), beforeMs: 2000, afterMs: 2000 }), "log 8:52:23 ~2s Modus geändert");
-  assert.equal(log.logCommand({ ...base, message: "Dampf vom Abtauen", ms: at(8, 50), beforeMs: 600_000, afterMs: 0 }), "log 8:50:00 -10m Dampf vom Abtauen");
-  assert.equal(log.logCommand({ ...base, message: "x", ms: at(8, 50), beforeMs: 600_000, afterMs: 30_000 }), "log 8:50:00 -10m+30s x");
-  assert.equal(log.logCommand({ ...base, message: "Warmwasser auf 50 °C", ms: at(22, 15, 0, 0, 26), whole: true }), "log 2026-10-26 22:15 Warmwasser auf 50 °C", "another day: with the date; only the minute known");
-  assert.equal(log.logCommand({ ...base, message: "8:30 ist es passiert", now: true }), "log -- 8:30 ist es passiert", "a message that looks like a time needs --");
-  assert.equal(log.logCommand({ ...base, message: "", now: true }), "log", "only the time");
-  assert.equal(log.logCommand({ ...base, message: "x", ms: at(8, 52, 23, 500) }), "log 8:52:23.5 x");
-  assert.deepEqual(log.eventRange({ ms: at(8, 52, 23), beforeMs: 2000, afterMs: 2000, whole: false }), { ms: at(8, 52, 23), min: at(8, 52, 21), max: at(8, 52, 25) });
-  assert.deepEqual(log.eventRange({ ms: at(8, 52, 23), beforeMs: 0, afterMs: 0, whole: true }), { ms: at(8, 52), min: at(8, 52), max: at(8, 53) }, "8:52 is 8:52:00 to 8:53:00");
-});
-
-test("dropdown texts: plain name, explanation, then the CSV shorthand", () => {
-  assert.equal(define.typeOption("UCH"), "unsigned byte · whole number 0 to 255 · UCH");
-  assert.match(define.typeOption("D2C"), /^16 bit divided by 16 · two bytes in 1\/16 steps, e\.g\. a temperature.* · D2C$/);
-  assert.equal(define.typeOption("IGN"), "ignored bytes · skipped, not decoded · IGN");
   assert.deepEqual(Object.keys(define.TYPES).filter((t) => !define.TYPES[t].name || !define.TYPES[t].label), [], "every type has a name and an explanation");
-  const names = Object.values(define.TYPES).map((t) => t.name);
-  assert.equal(new Set(names).size, names.length, "the plain names tell the types apart");
-  const kinds = Object.entries(KIND_CODES).map(([k, code]) => `${k} · ${KIND_HELP[k]} · ${code}`);
-  assert.equal(kinds[0], "active read · ebusd polls this value from the device · r");
-  assert.equal(kinds[3], "passive write · ebusd only listens: it decodes a command another device sends, e.g. the controller setting a mode · uw");
 });
 
-test("conditions and kinds are put in words", () => {
-  const def = { conditions: [{ name: "Ehp_heatpumptype", circuit: "ehp", message: "HeatPumpType", field: "type", value: [3] }, { name: "id_sw", circuit: "scan", message: "scan", field: "SW", value: [413, 4294967295] }] };
-  assert.equal(describeConditions(def), "ehp HeatPumpType type = 3 and the device identification SW ≥ 413");
-  assert.equal(describeConditions({}), "");
-  assert.equal(kindSuffix({ passive: false, write: false }), "");
-  assert.equal(kindSuffix({ passive: true, write: true }), " · passive write");
-});
+// -- the eBUS specification ------------------------------------------------------------------------------------
 
-test("a definition line is split into header and fields and put together again", async () => {
-  const { parseDefinition, buildDefinition, splitType } = await import("../../ebusd_workbench/www/definition-edit.js");
-  const csv = "r,hmu,DateTime,date/time,,08,b504,00,dcfstate,s,UCH,0=nosignal;1=ok;2=sync;3=valid,,DCF receiver state,btime,s,BTI,,,time";
-  const parsed = parseDefinition(csv);
-  assert.deepEqual(parsed.header, { condition: "", type: "r", circuit: "hmu", name: "DateTime", comment: "date/time", qq: "", zz: "08", pbsb: "b504", id: "00" });
-  assert.equal(parsed.fields.length, 2);
-  assert.deepEqual(parsed.fields[0], { name: "dcfstate", part: "s", type: "UCH", divisor: "0=nosignal;1=ok;2=sync;3=valid", unit: "", comment: "DCF receiver state" });
-  assert.equal(buildDefinition(parsed), csv, "nothing changes unless the form changes it");
-  parsed.fields.splice(0, 1);
-  parsed.fields[0].unit = "h";
-  assert.equal(buildDefinition(parsed), "r,hmu,DateTime,date/time,,08,b504,00,btime,s,BTI,,h,time");
-  // a condition belongs to the source: a version of your own applies whenever it matches
-  assert.equal(buildDefinition(parseDefinition("[ehp.type=3]r,ehp,Flow,,,08,b509,0d,flow,s,D2C,,°C,")), "r,ehp,Flow,,,08,b509,0d,flow,s,D2C,,°C,");
-  assert.equal(parseDefinition('r,c,n,"a, b",,08,b504,00').header.comment, "a, b", "a comma in quotes stays in the cell");
-  assert.deepEqual(splitType("HEX:4"), { code: "HEX", length: "4" });
-  assert.deepEqual(splitType("d2c"), { code: "D2C", length: "" });
-  assert.deepEqual(splitType("1 bad"), { code: "", length: "" });
-});
-
-test("fields whose decoded values differ between two definitions", () => {
-  const cov = (fields) => ({ fields: new Map(Object.entries(fields).map(([name, values]) => [name, { name, values: new Map(values.map((v) => [String(v), 1])) }])) });
-  assert.deepEqual(differingFields(cov({ a: [1, 2], b: ["x"] }), cov({ a: [2, 1], b: ["x"] })), [], "the same values, whatever the order");
-  assert.deepEqual(differingFields(cov({ a: [1, 2], b: ["x"] }), cov({ a: [1, 2], b: ["y"] })), ["b"]);
-  assert.deepEqual(differingFields(cov({ a: [1], b: [2] }), cov({ a: [1] })), ["b"], "a field only one of them decodes");
+test("addresses and commands are named from the specification and the scan", () => {
+  assert.equal(spec.isMaster(0x10), true);
+  assert.equal(spec.isMaster(0x08), false);
+  assert.equal(spec.slaveOf(0x03), 0x08);
+  assert.equal(spec.slaveOf(0xff), 0x04);
+  assert.equal(spec.masterOf(0x15), 0x10);
+  const devices = { "08": { ident: "HMU00", hw: "5103" }, 15: { ident: "70000", hw: "6903" } };
+  assert.equal(spec.addressName("08", { devices }), "HMU HW5103");
+  assert.equal(spec.addressName("10", { devices }), "700 HW6903", "a master is named after its slave side");
+  assert.equal(spec.addressName("31", { devices, own: "31" }), "ebusd");
+  assert.equal(spec.addressName("03", {}), "burner control unit 1");
+  assert.equal(spec.addressName("fe", {}), "broadcast");
+  assert.equal(spec.addressName("52", {}), "mixer 3");
+  assert.match(spec.describeAddress("10", { devices }), /master 2 of the specification/);
+  assert.equal(spec.commandInfo("0704").service, "identification (manufacturer, device id, software and hardware version)");
+  assert.match(spec.commandInfo("b509").primary, /Vaillant/);
+  assert.equal(spec.manufacturerName(0xb5), "Vaillant");
 });

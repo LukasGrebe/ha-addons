@@ -56,11 +56,11 @@ Everything is on one page; nothing opens in a tab, a popover or a dialog.
 | Region | What it is |
 |---|---|
 | **Top bar** | What the app is doing right now (fetching, compiling, reading the recording, decoding), the database and the Home Assistant connection. |
-| **Definitions from** | The sources: each one with how many of its definitions fit your bus, what it adds compared with ebusd's own definitions, a checkbox to leave it out, ↻ to fetch it again. **+ add** lists the open pull requests of ebusd-configuration, the ones that mention your devices first, and takes a pull request number, `owner/repo#branch` or a GitHub URL. |
+| **Definitions from** | The sources: ebusd's definitions, the upcoming release, every open pull request of ebusd-configuration (one chip, the list when unfolded) and your own lines, each with how many of its definitions fit your bus; a checkbox leaves one out, ↻ fetches it again. **+ add** keeps a pull request after it is merged or closed, or adds `owner/repo#branch`. |
 | **Messages on the bus** | The devices on the bus, each with what ebusd loads for it and how much of its traffic it understands, and the messages as a list that leads with what needs a look. Click a message: its inspector opens right under it. |
-| **The inspector** | Under the selected message: its telegram byte by byte with every definition that fits it as a row (the fields over the bytes they read, what each decodes, a sparkline per field), all of it editable; the chart of a field; the definitions that fail; the search over the open pull requests. |
+| **The inspector** | Under the selected message: its telegram byte by byte with every definition that fits it as a row, from every source at once (the fields over the bytes they read, what each decodes, a sparkline per field), all of it editable; the chart of a field; the definitions that fail. |
 | **My setup** | On the right: ebusd's own choice plus your changes, everything else that fits the bus, your own definition lines, how it shows up in Home Assistant, and saving for the eBUSd app. It folds to a rail while a message is inspected, so that the inspector has the width. |
-| **Advanced** | One folded line at the bottom: research with ebus-evidence, the browser store, pasted telegrams, settings, about this app. |
+| **Advanced** | One folded line at the bottom: the browser store, settings, about this app. |
 
 ### How to go about it
 
@@ -78,19 +78,24 @@ Everything is on one page; nothing opens in a tab, a popover or a dialog.
 
 ## Sources
 
-A source is a complete set of definition files, exactly what ebusd would load with
-`--configpath` pointing at it. Every source decodes the recording on its own, so a definition is
-attributed to its source exactly, the same message from two sources shows up as two candidates
-(grouped when they decode the same values), and "ebusd's choice" means what ebusd does today
-with its own definitions.
+A definition is a line of CSV; a source is where lines come from. Every source is parsed into
+one **pool** of distinct lines (by content, with the destination, circuit and field parts made
+explicit, as ebusd fills them in), each with the sources and files it appears in. A line is a
+candidate for the messages it fits by destination, command, message ID and lengths; the same
+line in several files or sources is one candidate with several badges. ebusd's library (as
+WebAssembly in this browser) judges the candidates: once over the whole recording with ebusd's
+own definitions, exactly as the eBUSd app would ("ebusd's choice"), and otherwise per message
+on demand, a small tree of that message's candidate lines over its telegrams. Results are kept
+per telegram and line, so nothing is decoded twice.
 
 | Source | What it is |
 |---|---|
 | **ebusd's definitions** (`release`) | The CSV files at [ebus.github.io](https://ebus.github.io), what the eBUSd app loads by default. Ready to use, no compile. |
 | **upcoming release** (`next`) | The `next/` folder of the same site: the definitions of the next ebusd release, compiled from the current master of ebusd-configuration. |
-| **PR 660** (`pr/660`) | The head of a pull request of [ebusd-configuration](https://github.com/john30/ebusd-configuration/pulls): TypeSpec sources, compiled to CSV in your browser with the official [eBUS TypeSpec library](https://github.com/john30/ebus-typespec), once per commit. Definitions for a heating system often sit in open pull requests for a long time (for a Vaillant aroTHERM with HMU HW5103, for example). |
+| **open pull requests** | Every open pull request of [ebusd-configuration](https://github.com/john30/ebusd-configuration/pulls), fetched by the device and compiled to CSV in your browser with the official [eBUS TypeSpec library](https://github.com/john30/ebus-typespec), once per commit. Definitions for a heating system often sit in open pull requests for a long time (for a Vaillant aroTHERM with HMU HW5103, for example); their lines are candidates with a PR badge wherever they fit. Unfold the chip for the list; untick one to leave it out. |
+| **PR 660** (`pr/660`) | A pull request kept as a source of its own (**+ add** with its number): its definitions stay after it is merged or closed. |
 | **owner/repo#branch** | A branch of another GitHub repository: TypeSpec sources (`src/`) compiled like a pull request, or CSV files used as they are. |
-| **my definitions** | The scratchpad: ebusd CSV lines of your own (see below). |
+| **my definitions** | ebusd CSV lines of your own (see below). |
 
 The device fetches a source as one snapshot (a tarball) from GitHub over HTTPS: no git, no
 token, no clone with history. A pull request's title and commit come from the GitHub API, which
@@ -104,14 +109,12 @@ what they import. Such a source carries a *partial* badge; its definitions are r
 choice" and its counts cover those files only.
 
 Both strips fold (▾ / ▸, remembered per browser): the sources into one line with the names, how
-many are off and one combined bar for fetching and decoding; the devices into one line of
-address and model.
+many are off and one combined bar for fetching, compiling, ebusd's run over the recording and the
+messages being checked; the devices into one line of address and model.
 
-A source says what it adds compared with ebusd's definitions: `+17 new, 12 changed` means
-17 definitions that the release does not have at all and 12 that differ (by file, circuit, name
-and direction). Hover for the commit and when it was fetched. Untick a source to leave it out
-(its decodings are kept, so ticking it again is instant); ↻ fetches it again when the pull
-request was updated; ✕ removes it.
+A source says how many of its lines fit your bus. Hover for the commit and when it was fetched.
+Untick a source to leave it out (what it decoded is kept, so ticking it again is instant);
+↻ fetches it again when the pull request was updated; ✕ removes one you added.
 
 ---
 
@@ -137,10 +140,10 @@ asked. Rows are built from the browser store, so filtering is instant.
 |---|---|
 | message | the name of the definition it is shown with (the one you picked, else ebusd's choice, else one in your setup, else what another source would use) with its kind; without one, the address, command and ID in hex and **＋ define** |
 | ▾ | the message whose inspector is open; a second click (or Esc) closes it |
-| understood by | `ebusd` when ebusd's own definitions decode it today; the other sources that would; *fits, but ebusd would not use it* when definitions match but are hidden (another device variant, an unmet condition); *nothing* when no definition anywhere fits |
+| understood by | `ebusd` when ebusd's own definitions decode it today; the other sources whose definition would be used and decodes it (a dashed badge: it fits, not checked with ebusd's library yet); *fits, but ebusd would not use it* when definitions match but are hidden (another device variant, an unmet condition); *nothing* when no definition anywhere fits |
 | latest value | decoded with the row's definition, else the hex |
 | telegrams, values, last seen | how much traffic, how many distinct telegrams (values), when the last one was recorded |
-| fits | how many definitions from every source fit the message: the rows of the inspector |
+| fits | how many definitions from every source fit the message: the rows of the inspector (in italics while some are not checked yet) |
 | setup | whether the row's definition is in your setup |
 
 **needs a look** (the default) lists what ebusd does not understand, most traffic first, with the
@@ -148,9 +151,14 @@ messages other sources understand (blue) before the unknown ones (orange); **unk
 and **other sources know them** are the two halves of it; **all messages** lists everything by
 device, and folds commands with many messages (the registers of `b524`) into one line; **in my
 setup** what you chose. The filter box matches names, circuits, addresses and commands.
+**what matters** / **last received** orders the list by traffic (and device) or by the newest
+telegram first.
 
-While a message's inspector is open the list **stays put**: new telegrams do not move the rows
-until you close the inspector or change the filter.
+The list never changes by itself: the recording is read into the browser on the first visit, and
+afterwards **↻ load N newer telegrams** in the toolbar reads what was recorded since (the count
+is kept current). While a message's inspector is open the list **stays put** too. What the list
+shows is checked with ebusd's library in the background, in the list's order, so "fits" firms up
+as you watch.
 
 ### Events
 
@@ -231,7 +239,10 @@ changed, a line of your own changed), never while you type; what you selected an
 scrolled stays. Stepping through the telegrams repaints only the telegram row and the values.
 Nothing waits for ebusd's library: a line of your own shows as a row the moment it is saved,
 marked *checking* until it has been decoded (the progress is in the sources strip and the top
-bar); a shorter type on a raw field (`HEX:9` → `HEX:5`) leaves the rest as a raw field of its own.
+bar); a shorter type on a raw field (`HEX:9` → `HEX:5`) leaves the rest as a raw field of its own,
+a longer type takes its bytes from the raw fields that follow. A line whose fields need more
+bytes than the telegram carries stays on its row, marked so; a line shorter than the telegram
+decodes (ebusd reads what the fields need, the bytes after them stay unexplained).
 
 Statuses of a definition:
 
@@ -249,34 +260,27 @@ Statuses of a definition:
 reachable in the *N definitions that fail* card below the table, each with the reason, with *in
 setup* and *copy* as well.
 
-### Searching the open pull requests for a message
+### The open pull requests
 
-The open pull requests are the way to a definition: their search sits right under the table and
-runs by itself for a message nothing is set up for (once per message and page, never over a
-running search). **search the open pull requests for this message** asks every open pull
-request of ebusd-configuration (the ones that are not sources yet) whether it decodes the
-message: the device fetches them once (a tarball each, cached), the browser compiles each once
-per commit (cached) and runs ebusd's decoder over the recorded telegrams of the message with it.
-The first search takes a few minutes; what it found stays in the browser store per message and
-shows at once when the message is opened again, and a search again only runs the pull requests
-with a new commit or more telegrams of the message (a pull request compiled before is not even
-loaded from the device again). The result lists the pull requests
-that decode the message, with the definition's name, whether ebusd would use it with that pull
-request (or it is hidden in a file for another variant) and the latest decoded value; **+ add as
-a source** makes it a source like the others and says what happens: the device fetches it from
-GitHub, the browser compiles it and decodes the recording with the telegrams of the inspected
-message first, so its rows appear in the inspector after the first batch while the rest goes on
-in the background. This is how a message no source understands, or
-one that another pull request may name better (an outside temperature called `temp_2`), is found
-without reading the pull requests by hand.
+Every open pull request of ebusd-configuration is in: the device fetches each one once (a tarball,
+cached), the browser compiles it once per commit (cached) and its lines join the pool. A message
+no source of ebusd's understands shows the pull requests whose lines fit it as candidates, with
+the definition's name, whether ebusd would use it with that pull request (or it is hidden in a
+file for another variant) and what it decodes, checked with ebusd's library when the message is
+opened. This is how a message ebusd's own definitions do not know, or one that another pull
+request may name better (an outside temperature called `temp_2`), is found without reading the
+pull requests by hand. A pull request whose base is older than today's TypeSpec library is
+compiled partially (only the files it changes); one that does not compile at all is marked so in
+the list of pull requests.
 
 ### Your own definitions
 
 Your definitions are ebusd CSV lines, one per message, stored in the app's settings (every
-browser sees them). They are a source like the others: decoded as soon as they change (only the
-telegrams of the commands your lines define go through ebusd's library, so a new line is checked
-in a moment), shown as rows of kind *mine* wherever they fit, never ebusd's choice. They come
-from the inspector (**copy** on a row, a changed type, divisor or unit, **＋ a definition of your
+browser sees them). They are a source of the pool like the others: checked on the messages they
+fit the moment they are saved (this message first), shown as rows of kind *mine* wherever they
+fit, never ebusd's choice. Every line goes to ebusd's library as a file of its own, so a line it
+rejects (a typo like `UNI:2`) only loses itself, and the reason shows on its row. They come from
+the inspector (**copy** on a row, a changed type, divisor or unit, **＋ a definition of your
 own**) or from **My definitions** in the setup column, where lines from a forum post, an issue or
 a file are pasted; that list says how each line fares over the recording and removes one with ✕.
 
@@ -321,23 +325,6 @@ setup's messages, writable ones included. Then restart the eBUSd app.
 
 ---
 
-## Research with ebus-evidence
-
-Paste an [ebus-evidence](https://github.com/MarcelT87/ebus-evidence) profile (YAML) or load the
-bundled example (`hw5103-open-evidence`, MIT License, MarcelT87) and **Run checks on the bus
-window**: for every check the matching telegrams of the window are counted, the first and last
-occurrence shown and the value the check describes decoded. **Download summary** saves it as
-JSON for discussion. **Addresses** maps the addresses a profile names to the ones on your bus,
-`f1=31` by default (ebusd's own address is whatever `--address` says: `31` in the eBUSd app,
-`f1` in the profile author's installation).
-
-**ebusd raw log**: the recorded telegrams of a time range as ebusd message-mode raw log
-(`--lograwdata`), the input of ebus-evidence. Run `ebus-evidence doctor --raw FILE --profile
-hw5103-open-evidence`, `import --raw FILE` and `export` on another computer to get a verified
-`evidence.zip`.
-
----
-
 ## Folders
 
 | Container path | Host path | Content |
@@ -356,12 +343,15 @@ The compiler and the decoder are loaded into the browser on first use (about 1.8
 
 - Only public GitHub repositories and pull requests of john30/ebusd-configuration are sources
   (no token, no other hosts). Other definitions come in by pasting their lines.
-- Pull requests are compiled in the browser (the full ebusd-configuration takes a few seconds)
-  and every source decodes the whole recording (a week with 47 000 distinct telegrams takes about
-  two minutes per source, once); ten sources are fine, dozens are not. Leave sources you are done
-  with unticked.
-- The decodings live in the browser: another browser decodes the recording again (a few seconds
-  per source) but sees the same setup and the same definitions of your own.
+- Pull requests are compiled in the browser (the full ebusd-configuration takes a few seconds
+  each, once per commit; the first visit with 40-odd open pull requests takes a few minutes).
+  ebusd's own definitions decode the whole recording once (a week with 47 000 distinct telegrams
+  takes about two minutes); every other candidate is checked per message when it is shown.
+- A condition that refers to another message (not the device identification) is evaluated with
+  the message's own telegrams only: such a line may show as *conditional* although ebusd would
+  use it, or the other way round. Tick it for your setup if its values look right.
+- The decodings live in the browser: another browser reads and decodes the recording again but
+  sees the same setup and the same definitions of your own.
 - There is no editor for TypeSpec sources any more: a definition of your own is an ebusd CSV
   line. To contribute it upstream, open a pull request of ebusd-configuration with the TypeSpec
   equivalent (the [ebus notebook](https://marketplace.visualstudio.com/items?itemName=ebusd.ebus-notebook)

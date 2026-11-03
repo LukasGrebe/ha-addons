@@ -2,12 +2,12 @@
 // the inspector of the selected message right under its row (every definition that fits it, from
 // every source, over the bytes of the telegram, to compare, tune and pick), the setup of this
 // installation on the right (what is chosen, how it looks in Home Assistant, save for ebusd), the
-// sources at the top and the less frequent things (research, settings) at the bottom. This module is the shell: API helper,
-// status bar with the activity of the app, the views and the event bus between them.
+// sources at the top and the less frequent things (settings, the store) at the bottom. This module
+// is the shell: API helper, status bar with the activity of the app, the views and the event bus.
 import { MessagesView } from "./messages.js";
-import { Decoder } from "./decoder.js";
+import { Core } from "./core.js";
 import { setup } from "./setup.js";
-import { Builder, SourcesStrip } from "./sources.js";
+import { Sources, SourcesStrip } from "./sources.js";
 import { Scratchpad } from "./scratchpad.js";
 import { SetupPanel } from "./setup-panel.js";
 import { Extras } from "./extras.js";
@@ -116,7 +116,7 @@ export const fmt = {
   count: (n) => Number(n || 0).toLocaleString(),
 };
 
-// a tiny event bus for the views (bus <-> scratchpad <-> setup)
+// a tiny event bus for the views (list <-> inspector <-> setup)
 export const bus = {
   handlers: {},
   on(name, fn) { (this.handlers[name] ??= []).push(fn); },
@@ -126,13 +126,14 @@ export const bus = {
 export const app = { status: null, settings: null, views: {}, decoder: null, builder: null, compileState: null, api };
 window.workbench = app;  // for debugging and tests
 
-/** What the app is busy with, in one place: fetching sources, compiling, reading the recording, decoding, loading the window. */
+/** What the app is busy with, in one place: fetching sources, compiling, reading the recording, decoding. */
 export function activity() {
   const parts = [];
   let fraction = null;
   for (const s of app.status?.sources?.sources || []) if (s.busy) parts.push(`${s.busy.what}… ${fmt.duration(Date.now() - s.busy.since * 1000)}`);
   if (app.compileState?.busy) parts.push(app.compileState.text);
   const st = app.decoder?.status();
+  if (st?.loading) parts.push(st.loading);
   if (st?.progress) { parts.push(st.progress); fraction = st.fraction; }
   const newer = app.decoder?.newTelegrams || 0;
   if (newer && app.views?.pad?.isOpen) parts.push(`${fmt.count(newer)} newer telegram${newer === 1 ? "" : "s"} · the list is paused while you inspect`);
@@ -154,7 +155,7 @@ export function updateActivity() {
     el.classList.add("err");
     append(el, h("span", { class: "text", title: error }, error));
   } else if (st?.build) {
-    append(el, h("span", { class: "text muted", title: `${st.build.summary}\n${st.decoded} of ${st.telegrams} distinct telegrams decoded with every source; store: ${st.store}` },
+    append(el, h("span", { class: "text muted", title: `${st.decoded} of ${st.telegrams} distinct telegrams decoded with ebusd's own definitions; store: ${st.store}` },
       `${fmt.count(st.definitions)} definitions fit your bus · ${fmt.count(st.known)} of ${fmt.count(st.telegrams)} telegrams known to ebusd`));
   }
 }
@@ -171,14 +172,15 @@ function updateStatusBar() {
   const ha = s.ha;
   const haState = !ha.configured ? "warn" : ha.connected ? "ok" : "err";
   const haText = !ha.configured ? "HA: not available" : ha.connected ? `HA: ${ha.entities.length} entities` : "HA: disconnected";
-  bar.appendChild(h("span", { class: `chip ${haState}`, title: ha.last_error || "state changes of the entities picked in the settings are drawn as flags in the events lane" }, haText));
+  bar.appendChild(h("span", { class: `chip ${haState}`, title: ha.last_error || "state changes of the entities picked in the settings are recorded next to the telegrams" }, haText));
   bar.appendChild(h("a", { class: "help", href: "https://github.com/LukasGrebe/ha-addons/blob/main/ebusd_workbench/DOCS.md", target: "_blank", rel: "noopener", title: "documentation" }, "?"));
   updateActivity();
 }
 
 export async function refreshStatus() {
   try {
-    app.status = await api.get("api/status");
+    const since = app.decoder?.meta?.lastSync;
+    app.status = await api.get(`api/status${since ? `?since=${Math.floor(since)}` : ""}`);
     app.settings = app.status.settings;
     updateStatusBar();
     bus.emit("status", app.status);
@@ -191,8 +193,8 @@ export async function refreshStatus() {
 async function main() {
   await refreshStatus();
   setup.load();
-  app.decoder = new Decoder();
-  app.builder = new Builder();
+  app.decoder = new Core();
+  app.builder = new Sources();
   app.views.sources = new SourcesStrip(document.getElementById("sources"));
   app.views.messages = new MessagesView(document.getElementById("messages"));
   app.views.pad = new Scratchpad(app.views.messages);
@@ -202,11 +204,10 @@ async function main() {
   bus.on("status", (status) => { setup.load(); app.builder.onStatus(status); updateActivity(); });
   bus.on("compile-state", (state) => { app.compileState = state; updateActivity(); });
   bus.on("decodes-changed", () => updateActivity());
-  bus.on("activity", () => updateActivity());
-  const poll = async () => { await refreshStatus(); setTimeout(poll, (app.status?.sources?.sources || []).some((s) => s.busy) ? 2000 : 10_000); };
-  setTimeout(poll, 10_000);
+  const poll = async () => { await refreshStatus(); setTimeout(poll, (app.status?.sources?.sources || []).some((s) => s.busy) ? 3000 : 15_000); };
+  setTimeout(poll, 15_000);
   // the browser-side copy of the recording and its decodings; the views listen to "decodes-changed"
-  app.decoder.init().then(() => app.builder.onStatus(app.status)).catch((err) => { console.error(err); toast(`store failed: ${err.message}`, "err", 8000); });
+  app.decoder.init().then(() => { app.builder.onStatus(app.status); refreshStatus(); }).catch((err) => { console.error(err); toast(`store failed: ${err.message}`, "err", 8000); });
   setInterval(updateActivity, 1000);
 }
 

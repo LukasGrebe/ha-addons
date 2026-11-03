@@ -12,59 +12,17 @@
 import { app, append, fmt, h, toast } from "./app.js";
 import { messageColors } from "./colors.js";
 import { accessKind, describeConditions, whyNot } from "./compare.js";
-import { buildDefinition, parseDefinition, splitType } from "./definition-edit.js";
+import { buildDefinition, parseDefinition, splitType } from "./csv.js";
+import { byteLengthOf, layoutFields, parseLine, partLength } from "./pool.js";
 import { TYPES } from "./define.js";
 import { addressName, commandInfo, describeAddress, describeCommand } from "./ebus-spec.js";
-import { MINE, mineKey, setup } from "./setup.js";
-import { mineLines, removeMine, upsertMine } from "./mine.js";
+import { MINE, setup } from "./setup.js";
+import { identityOf, mineLines, removeMine, upsertMine } from "./mine.js";
 
-/** Bytes a data type takes (bits for BI0..BI7); types with :n take n (bytes, or bits for BIx). */
-const TYPE_LEN = {
-  UCH: 1, SCH: 1, D1B: 1, D1C: 1, BCD: 1, HCD: 1, PIN: 2, UIN: 2, SIN: 2, UIR: 2, SIR: 2, D2B: 2, D2C: 2, FLT: 2, FLR: 2,
-  ULG: 4, SLG: 4, ULR: 4, SLR: 4, EXP: 4, EXR: 4, TTM: 1, TTH: 1, TTQ: 1, HTI: 3, BTI: 3, VTI: 3, HTM: 2, BTM: 2, VTM: 2, MIN: 2,
-  BDA: 3, HDA: 3, BDZ: 2, DTM: 4, VDA: 3, BDY: 1, HDY: 1, DAY: 2, TEM_P: 2, NTS: 1, STR: 1, HEX: 1, IGN: 1, NUL: 1,
-};
 const chip = (circuit, name) => { const c = messageColors(circuit, name); return h("span", { class: "chip-msg", style: `color:${c.text};background:${c.background};border-color:${c.border}` }, `${circuit} ${name}`); };
 const hexToBytes = (hex) => (hex || "").match(/../g)?.map((b) => parseInt(b, 16)) || [];
-
-/** The bytes a type takes as written in a CSV (0 for a bit field). */
-export function byteLengthOf(type) {
-  const { code, length } = splitType(type);
-  if (/^BI[0-7]$/.test(code)) return 0;
-  return length ? Math.max(1, Number(length) || 1) : (TYPE_LEN[code] ?? 1);
-}
-
-/**
- * Where the fields of a definition sit: [{name, part, type, divisor, unit, comment, byte, len, bit, bits}].
- * Bit fields (BI0..BI7) in ascending order share a byte; a new byte starts at a non-bit field or when the
- * bit index does not grow.
- */
-export function layoutFields(csv) {
-  const { fields } = parseDefinition(csv);
-  const pos = { m: 0, s: 0 };
-  const bitByte = { m: null, s: null };
-  return fields.map((f) => {
-    const part = f.part === "m" ? "m" : "s";
-    const { code, length } = splitType(f.type);
-    const out = { ...f, part, code };
-    const bitMatch = /^BI([0-7])$/.exec(code);
-    if (bitMatch) {
-      const index = Number(bitMatch[1]);
-      const bits = Math.max(1, Number(length) || 1);
-      let byte;
-      if (bitByte[part] && index > bitByte[part].last) byte = bitByte[part].byte;
-      else { byte = pos[part]; pos[part] += 1; }
-      bitByte[part] = { byte, last: index + bits - 1 };
-      Object.assign(out, { byte, len: 1, bit: index, bits });
-    } else {
-      bitByte[part] = null;
-      const len = length ? Math.max(1, Number(length)) : (TYPE_LEN[code] ?? 1);
-      Object.assign(out, { byte: pos[part], len, bit: null, bits: null });
-      pos[part] += len;
-    }
-    return out;
-  });
-}
+const sourceBadge = (id) => h("span", { class: `tbadge ${id === MINE ? "custom" : id === "release" ? "" : "src"}`, title: `from ${app.decoder.source(id)?.label || id}` }, id === MINE ? "mine" : app.decoder.source(id)?.label || id);
+export { byteLengthOf, layoutFields };
 
 /** A tiny chart: a line for numbers, dots on lanes for words; points [{ms, value}]. */
 export function sparkline(canvas, points, { t0, t1, width = 110, height = 26 } = {}) {
@@ -129,7 +87,7 @@ function freeName(fields, base) {
 
 /**
  * The inspector of a message. Returns the element with showTelegram(index), index() and markSelected(defKey, field).
- * @param ctx {row, telegrams, defs: [{def, group}], decoder, view, telegramIndex, selected: {defKey, field},
+ * @param ctx {row, telegrams, defs: [{def, coverage}], decoder, view, telegramIndex, selected: {defKey, field},
  *   onTelegram(index), onSelect(defKey, field), onChange(), onNew(), included: Set, otherKeys, usedKey, usedDef, defKey}
  */
 export function inspector(ctx) {
@@ -140,14 +98,12 @@ export function inspector(ctx) {
   const sorted = telegrams.slice().sort((a, b) => (b.last_ms || 0) - (a.last_ms || 0));   // newest first
   let index = Math.max(0, Math.min(sorted.length - 1, ctx.telegramIndex || 0));
   const bytesOf = (t) => ({ m: hexToBytes((t?.master || "").slice(10 + idBytes * 2)), s: hexToBytes((t?.slave || "").slice(2)) });
-  // a row of your own shows the line as it is saved: the decoder's copy lags behind while the line is checked
   const lines = mineLines();
-  const csvOf = (def) => (def.source === MINE ? lines.find((l) => l.key === def.key)?.line : null) || def.csv;
   // the columns: every byte of each part, a byte split into bits where some definition reads bits
-  const layouts = ctx.defs.map((d) => { const csv = csvOf(d.def); return { ...d, csv, fields: layoutFields(csv) }; });
+  const layouts = ctx.defs.map((d) => ({ ...d, csv: d.def.csv, fields: layoutFields(parseDefinition(d.def.csv).fields).filter((f) => f.len !== 0 || f.bit !== null) }));
   const maxLen = { m: 0, s: 0 };
   for (const t of sorted.slice(0, 200)) { const b = bytesOf(t); maxLen.m = Math.max(maxLen.m, b.m.length); maxLen.s = Math.max(maxLen.s, b.s.length); }
-  for (const l of layouts) for (const f of l.fields) maxLen[f.part] = Math.max(maxLen[f.part], f.byte + f.len);
+  for (const l of layouts) for (const f of l.fields) maxLen[f.part] = Math.max(maxLen[f.part], f.byte + (f.len ?? 1));
   const bitBytes = new Set();
   for (const l of layouts) for (const f of l.fields) if (f.bit !== null) bitBytes.add(`${f.part}${f.byte}`);
   const columns = [];   // {part, byte, bit}
@@ -159,8 +115,9 @@ export function inspector(ctx) {
     const start = colIndex(f.part, f.byte, f.bit === null ? null : f.bit);
     if (start < 0) return null;
     if (f.bit !== null) return { start, span: Math.max(1, Math.min(f.bits, 8 - f.bit)) };
+    const len = f.len === null ? Math.max(1, maxLen[f.part] - f.byte) : f.len;   // a field that takes the rest
     let span = 0;
-    for (let b = f.byte; b < f.byte + f.len; b++) span += bitBytes.has(`${f.part}${b}`) ? 8 : 1;
+    for (let b = f.byte; b < f.byte + len; b++) span += bitBytes.has(`${f.part}${b}`) ? 8 : 1;
     return { start, span };
   };
   const signature = (f) => `${f.part}|${f.code}${f.bits ? ":" + f.bits : ""}|${f.divisor}|${f.unit}`;
@@ -189,9 +146,9 @@ export function inspector(ctx) {
   const defCells = [];      // {defKey, pending, label: td, cells: [{field, unit, td}]} repainted per telegram
   const fieldCells = new Map();   // "defKey|field" -> [td] to mark the selected field
   for (const l of layouts) {
-    const def = l.def, g = l.group, csv = l.csv;
-    const mine = def.source === MINE;
-    const pending = !!def.pending;
+    const def = l.def, cov = l.coverage, csv = l.csv;
+    const mine = def.sources?.includes(MINE) || def.source === MINE;
+    const pending = !!cov && cov.decoded === 0 && cov.pending > 0 && !def.error;
     const isRef = reference && reference.def.key === def.key;
     const chosen = pickKey === def.key;
     const parsed = parseDefinition(csv);
@@ -204,11 +161,16 @@ export function inspector(ctx) {
         h("label", { class: "insetup", title: chosen ? "used for this message and part of your setup" : "use this definition for this message: it joins your setup, the message's other definitions leave it" },
           h("input", { type: "checkbox", checked: ctx.included.has(def.key), onchange: (e) => (e.target.checked ? setup.choose(row.key, def.key, ctx.otherKeys, decoder.entries) : setup.include(def.key, false, decoder.entries)) })),
         chip(def.circuit, def.name),
-        h("span", { class: `tbadge ${mine ? "custom" : def.source === "release" ? "" : "src"}` }, mine ? "mine" : def.sourceLabel || def.source),
-        g?.members?.length > 1 ? h("span", { class: "tmeta", title: `the same definition in ${g.members.length} files: ${g.members.map((m) => m.def.file.replace(/^.*\//, "")).join(", ")}` }, `×${g.members.length}`) : null,
+        (def.sources || [def.source]).slice(0, 3).map((id) => sourceBadge(id)),
+        (def.sources || []).length > 3 ? h("span", { class: "tmeta", title: def.sources.map((id) => app.decoder.source(id)?.label || id).join(", ") }, `+${def.sources.length - 3}`) : null,
+        def.refs?.length > 1 ? h("span", { class: "tmeta", title: `the same line in ${def.refs.length} places: ${def.refs.map((r) => `${app.decoder.source(r.source)?.label || r.source}: ${r.file.replace(/^.*\//, "")}`).join(", ")}` }, `×${def.refs.length}`) : null,
         def.key === ctx.usedKey ? h("span", { class: "tbadge active", title: "what ebusd uses today" }, "ebusd's choice") : null),
-      h("div", { class: "defmeta muted", title: pending ? "your line is being checked against every recorded telegram of this message" : `${def.file}\n${describeConditions(def) ? `only when ${describeConditions(def)}\n` : ""}${def.key === ctx.usedKey ? "ebusd uses this definition today." : whyNot(def, decoder.scan?.[def.source] || {}, null, ctx.usedDef)}` },
-        accessKind(def), pending ? [" · ", h("span", { class: "spinner" }), " checking over the recording…"] : g?.coverage ? (g.coverage.errors ? h("span", { class: "warn" }, ` · fails on ${g.coverage.errors} of ${g.coverage.distinct}`) : h("span", { class: "ok" }, ` · decodes all ${fmt.count(g.coverage.ok)}`)) : null),
+      h("div", { class: "defmeta muted", title: pending ? "being checked against every recorded telegram of this message" : `${def.file}\n${describeConditions(def) ? `only when ${describeConditions(def)}\n` : ""}${def.key === ctx.usedKey ? "ebusd uses this definition today." : whyNot(def, decoder.scanOf(def.source) || {}, null, ctx.usedDef)}` },
+        accessKind(def),
+        def.error ? h("span", { class: "err" }, ` · ebusd rejects this line: ${def.error}`)
+          : def.nomatch ? h("span", { class: "err", title: "the fields of this line need more bytes than the recorded telegrams carry: a type or a length is wrong" }, " · the fields need more bytes than the telegram has")
+          : pending ? [" · ", h("span", { class: "spinner" }), " checking…"]
+          : cov ? (cov.errors ? h("span", { class: "warn" }, ` · fails on ${cov.errors} of ${cov.distinct}${cov.pending ? `, ${cov.pending} to check` : ""}`) : h("span", { class: "ok" }, ` · decodes all ${fmt.count(cov.ok)}${cov.pending ? `, ${cov.pending} to check` : ""}`)) : null),
       h("div", { class: "defacts" },
         h("span", { class: "muted" }, "name "), nameInput,
         mine ? h("button", { class: "small", title: "remove this line from your definitions", onclick: async () => { if (confirm(`Remove ${def.circuit} ${def.name} from your definitions?`)) await removeMine(def.key); } }, "remove") : h("button", { class: "small", title: "a copy of your own (mine), to change it freely", onclick: async () => { try { await upsertMine(def.csv); toast(`${def.circuit} ${def.name} copied: the copy (mine) is below`); ctx.onChange?.(); } catch (err) { toast(err.message, "err"); } } }, "copy")));
@@ -235,15 +197,28 @@ export function inspector(ctx) {
         if (!mine && key === "name") { setup.renameField(def, f.name, value); return; }
         input?.blur();
         // several edits on a source's row go into the one copy: the second edit builds on the copy the first made
-        const copy = mine ? null : lines.find((x) => x.key === mineKey(parseDefinition(def.csv).header))?.line;
+        const copy = mine ? null : lines.find((x) => identityOf(x.parsed) === identityOf(parseLine(def.csv, "mine/x.csv")))?.line;
         const next = parseDefinition(copy || csv);
         const target = next.fields[fieldIndex];
         if (!target) return;
         target[key] = value.trim();
-        // a raw field made shorter leaves bytes behind: they become a raw field of their own, to be carved further
+        // a field made shorter leaves bytes of the telegram behind: they become a raw field of their own, to be carved
+        // further; a field made longer takes them from the raw fields that follow it
         if (key === "type" && f.bit === null) {
-          const was = f.len, now = byteLengthOf(target.type);
-          if (now > 0 && now < was) next.fields.splice(fieldIndex + 1, 0, { name: freeName(next.fields, target.name || "field"), part: target.part, type: `HEX:${was - now}`, divisor: "", unit: "", comment: "" });
+          const { bytes, fixed } = partLength(next.fields, target.part);
+          const have = bytesOf(sorted[index])[target.part].length;   // the telegram shown right now
+          if (fixed && bytes < have) next.fields.splice(fieldIndex + 1, 0, { name: freeName(next.fields, target.name || "field"), part: target.part, type: `HEX:${have - bytes}`, divisor: "", unit: "", comment: "" });
+          else if (fixed && bytes > have) {
+            let excess = bytes - have;
+            for (let i = fieldIndex + 1; i < next.fields.length && excess > 0; i++) {
+              const g = next.fields[i];
+              if (g.part !== target.part) continue;
+              const { code } = splitType(g.type);
+              if (!["HEX", "IGN", "STR"].includes(code)) break;
+              const len = byteLengthOf(g.type) || 0;
+              if (len <= excess) { excess -= len; next.fields.splice(i, 1); i--; } else { g.type = `${code}:${len - excess}`; excess = 0; }
+            }
+          }
         }
         upsertMine(buildDefinition(next), mine ? def.key : null).then((k) => { if (!mine) { toast(`a copy of your own with ${f.name} as ${value.trim()}: it is below (mine)`); setup.choose(row.key, k, ctx.otherKeys, decoder.entries); } ctx.onChange?.(); }).catch((err) => toast(err.message, "err"));
       };
@@ -319,7 +294,7 @@ export function inspector(ctx) {
     }
     for (const d of defCells) {
       const dec = current ? decoder.decodesOf(current.line)?.get(d.defKey) : null;
-      d.label.replaceChildren(dec ? (dec.result === "ok" ? "decodes" : h("span", { class: "err" }, `does not decode: ${dec.result}`)) : d.pending ? h("span", { class: "muted" }, h("span", { class: "spinner" }), " checking…") : "not decoded yet");
+      d.label.replaceChildren(dec ? (dec.result === "ok" ? "decodes" : h("span", { class: "err" }, `does not decode: ${dec.result}`)) : d.pending ? h("span", { class: "muted" }, h("span", { class: "spinner" }), " checking…") : "not checked yet");
       for (const c of d.cells) {
         const value = dec && dec.result === "ok" && dec.fields && c.field in dec.fields ? dec.fields[c.field] : null;
         c.td.replaceChildren(dec ? (dec.result === "ok" ? (value === null || value === undefined ? "–" : `${value}${c.unit && typeof value === "number" ? ` ${c.unit}` : ""}`) : h("span", { class: "err", title: dec.result }, "✗")) : h("span", { class: "muted" }, "…"));

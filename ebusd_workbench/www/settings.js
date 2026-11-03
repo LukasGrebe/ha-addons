@@ -1,11 +1,11 @@
-// Settings: Home Assistant entities to log, telegram grouping, and information about the app.
+// Settings: Home Assistant entities to log, and information about the app.
 import { api, app, append, bus, fmt, h, toast, refreshStatus } from "./app.js";
 
 export class SettingsView {
-  /** @param options {entities, grouping, info}: which panels to show (all by default) */
+  /** @param options {entities, info}: which panels to show (all by default) */
   constructor(root, options = {}) {
     this.root = root;
-    this.options = { entities: true, grouping: true, info: true, ...options };
+    this.options = { entities: true, info: true, ...options };
     this.build();
     bus.on("status", () => this.renderInfo());
   }
@@ -15,16 +15,14 @@ export class SettingsView {
   build() {
     const el = (this.el = {});
     el.entities = h("div", { class: "panel" });
-    el.grouping = h("div", { class: "panel" });
     el.info = h("div", { class: "panel" });
     const o = this.options;
-    this.root.appendChild(h("div", { class: "settings" }, o.entities ? el.entities : null, o.grouping ? el.grouping : null, o.info ? el.info : null));
+    this.root.appendChild(h("div", { class: "settings" }, o.entities ? el.entities : null, o.info ? el.info : null));
     this.render();
   }
 
   render() {
     if (this.options.entities) this.renderEntities();
-    if (this.options.grouping) this.renderGrouping();
     if (this.options.info) this.renderInfo();
   }
 
@@ -76,36 +74,6 @@ export class SettingsView {
     append(box, list, h("div", { class: "picker" }, input, dropdown), h("div", { class: "hint" }, "Enter adds the typed entity id directly."));
   }
 
-  renderGrouping() {
-    const box = this.el.grouping;
-    const settings = app.settings || { id_bytes: 1, id_overrides: {} };
-    const overrides = { ...(settings.id_overrides || {}) };
-    const select = h("select", { onchange: () => this.saveSettings({ id_bytes: Number(select.value) }) }, [0, 1, 2, 3, 4].map((n) => h("option", { value: n, selected: n === settings.id_bytes }, `${n} byte${n === 1 ? "" : "s"}`)));
-    const rows = h("div", { class: "overrides" });
-    const renderRows = () => {
-      rows.replaceChildren(...Object.entries(overrides).sort().map(([pbsb, n]) => h("div", { class: "ov" }, h("span", { class: "mono" }, pbsb), h("span", {}, `${n} bytes`),
-        h("button", { class: "small", onclick: () => { delete overrides[pbsb]; this.saveSettings({ id_overrides: overrides }); } }, "remove"))));
-    };
-    renderRows();
-    const pbsb = h("input", { type: "text", placeholder: "pbsb or zzpbsb, e.g. b509 or 08b509", size: 10, maxlength: 6 });
-    const len = h("input", { type: "number", min: 0, max: 8, value: 3 });
-    box.replaceChildren(h("h2", {}, "Telegram grouping"),
-      h("div", { class: "hint" }, "A message is one destination, command (PBSB) and message ID. The ID is the first data bytes of the master part; the remaining bytes and the answer are the value. Rows whose value seems to change with every telegram usually need more ID bytes, rows mixing several registers fewer. Per command (PBSB) or per device and command (ZZPBSB); the timeline offers the lengths of the decoded definitions after a decode run."),
-      h("div", { class: "row", style: "margin:8px 0" }, h("label", {}, "default ID length: "), select),
-      h("h3", {}, "per command"), rows,
-      h("h3", {}, "per message (rows split or combined with + and −)"),
-      h("div", { class: "hint" }, `${Object.keys(settings.id_rules || {}).length} rule${Object.keys(settings.id_rules || {}).length === 1 ? "" : "s"}: rules per command for how many bytes of the data are the message ID"rows like the definitions" in the timeline sets them from the decoded definitions.`),
-      h("div", { class: "row", style: "margin:6px 0" },
-        h("button", { class: "small", disabled: !Object.keys(settings.id_rules || {}).length, onclick: () => this.saveSettings({ id_rules: {} }) }, "clear all rules"),
-        h("button", { class: "small", title: "1 byte by default, 3 for b509 and 6 for b524, no rules", onclick: () => { if (confirm("Reset the grouping of messages to the defaults?")) this.saveSettings({ id_bytes: 1, id_overrides: { b509: 3, b524: 6 }, id_rules: {} }); } }, "reset grouping to the defaults")),
-      h("div", { class: "ov" }, pbsb, len, h("button", { class: "small", onclick: () => {
-        const key = pbsb.value.trim().toLowerCase();
-        if (!/^([0-9a-f]{4}|[0-9a-f]{6})$/.test(key)) return toast("command must be PBSB or ZZPBSB in hex", "err");
-        overrides[key] = Number(len.value);
-        this.saveSettings({ id_overrides: overrides });
-      } }, "add")));
-  }
-
   renderInfo() {
     const box = this.el.info;
     const s = app.status;
@@ -118,7 +86,7 @@ export class SettingsView {
         h("dt", {}, "sources"), h("dd", {}, `${s.sources?.dir || ""} (${(s.sources?.sources || []).map((x) => x.id).join(", ") || "none"}; language ${s.sources?.language || "en"})`),
         h("dt", {}, "deploy folder"), h("dd", {}, s.deploy_dir || ""),
         h("dt", {}, "uptime"), h("dd", {}, fmt.duration(s.uptime_s * 1000))),
-      h("p", { class: "hint" }, "Compiling pull requests and decoding telegrams run in this browser tab; the app on the device serves the database and fetches the sources from GitHub. ",
+      h("p", { class: "hint" }, "Compiling pull requests and decoding telegrams run in this browser tab (ebusd's own message library as WebAssembly); the app on the device serves the recording and fetches the sources from GitHub. ",
         h("a", { href: "https://github.com/LukasGrebe/ha-addons/blob/main/ebusd_workbench/DOCS.md", target: "_blank" }, "Documentation")));
   }
 }

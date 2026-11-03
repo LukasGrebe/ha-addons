@@ -1,5 +1,5 @@
 name: ebusd Config Workbench
-version: "0.5.4"
+version: "0.6.0"
 slug: ebusd_workbench
 description: >
   Find the ebusd message definitions that fit your eBUS devices: the telegrams the eBUSd app
@@ -14,7 +14,7 @@ init: false
 startup: application
 ingress: true
 ingress_port: 8099
-panel_icon: mdi:chart-timeline
+panel_icon: mdi:table-search
 panel_title: ebusd Config Workbench
 homeassistant_api: true
 map:

@@ -1,60 +1,28 @@
 // Where definitions come from. The device fetches every source as one snapshot from GitHub (no
-// git): ebusd's own definitions (the release at ebus.github.io), the upcoming release, pull
-// requests of ebusd-configuration and branches of other repositories. Ready-made CSV trees are
-// used as they are; TypeSpec sources are compiled to CSV here in the browser (cached per
-// commit). The scratchpad (your own definition lines) is a source too. Together they make the
-// build the decoder works with: one complete tree per source, decoded side by side.
+// git): ebusd's own definitions (the release at ebus.github.io), the upcoming release, every open
+// pull request of ebusd-configuration, and pull requests or branches you add. Ready-made CSV trees
+// are parsed as they are; TypeSpec sources are compiled to CSV here in the browser (cached per
+// commit). Every source's lines go into the core's pool (parsed once per commit, kept in the browser
+// store), where a line is a candidate for the messages it fits, whatever source it came from.
 //
-// This module keeps the build in step with the sources (a source arrives, is refreshed, enabled
-// or removed; the scratchpad changes) and draws the strip at the top of the page.
+// This module keeps the pool in step with the sources (a source arrives, is refreshed, enabled or
+// removed; the open pull requests change) and draws the strip at the top of the page.
 import { api, app, append, bus, fmt, h, toast, refreshStatus } from "./app.js";
-import { MINE, splitCsv } from "./setup.js";
-import { mineSource } from "./decoder.js";
+import { POOL_RULES, parseFiles } from "./pool.js";
+import { MINE } from "./core.js";
 
 const KIND_HELP = {
   cdn: "ready-made CSV files from ebus.github.io, exactly what ebusd loads",
   pr: "a pull request of john30/ebusd-configuration: TypeSpec sources, compiled here in the browser",
   repo: "a branch of another GitHub repository: TypeSpec sources compiled here, or CSV files as they are",
-  mine: "your own definition lines (My definitions in the setup column), decoded over the recording like any other source",
+  mine: "your own definition lines (My definitions in the setup column), checked on the messages they fit",
 };
-
-/** The definition lines of a CSV tree by file and message (comments, headers and templates left out): Map(key -> line). */
-export function definitionIndex(files) {
-  const out = new Map();
-  for (const [file, text] of Object.entries(files || {})) {
-    if (!/\.(csv|inc)$/.test(file) || /(^|\/)_templates\.csv$/.test(file)) continue;
-    for (const raw of String(text).split("\n")) {
-      const line = raw.trim();
-      if (!line || line.startsWith("#") || line.startsWith("*") || line.startsWith("!") || /^(\[[^\]]*\])?type\s*,/i.test(line)) continue;
-      const cells = splitCsv(line);
-      if (cells.length < 3) continue;
-      const type = cells[0].replace(/^\[[^\]]*\]/, "").trim().toLowerCase();
-      if (!/^[rwu;]+[0-9]?$/.test(type)) continue;
-      out.set(`${file}|${cells[1]}|${cells[2]}|${type}`, line);
-    }
-  }
-  return out;
-}
-
-/** What a source brings compared with a reference tree: the definitions it adds, changes and lacks. */
-export function deltaOf(files, referenceFiles) {
-  const a = definitionIndex(files), b = definitionIndex(referenceFiles);
-  const added = [], changed = [];
-  for (const [key, line] of a) {
-    if (!b.has(key)) added.push(key);
-    else if (b.get(key) !== line) changed.push(key);
-  }
-  let removed = 0;
-  for (const key of b.keys()) if (!a.has(key)) removed++;
-  return { added, changed, removed, total: a.size, reference: b.size };
-}
-
-// the rules of "ebusd's choice" are part of a source's stamp: a changed rule decodes everything again, once
-const RULES = "r2";
+const RULES = "p1";   // the pool's reading of a tree is part of its stamp: a changed rule parses everything again, once
 const stampOf = (s) => `${s.id}@${s.head || s.fetched_at || ""}@${s.digest || ""}@${RULES}`;
+const POLL_MS = 3000;
 
-/** Keeps the decoder's build in step with the sources: fetched trees, compiled pull requests, the scratchpad. */
-export class Builder {
+/** Keeps the core's pool in step with the sources: fetched trees, compiled pull requests, your own lines. */
+export class Sources {
   constructor() {
     this.state = { busy: false, text: "", error: null };
     this.busy = false;
@@ -62,6 +30,10 @@ export class Builder {
     this.lastKey = null;
     this.timer = null;
     this.tsp = null;
+    this.pulls = null;         // the open pull requests of ebusd-configuration as the device lists them
+    this.pullState = {};       // id -> "fetching" | "compiling" | "ready" | "error"
+    this.sweeping = false;
+    this.sweepAgain = false;
   }
 
   setState(state) { this.state = { busy: false, text: "", error: null, ...state }; bus.emit("compile-state", this.state); }
@@ -70,9 +42,8 @@ export class Builder {
   onStatus(status) {
     const list = status?.sources?.sources || [];
     const key = `${status?.sources?.language || "en"}|` + list.filter((s) => s.state === "ready").map((s) => `${stampOf(s)}:${s.enabled ? 1 : 0}`).join(",");
-    if (key === this.lastKey) return;
-    this.lastKey = key;
-    this.schedule();
+    if (key !== this.lastKey) { this.lastKey = key; this.schedule(); }
+    if (!this.pulls && !this.sweeping) this.sweepPulls();
   }
 
   schedule() { clearTimeout(this.timer); this.timer = setTimeout(() => this.rebuild(), 300); }
@@ -93,7 +64,7 @@ export class Builder {
     const state = (s) => { if (!quiet) this.setState(s); };
     try {
       const cached = await store.get("compiles", cacheKey);
-      if (cached?.outputs) return { outputs: cached.outputs, summary: cached.summary, cached: true };
+      if (cached?.outputs) return { outputs: cached.outputs, summary: cached.summary, partial: !!cached.partial, cached: true };
     } catch (err) { console.warn(err); }
     const tsp = await this.loadCompiler(quiet);
     const language = app.status?.sources?.language || "en";
@@ -123,11 +94,6 @@ export class Builder {
     return { outputs: result.outputs, summary, partial: !!partial, cached: false };
   }
 
-  /** A compile result from the browser store, without needing the files (the search over the pull requests asks this first). */
-  async cachedCompile(stamp) {
-    try { const c = await app.decoder.store.get("compiles", `tsp:${stamp}`); return c?.outputs ? { outputs: c.outputs, summary: c.summary, partial: !!c.partial, cached: true } : null; } catch { return null; }
-  }
-
   /** An entry file that imports only the TypeSpec files a pull request changes (from GitHub's list), or null. */
   async partialEntry(source, files) {
     try {
@@ -138,50 +104,56 @@ export class Builder {
     } catch (err) { console.warn(`changed files of ${source.id}:`, err); return null; }
   }
 
-  /** The build: every enabled, fetched source as a CSV tree (compiled if need be) plus the scratchpad. */
+  /** The files of a source as a CSV tree (compiled if need be): {files, summary, partial}. */
+  async loadTree(s, stamp, { quiet = false } = {}) {
+    const cached = await this.cachedCompile(stamp);
+    if (cached) return { files: cached.outputs, summary: cached.summary, partial: cached.partial };
+    const data = await api.get(`api/sources/files?id=${encodeURIComponent(s.id)}`);
+    if (data.kind === "tsp") {
+      const compiled = await this.compile(s, stamp, data.files, { quiet });
+      return { files: compiled.outputs, summary: compiled.summary, partial: compiled.partial };
+    }
+    return { files: data.files, summary: `${Object.keys(data.files).length} CSV files`, partial: false };
+  }
+
+  async cachedCompile(stamp) {
+    try { const c = await app.decoder.store.get("compiles", `tsp:${stamp}`); return c?.outputs ? { outputs: c.outputs, summary: c.summary, partial: !!c.partial, cached: true } : null; } catch { return null; }
+  }
+
+  /** Every registered source (release, next, the ones you added) into the pool; the primary's files for its run over the recording. */
   async rebuild() {
-    if (!app.decoder) return;
+    const core = app.decoder;
+    if (!core) return;
     if (this.busy) { this.again = true; return; }
     this.busy = true;
     try {
-      await app.decoder.ready;
-      // every fetched source is part of the build, unticked ones too: their decodings stay, so ticking them again is instant
+      await core.ready;
       const list = (app.status?.sources?.sources || []).filter((s) => s.state === "ready");
-      const sources = [];
       for (const s of list) {
         const stamp = stampOf(s);
-        const current = app.decoder.source(s.id);
-        if (current && current.stamp === stamp && current.files && !current.error) { sources.push({ ...current, enabled: !!s.enabled, label: s.label, title: s.title, head: s.head }); continue; }
-        const entry = { id: s.id, label: s.label, kind: s.kind, stamp, filesId: stamp, files: {}, head: s.head || null, title: s.title || null, url: s.url || null, enabled: !!s.enabled, error: null, summary: "" };
-        try {
-          this.setState({ busy: true, text: `loading ${s.label}…` });
-          const data = await api.get(`api/sources/files?id=${encodeURIComponent(s.id)}`);
-          if (data.kind === "tsp") {
-            const compiled = await this.compile(s, stamp, data.files);
-            entry.files = compiled.outputs;
-            entry.summary = compiled.summary;
-            entry.tsp = true;
-            entry.partial = !!compiled.partial;
-          } else {
-            entry.files = data.files;
-            entry.summary = `${Object.keys(data.files).length} CSV files`;
+        const info = { id: s.id, label: s.label, kind: s.kind, stamp, head: s.head || null, title: s.title || null, url: s.url || null, enabled: !!s.enabled };
+        const current = core.source(s.id);
+        if (!current || current.stamp !== stamp || !core.pool.sources.has(s.id) && s.enabled) {
+          const stored = await core.store.get("pool", `${stamp}@${POOL_RULES}`).catch(() => null);
+          if (stored) await core.addSource(info, null, null);
+          else {
+            this.setState({ busy: true, text: `loading ${s.label}…` });
+            try {
+              const tree = await this.loadTree(s, stamp);
+              await core.addSource({ ...info, summary: tree.summary, partial: tree.partial }, parseFiles(tree.files), tree.files);
+            } catch (err) { console.error(err); await core.addSource({ ...info, error: err.message }, null, null); }
           }
-        } catch (err) {
-          console.error(err);
-          entry.error = err.message;
-          entry.files = {};
+        } else if (current.enabled !== !!s.enabled) await core.setSourceEnabled(s.id, !!s.enabled);
+        // the full tree of the primary, for ebusd's own run over the recording and the scan
+        if (core.needsFiles(s.id)) {
+          this.setState({ busy: true, text: `loading the files of ${s.label}…` });
+          try { const tree = await this.loadTree(s, stamp); await core.provideFiles(s.id, tree.files); } catch (err) { console.warn(err); }
         }
-        sources.push(entry);
       }
-      const mine = mineSource(app.settings?.custom);
-      if (mine) sources.push({ ...mine, stamp: mine.filesId });
-      // what each source brings compared with the reference: what ebusd uses today (the release), else the upcoming release
-      const reference = sources.find((s) => s.id === "release" && !s.error) || sources.find((s) => s.id === "next" && !s.error) || null;
-      for (const s of sources) s.delta = reference && s !== reference && !s.error ? deltaOf(s.files, reference.files) : null;
-      const ok = sources.filter((s) => !s.error && s.enabled);
-      const summary = ok.length ? `${ok.map((s) => s.label).join(", ")}` : "no definitions";
-      this.setState({ busy: false, text: summary, error: sources.find((s) => s.error) ? `${sources.filter((s) => s.error).map((s) => `${s.label}: ${s.error}`).join("; ")}` : null });
-      await app.decoder.setBuild({ id: Date.now().toString(36), at: new Date().toISOString(), sources, reference: reference?.id || null, summary });
+      for (const id of [...core.sourceInfo.keys()]) if (!list.some((s) => s.id === id) && !/^pr\//.test(id) && id !== MINE) core.removeSource(id);
+      await core.setMine(app.settings?.custom || "");
+      const errors = core.sources().filter((s) => s.error);
+      this.setState({ busy: false, text: "", error: errors.length ? errors.map((s) => `${s.label}: ${s.error}`).join("; ") : null });
     } catch (err) {
       console.error(err);
       this.setState({ busy: false, error: `building the definitions failed: ${err.message}` });
@@ -191,17 +163,65 @@ export class Builder {
     }
   }
 
-  /** The scratchpad changed: only its lines are decoded again. */
-  async setMine(text) {
-    const build = app.decoder?.build;
-    if (!build) { this.lastKey = null; this.schedule(); return; }
-    const mine = mineSource(text);
-    const sources = build.sources.filter((s) => s.id !== MINE);
-    if (mine) {
-      const reference = sources.find((s) => s.id === build.reference) || null;
-      sources.push({ ...mine, stamp: mine.filesId, delta: reference?.files ? deltaOf(mine.files, reference.files) : null });
+  /** Every open pull request of ebusd-configuration into the pool: fetched by the device, compiled here, once per commit. */
+  async sweepPulls() {
+    if (this.sweeping) { this.sweepAgain = true; return; }
+    this.sweeping = true;
+    const core = app.decoder;
+    try {
+      await core.ready;
+      const registered = new Set((app.status?.sources?.sources || []).map((s) => s.id));
+      const suggest = await api.get("api/sources/suggest");
+      this.pulls = (suggest.pulls || []).filter((p) => p.number && !p.draft);
+      const numbers = this.pulls.map((p) => p.number).filter((n) => !registered.has(`pr/${n}`));
+      bus.emit("sources-changed");
+      if (!numbers.length) return;
+      const disabled = new Set(app.settings?.ui?.disabledPulls || []);
+      let summaries = (await api.post("api/sources/prefetch", { numbers })).sources;
+      const t0 = Date.now();
+      const done = new Set();
+      while (Date.now() - t0 < 10 * 60_000) {
+        for (const s of summaries) {
+          if (done.has(s.id)) continue;
+          if (s.state === "fetching" || s.state === "missing") { this.pullState[s.id] = "fetching"; continue; }
+          done.add(s.id);
+          if (s.state !== "ready") { this.pullState[s.id] = "error"; continue; }
+          const pull = this.pulls.find((p) => `pr/${p.number}` === s.id) || {};
+          const stamp = stampOf(s);
+          const info = { id: s.id, label: s.label || `PR ${pull.number}`, kind: "pr", stamp, head: s.head || null, title: s.title || pull.title || null, url: s.url || pull.url || null, author: s.author || pull.author, updated: s.updated_at || pull.updated_at, enabled: !disabled.has(s.id) };
+          if (core.source(s.id)?.stamp === stamp) { this.pullState[s.id] = "ready"; continue; }
+          const stored = await core.store.get("pool", `${stamp}@${POOL_RULES}`).catch(() => null);
+          if (stored) { await core.addSource(info, null, null); this.pullState[s.id] = "ready"; continue; }
+          this.pullState[s.id] = "compiling";
+          bus.emit("sources-changed");
+          try {
+            const tree = await this.loadTree(s, stamp, { quiet: true });
+            await core.addSource({ ...info, summary: tree.summary, partial: tree.partial }, parseFiles(tree.files), tree.files);
+            this.pullState[s.id] = "ready";
+          } catch (err) { console.warn(err); await core.addSource({ ...info, error: err.message }, null, null); this.pullState[s.id] = "error"; }
+          bus.emit("sources-changed");
+        }
+        if (done.size >= summaries.length) break;
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        summaries = (await api.post("api/sources/prefetch", { numbers })).sources;
+      }
+    } catch (err) {
+      console.warn("the open pull requests could not be loaded:", err);
+      this.pullsError = err.message;
+    } finally {
+      this.sweeping = false;
+      bus.emit("sources-changed");
+      if (this.sweepAgain) { this.sweepAgain = false; this.sweepPulls(); }
     }
-    await app.decoder.setBuild({ ...build, id: Date.now().toString(36), at: new Date().toISOString(), sources });
+  }
+
+  /** A pull request of the sweep ticked off or on (remembered in the settings). */
+  async enablePull(id, on) {
+    const disabled = new Set(app.settings?.ui?.disabledPulls || []);
+    if (on) disabled.delete(id); else disabled.add(id);
+    try { app.settings = await api.put("api/settings", { ui: { ...(app.settings?.ui || {}), disabledPulls: [...disabled] } }); } catch (err) { toast(err.message, "err"); }
+    await app.decoder.setSourceEnabled(id, on);
+    bus.emit("sources-changed");
   }
 }
 
@@ -215,34 +235,19 @@ export class SourcesStrip {
     this.root = root;
     this.expanded = remembered("workbench.sourcesOpen", true);   // the whole strip, or one line
     this.open = false;          // the add panel
-    this.suggest = null;        // the open pull requests of ebusd-configuration
-    this.suggestError = null;
+    this.pullsOpen = false;     // the list of the open pull requests
     this.input = "";
     bus.on("status", () => this.render());
-    bus.on("decodes-changed", (reason) => { if (reason !== "progress") this.render(); });
+    bus.on("sources-changed", () => this.render());
+    bus.on("decodes-changed", (reason) => { if (reason !== "progress") this.schedule(); });
     bus.on("compile-state", () => this.render());
     this.render();
   }
 
-  sources() { return app.status?.sources?.sources || []; }
+  /** Draw again, at most every second while decodings stream in. */
+  schedule() { if (this.timer) return; this.timer = setTimeout(() => { this.timer = null; this.render(); }, 1000); }
 
-  /** Words that describe the devices on the bus: manufacturer, identification, circuits (to spot fitting pull requests). */
-  deviceWords() {
-    const words = new Set();
-    const d = app.decoder;
-    for (const info of Object.values(d?.devices() || {})) {
-      for (const w of [info.manufacturer, info.ident, info.ident?.replace(/[0-9]+$/, "")]) if (w && w.length > 1) words.add(String(w).toLowerCase());
-      if (info.hw) words.add(`hw${info.hw}`);
-    }
-    for (const e of d?.entries || []) if (e.status === "active" || e.status === "hidden") words.add(e.circuit.toLowerCase().replace(/[0-9]+$/, ""));
-    words.delete("");
-    return [...words].filter((w) => w.length > 1);
-  }
-
-  fits(title) {
-    const t = title.toLowerCase();
-    return this.deviceWords().filter((w) => t.includes(w));
-  }
+  registered() { return app.status?.sources?.sources || []; }
 
   async add(spec) {
     spec = String(spec || "").trim();
@@ -268,13 +273,10 @@ export class SourcesStrip {
     try { await api.put("api/sources/enabled", { id, enabled: on }); await refreshStatus(); } catch (err) { toast(err.message, "err"); }
   }
 
-  async loadSuggestions() {
-    try { this.suggest = await api.get("api/sources/suggest"); this.suggestError = null; } catch (err) { this.suggestError = err.message; }
-    this.render();
-  }
+  /** The count of definitions of a source that fit the bus. */
+  fits(id) { return app.decoder?.status().sources.find((x) => x.id === id)?.definitions || 0; }
 
   chip(s) {
-    const decoded = app.decoder?.status().build?.sources.find((x) => x.id === s.id) || null;
     const built = app.decoder?.source(s.id) || null;
     const parts = [];
     let cls = "src";
@@ -284,105 +286,118 @@ export class SourcesStrip {
     else if (s.state === "missing") { cls += " warn"; parts.push("not fetched"); }
     else if (built?.error) { cls += " err"; parts.push("compile failed"); }
     else if (!built) { cls += " busy"; parts.push("loading…"); }
-    else {
-      // the text keeps its length while decoding (the progress is in the top bar), so that the strip never reflows the page
-      if (decoded?.pending) cls += " busy";
-      parts.push(`${fmt.count(decoded?.definitions || 0)} fit your bus`);
-      if (built.delta) parts.push(`+${built.delta.added.length} new${built.delta.changed.length ? `, ${built.delta.changed.length} changed` : ""}`);
-    }
+    else parts.push(`${fmt.count(this.fits(s.id))} fit your bus`);
     const title = [`${s.label} (${s.id})`, KIND_HELP[s.kind] || "", s.title ? `“${s.title}”` : "", s.head ? `commit ${s.head.slice(0, 7)}` : "", s.fetched_at ? `fetched ${fmt.dateTime(s.fetched_at * 1000)}` : "",
-      s.error ? `error: ${s.error}` : "", built?.error ? `compile: ${built.error}` : "", built?.summary || "", built?.delta ? `compared with ${app.decoder.build.reference}: ${built.delta.added.length} definitions only here, ${built.delta.changed.length} changed, ${built.delta.removed} missing` : ""].filter(Boolean).join("\n");
+      s.error ? `error: ${s.error}` : "", built?.error ? `compile: ${built.error}` : "", built?.summary || ""].filter(Boolean).join("\n");
     const toggle = h("input", { type: "checkbox", checked: !!s.enabled, title: s.enabled ? "leave this source out" : "use this source", onchange: () => this.enable(s.id, toggle.checked) });
     return h("span", { class: cls, title },
       toggle,
-      cls.includes("busy") ? h("span", { class: "spinner", title: "decoding the recording with this source (progress in the top bar)" }) : null,
+      cls.includes("busy") ? h("span", { class: "spinner" }) : null,
       h("b", {}, s.label),
-      s.kind === "pr" && s.title ? h("span", { class: "muted t" }, s.title.length > 48 ? `${s.title.slice(0, 47)}…` : s.title) : null,
+      s.kind !== "cdn" && s.title ? h("span", { class: "muted t" }, s.title.length > 48 ? `${s.title.slice(0, 47)}…` : s.title) : null,
       h("span", { class: "muted" }, parts.join(" · ")),
-      built?.partial ? h("span", { class: "tbadge warn", title: "its base is older than today's TypeSpec library: only the files the pull request changes are compiled, so \"ebusd's choice\" and the counts of this source cover those files only" }, "partial") : null,
+      built?.partial ? h("span", { class: "tbadge warn", title: "its base is older than today's TypeSpec library: only the files the pull request changes are compiled" }, "partial") : null,
       s.url ? h("a", { href: s.url, target: "_blank", rel: "noopener", title: "open on GitHub", class: "muted" }, "↗") : null,
-      h("a", { href: "#", class: "muted", title: "fetch again (the pull request may have been updated)", onclick: (e) => { e.preventDefault(); this.refresh(s.id); } }, "↻"),
+      h("a", { href: "#", class: "muted", title: "fetch again (it may have been updated)", onclick: (e) => { e.preventDefault(); this.refresh(s.id); } }, "↻"),
       s.kind !== "cdn" ? h("a", { href: "#", class: "err", title: "remove this source", onclick: (e) => { e.preventDefault(); if (confirm(`Remove ${s.label}?`)) this.remove(s.id); } }, "✕") : null);
   }
 
+  /** The open pull requests of ebusd-configuration as one chip, with the list of them when unfolded. */
+  pullsChip() {
+    const b = app.builder;
+    const pulls = b?.pulls || [];
+    const registered = new Set(this.registered().map((s) => s.id));
+    const auto = pulls.filter((p) => !registered.has(`pr/${p.number}`));
+    const states = auto.map((p) => b.pullState[`pr/${p.number}`] || "fetching");
+    const busy = states.filter((s) => s === "fetching" || s === "compiling").length;
+    const ready = states.filter((s) => s === "ready").length;
+    const core = app.decoder;
+    const fits = auto.reduce((n, p) => n + this.fits(`pr/${p.number}`), 0);
+    const chip = h("span", { class: `src pulls ${busy ? "busy" : ""} ${this.pullsOpen ? "active" : ""}`, title: "every open pull request of john30/ebusd-configuration, compiled here once per commit: its lines are candidates with a PR badge wherever they fit", onclick: (e) => { if (e.target.closest("input, a")) return; this.pullsOpen = !this.pullsOpen; this.render(); } },
+      busy ? h("span", { class: "spinner" }) : null, h("b", {}, "open pull requests"),
+      h("span", { class: "muted" }, b?.pullsError ? "could not be listed" : !pulls.length ? "listing…" : busy ? `${ready} of ${auto.length} ready` : `${auto.length} · ${fmt.count(fits)} fit your bus`),
+      h("span", { class: "fold" }, this.pullsOpen ? "▾" : "▸"));
+    if (!this.pullsOpen) return chip;
+    const disabled = new Set(app.settings?.ui?.disabledPulls || []);
+    const list = h("div", { class: "pulls" }, auto.sort((a, b2) => this.fits(`pr/${b2.number}`) - this.fits(`pr/${a.number}`) || String(b2.updated_at).localeCompare(String(a.updated_at))).map((p) => {
+      const id = `pr/${p.number}`;
+      const state = b.pullState[id] || "fetching";
+      const src = core?.source(id);
+      const toggle = h("input", { type: "checkbox", checked: !disabled.has(id), title: disabled.has(id) ? "use this pull request" : "leave this pull request out", onchange: () => b.enablePull(id, toggle.checked) });
+      return h("div", { class: `pull ${this.fits(id) ? "fits" : ""}` }, toggle,
+        h("a", { href: p.url || "#", target: "_blank", rel: "noopener", class: "mono" }, `#${p.number}`),
+        h("span", { class: "title", title: p.title }, p.title),
+        h("span", { class: "muted" }, `${p.author || ""} · ${String(p.updated_at || "").slice(0, 10)}`),
+        state === "error" || src?.error ? h("span", { class: "err", title: src?.error || "" }, "failed") : state !== "ready" ? h("span", { class: "muted" }, h("span", { class: "spinner" }), ` ${state}…`) : h("span", { class: this.fits(id) ? "ok" : "muted" }, `${fmt.count(this.fits(id))} fit your bus`),
+        src?.partial ? h("span", { class: "tbadge warn", title: "only the files it changes are compiled: its base is older than today's TypeSpec library" }, "partial") : null,
+        h("button", { class: "small", title: "keep it as a source of its own (its definitions stay even when it is merged or closed)", onclick: () => this.add(String(p.number)) }, "+ keep"));
+    }));
+    return [chip, list];
+  }
+
   mineChip() {
-    const st = app.decoder?.status().build?.sources.find((x) => x.id === MINE) || null;
     const lines = (app.settings?.custom || "").split("\n").filter((l) => l.trim() && !l.trim().startsWith("#")).length;
-    return h("span", { class: `src ${st?.pending ? "busy" : ""}`, title: `${KIND_HELP.mine}\n${lines} definition line${lines === 1 ? "" : "s"}` },
-      h("b", {}, "my definitions"), h("span", { class: "muted" }, lines ? `${lines} line${lines === 1 ? "" : "s"}${st ? ` · ${fmt.count(st.definitions)} fit your bus` : ""}` : "empty: write one in the scratchpad"));
+    return h("span", { class: "src", title: `${KIND_HELP.mine}\n${lines} definition line${lines === 1 ? "" : "s"}` },
+      h("b", {}, "my definitions"), h("span", { class: "muted" }, lines ? `${lines} line${lines === 1 ? "" : "s"} · ${fmt.count(this.fits(MINE))} fit your bus` : "none yet: start one in the inspector"));
   }
 
   addPanel() {
-    const input = h("input", { type: "text", size: 34, value: this.input, placeholder: "660 · owner/repo#branch · GitHub URL", title: "a pull request number of john30/ebusd-configuration, a repository as owner/name (optionally #branch), or a GitHub URL of either",
+    const input = h("input", { type: "text", size: 34, value: this.input, placeholder: "660 · owner/repo#branch · GitHub URL", title: "a pull request number of john30/ebusd-configuration (kept as a source of its own), a repository as owner/name (optionally #branch), or a GitHub URL of either",
       oninput: () => { this.input = input.value; }, onkeydown: (e) => { if (e.key === "Enter") this.add(input.value); } });
-    const box = h("div", { class: "src-add" },
+    return h("div", { class: "src-add" },
       h("div", { class: "row" }, h("b", {}, "Add a source"), input, h("button", { class: "small primary", onclick: () => this.add(input.value) }, "Add"),
-        h("span", { class: "hint" }, "Pull requests are compiled here in your browser; nothing is merged anywhere.")));
-    const have = new Set(this.sources().map((s) => s.id));
-    if (!this.suggest && !this.suggestError) { this.loadSuggestions(); append(box, h("div", { class: "hint" }, h("span", { class: "spinner" }), " loading the open pull requests of ebusd-configuration…")); return box; }
-    if (this.suggestError) { append(box, h("div", { class: "hint err" }, `The open pull requests could not be loaded: ${this.suggestError}`)); return box; }
-    const words = this.deviceWords();
-    const pulls = (this.suggest.pulls || []).map((p) => ({ ...p, fits: this.fits(p.title) })).sort((a, b) => b.fits.length - a.fits.length || String(b.updated_at).localeCompare(String(a.updated_at)));
-    append(box, h("div", { class: "row" }, h("b", {}, `Open pull requests of ebusd-configuration (${pulls.length})`),
-      h("span", { class: "hint" }, words.length ? `the ones that mention your devices (${words.slice(0, 6).join(", ")}) first` : "once your devices are identified, the ones that mention them come first"),
-      this.suggest.stale ? h("span", { class: "warn" }, "(cached: GitHub did not answer)") : null,
-      h("span", { style: "margin-left:auto" }), h("button", { class: "small", onclick: () => this.toggle(false) }, "close")));
-    append(box, h("div", { class: "pulls" }, pulls.map((p) => h("div", { class: `pull ${p.fits.length ? "fits" : ""}` },
-      h("span", { class: "mono" }, `#${p.number}`),
-      h("span", { class: "title", title: p.title }, p.title, p.draft ? h("span", { class: "badge" }, "draft") : null),
-      p.fits.length ? h("span", { class: "badge active", title: `mentions ${p.fits.join(", ")}` }, "your devices?") : null,
-      h("span", { class: "muted" }, `${p.author || ""} · ${String(p.updated_at || "").slice(0, 10)}`),
-      p.url ? h("a", { href: p.url, target: "_blank", rel: "noopener", class: "muted" }, "↗") : null,
-      have.has(`pr/${p.number}`) ? h("span", { class: "ok" }, "added") : h("button", { class: "small", onclick: () => this.add(String(p.number)) }, "+ add")))));
-    return box;
+        h("span", { class: "hint" }, "The open pull requests are in already; add one here to keep it after it is merged or closed, or a branch of another repository. Everything is compiled in your browser; nothing is merged anywhere."),
+        h("button", { class: "small", onclick: () => this.toggle(false) }, "close")));
   }
 
   toggle(open = !this.open) { this.open = open; this.render(); }
 
-  /** One bar for all sources: fetching, then decoding (every enabled source over the recording), then what fits. */
+  /** One bar for everything going on: fetching, compiling, ebusd's run over the recording, the messages being checked. */
   combined() {
-    const list = this.sources();
+    const list = this.registered();
     const fetching = list.filter((s) => s.enabled && s.state === "fetching").length;
     const st = app.decoder?.status();
-    let done = 0, total = 0, busySources = 0;
-    for (const s of st?.build?.sources || []) { done += s.decoded; total += s.decoded + s.pending; if (s.pending) busySources++; }
+    const b = app.builder;
+    const busyPulls = Object.values(b?.pullState || {}).filter((s) => s === "fetching" || s === "compiling").length;
     if (fetching) return h("span", { class: "combined busy", title: "the device fetches the sources from GitHub" }, h("span", { class: "spinner" }), ` fetching ${fetching} source${fetching === 1 ? "" : "s"}…`);
     if (app.compileState?.busy) return h("span", { class: "combined busy" }, h("span", { class: "spinner" }), ` ${app.compileState.text}`);
-    if (total && done < total) {
-      const pct = Math.round((done / total) * 100);
-      return h("span", { class: "combined busy", title: `${fmt.count(done)} of ${fmt.count(total)} telegram decodings done (${busySources} source${busySources === 1 ? "" : "s"} still decoding)` },
-        h("span", { class: "progress" }, h("span", { class: "fill", style: `width:${Math.max(2, pct)}%` })), ` decoding ${pct} %`);
+    if (busyPulls) return h("span", { class: "combined busy", title: "the open pull requests are fetched by the device and compiled here, once per commit" }, h("span", { class: "spinner" }), ` preparing ${busyPulls} pull request${busyPulls === 1 ? "" : "s"}…`);
+    const primary = st?.sources.find((s) => s.id === st.primary);
+    if (primary?.pending) {
+      const pct = Math.round(((st.telegrams - primary.pending) / Math.max(1, st.telegrams)) * 100);
+      return h("span", { class: "combined busy", title: `${fmt.count(st.telegrams - primary.pending)} of ${fmt.count(st.telegrams)} telegrams decoded with ${primary.label}` },
+        h("span", { class: "progress" }, h("span", { class: "fill", style: `width:${Math.max(2, pct)}%` })), ` ${primary.label} ${pct} %`);
     }
+    if (st?.queue) return h("span", { class: "combined busy", title: "messages whose candidates are being checked with ebusd's library, the open one first" }, h("span", { class: "spinner" }), ` checking ${fmt.count(st.queue)} message${st.queue === 1 ? "" : "s"}…`);
     if (!st?.build) return null;
     return h("span", { class: "combined", title: `${fmt.count(st.known)} of ${fmt.count(st.telegrams)} distinct telegrams known to ebusd` }, `${fmt.count(st.definitions)} definitions fit your bus`);
   }
 
-  /** A source as a word in the folded strip: its label, a spinner while it decodes. */
   miniChip(s) {
-    const decoded = app.decoder?.status().build?.sources.find((x) => x.id === s.id) || null;
     const built = app.decoder?.source(s.id) || null;
     const bad = s.state === "error" || built?.error;
-    return h("span", { class: `src mini ${bad ? "err" : ""}`, title: [`${s.label} (${s.id})`, s.title ? `“${s.title}”` : "", bad ? `error: ${s.error || built?.error}` : "", built?.delta ? `+${built.delta.added.length} new, ${built.delta.changed.length} changed` : ""].filter(Boolean).join("\n") },
-      decoded?.pending || s.state === "fetching" ? h("span", { class: "spinner" }) : null, h("b", {}, s.label));
+    return h("span", { class: `src mini ${bad ? "err" : ""}`, title: [`${s.label} (${s.id})`, s.title ? `“${s.title}”` : "", bad ? `error: ${s.error || built?.error}` : "", `${fmt.count(this.fits(s.id))} definitions fit your bus`].filter(Boolean).join("\n") },
+      s.state === "fetching" ? h("span", { class: "spinner" }) : null, h("b", {}, s.label));
   }
 
   render() {
     const root = this.root;
     if (!root) return;
-    const list = this.sources();
+    const list = this.registered();
     const fold = h("button", { class: "fold small", title: this.expanded ? "fold the sources into one line" : "show every source with its state", onclick: () => { this.expanded = !this.expanded; remember("workbench.sourcesOpen", this.expanded); this.render(); } }, this.expanded ? "▾" : "▸");
-    const label = h("span", { class: "muted lbl", title: "every source is a complete set of definitions, decoded side by side; untick one to leave it out" }, "Definitions from");
+    const label = h("span", { class: "muted lbl", title: "every source's lines are candidates for the messages they fit, with the source as a badge; untick one to leave it out" }, "Definitions from");
     const add = h("button", { class: `small ${this.open ? "active" : ""}`, onclick: () => this.toggle() }, this.open ? "− add" : this.expanded ? "+ add a pull request or repository" : "+ add");
     const none = !list.length && !app.status?.sources ? null : !list.length ? h("span", { class: "warn" }, "no sources yet: add ebusd's definitions with “release”") : null;
     let row;
     if (this.expanded) {
-      row = h("div", { class: "src-row" }, fold, label, list.map((s) => this.chip(s)), this.mineChip(), add, none);
+      row = h("div", { class: "src-row" }, fold, label, list.map((s) => this.chip(s)), this.pullsChip(), this.mineChip(), add, none);
     } else {
       const on = list.filter((s) => s.enabled), off = list.length - on.length;
-      const lines = (app.settings?.custom || "").split("\n").filter((l) => l.trim() && !l.trim().startsWith("#")).length;
+      const pulls = (app.builder?.pulls || []).length;
       row = h("div", { class: "src-row folded" }, fold, label, on.map((s) => this.miniChip(s)),
         off ? h("span", { class: "muted", title: "sources left out (unfold to tick them)" }, `+${off} off`) : null,
-        lines ? h("span", { class: "src mini", title: KIND_HELP.mine }, h("b", {}, "my definitions"), h("span", { class: "muted" }, ` ${lines}`)) : null,
+        pulls ? h("span", { class: "src mini", title: "the open pull requests of ebusd-configuration (unfold for the list)" }, h("b", {}, "pull requests"), h("span", { class: "muted" }, ` ${pulls}`)) : null,
+        h("span", { class: "src mini", title: KIND_HELP.mine }, h("b", {}, "mine"), h("span", { class: "muted" }, ` ${fmt.count(this.fits(MINE))}`)),
         this.combined(), add, none);
     }
     root.replaceChildren(row, this.open ? this.addPanel() : "");
