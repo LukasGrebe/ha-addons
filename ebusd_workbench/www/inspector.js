@@ -18,6 +18,7 @@ import { TYPES } from "./define.js";
 import { addressName, commandInfo, describeAddress, describeCommand } from "./ebus-spec.js";
 import { MINE, setup } from "./setup.js";
 import { identityOf, mineLines, removeMine, upsertMine } from "./mine.js";
+import { closeTypePicker, openTypePicker } from "./typepick.js";
 
 const chip = (circuit, name) => { const c = messageColors(circuit, name); return h("span", { class: "chip-msg", style: `color:${c.text};background:${c.background};border-color:${c.border}` }, `${circuit} ${name}`); };
 const hexToBytes = (hex) => (hex || "").match(/../g)?.map((b) => parseInt(b, 16)) || [];
@@ -87,8 +88,8 @@ function freeName(fields, base) {
 
 /**
  * The inspector of a message. Returns the element with showTelegram(index), index() and markSelected(defKey, field).
- * @param ctx {row, telegrams, defs: [{def, coverage}], decoder, view, telegramIndex, selected: {defKey, field},
- *   onTelegram(index), onSelect(defKey, field), onChange(), onNew(), included: Set, otherKeys, usedKey, usedDef, defKey}
+ * @param ctx {row, telegrams, defs: [{def, coverage}], decoder, view, telegramIndex, selected: {defKey, field}, picker: {defKey, field},
+ *   onTelegram(index), onSelect(defKey, field), onPicker(picker), onChange(), onNew(), included: Set, otherKeys, usedKey, usedDef, defKey}
  */
 export function inspector(ctx) {
   const { row, telegrams, decoder } = ctx;
@@ -99,6 +100,11 @@ export function inspector(ctx) {
   let index = Math.max(0, Math.min(sorted.length - 1, ctx.telegramIndex || 0));
   const bytesOf = (t) => ({ m: hexToBytes((t?.master || "").slice(10 + idBytes * 2)), s: hexToBytes((t?.slave || "").slice(2)) });
   const lines = mineLines();
+  // the type picker: closed while the table is rebuilt, opened again for the same field below
+  closeTypePicker({ silent: true });
+  const pickers = new Map();
+  let samplesCache = null;
+  const samples = () => (samplesCache ??= sorted.slice(0, 400).map((t) => ({ n: t.n || 1, last_ms: t.last_ms, ...bytesOf(t) })));
   // the columns: every byte of each part, a byte split into bits where some definition reads bits
   const layouts = ctx.defs.map((d) => ({ ...d, csv: d.def.csv, fields: layoutFields(parseDefinition(d.def.csv).fields).filter((f) => f.len !== 0 || f.bit !== null) }));
   const maxLen = { m: 0, s: 0 };
@@ -193,18 +199,19 @@ export function inspector(ctx) {
       const fieldIndex = parsed.fields.findIndex((x) => x === parsed.fields.find((y) => y.name === f.name && y.part === f.part && y.type === f.type));
       const selected = ctx.selected?.defKey === def.key && ctx.selected?.field === f.name;
       // the name of a source definition's field is renamed for your config; its type, divisor or unit changed makes a copy of your own
-      const edit = (key, value, input = null) => {
-        if (!mine && key === "name") { setup.renameField(def, f.name, value); return; }
+      const edit = (changes, input = null) => {
+        const keys = Object.keys(changes);
+        if (!mine && keys.length === 1 && keys[0] === "name") { setup.renameField(def, f.name, changes.name); return; }
         input?.blur();
         // several edits on a source's row go into the one copy: the second edit builds on the copy the first made
         const copy = mine ? null : lines.find((x) => identityOf(x.parsed) === identityOf(parseLine(def.csv, "mine/x.csv")))?.line;
         const next = parseDefinition(copy || csv);
         const target = next.fields[fieldIndex];
         if (!target) return;
-        target[key] = value.trim();
+        for (const [key, value] of Object.entries(changes)) target[key] = String(value).trim();
         // a field made shorter leaves bytes of the telegram behind: they become a raw field of their own, to be carved
         // further; a field made longer takes them from the raw fields that follow it
-        if (key === "type" && f.bit === null) {
+        if ("type" in changes && f.bit === null) {
           const { bytes, fixed } = partLength(next.fields, target.part);
           const have = bytesOf(sorted[index])[target.part].length;   // the telegram shown right now
           if (fixed && bytes < have) next.fields.splice(fieldIndex + 1, 0, { name: freeName(next.fields, target.name || "field"), part: target.part, type: `HEX:${have - bytes}`, divisor: "", unit: "", comment: "" });
@@ -220,15 +227,35 @@ export function inspector(ctx) {
             }
           }
         }
-        upsertMine(buildDefinition(next), mine ? def.key : null).then((k) => { if (!mine) { toast(`a copy of your own with ${f.name} as ${value.trim()}: it is below (mine)`); setup.choose(row.key, k, ctx.otherKeys, decoder.entries); } ctx.onChange?.(); }).catch((err) => toast(err.message, "err"));
+        const said = Object.entries(changes).map(([k, v]) => `${k} ${String(v).trim() || "empty"}`).join(", ");
+        return upsertMine(buildDefinition(next), mine ? def.key : null).then((k) => {
+          if (!mine) {
+            toast(`a copy of your own with ${f.name}: ${said}; it is below (mine)`);
+            setup.choose(row.key, k, ctx.otherKeys, decoder.entries);
+          }
+          // the line's key is its content: the picker follows the field to the changed line (or to the copy)
+          if (ctx.picker?.defKey === def.key && ctx.picker?.field === f.name) ctx.onPicker?.({ defKey: k, field: String(changes.name ?? f.name).trim() || f.name });
+          ctx.onChange?.();
+        }).catch((err) => toast(err.message, "err"));
       };
+      // the picker: the types that fit the bytes from this field on, with what each reads from the telegram shown
+      const pick = () => {
+        if (f.bit !== null) return;
+        ctx.onPicker?.({ defKey: def.key, field: f.name });
+        const cur = bytesOf(sorted[index]);
+        openTypePicker({ anchor: typeInput, field: f, draftKey: def.key, samples: samples(), latestBytes: cur[f.part], available: Math.max(0, (cur[f.part]?.length || 0) - f.byte),
+          apply: (changes) => edit(changes), onClose: () => ctx.onPicker?.(null) });
+      };
+      pickers.set(`${def.key}|${f.name}`, pick);
+      const typeInput = h("input", { class: "ftypein", value: f.type, title: "type as in the CSV (UCH, D2C, BI0:1, BCD:2, HEX:5, …); ▾ lists the types that fit here with what each reads. A shorter type leaves the rest as a raw field of its own, a longer one takes bytes from the raw fields after it", onchange: (e) => edit({ type: e.target.value }, e.target) });
       const names = mine ? null : setup.fieldMap(def);
       const cell = h("td", { class: `field ${mine ? "mine" : ""} ${f.bit !== null ? "bitfield" : ""} ${differs ? "diff" : ""} ${selected ? "sel" : ""}`, colspan: s.span, title: `${f.name}: ${f.part === "m" ? "request" : "answer"} ${f.type}${f.divisor ? ` divisor/values ${f.divisor}` : ""}${f.unit ? ` unit ${f.unit}` : ""}${f.comment ? `\n${f.comment}` : ""}\nclick for the chart over the recording; edit the name for your config, edit type, divisor or unit for a copy of your own`,
         onclick: (e) => { if (!e.target.closest("input")) ctx.onSelect(def.key, f.name); } },
-        h("input", { class: "fname", value: mine ? f.name : (names[f.name] || f.name), title: mine ? "field name" : `field name in your config (upstream: ${f.name})`, onchange: (e) => edit("name", e.target.value, e.target) }),
-        h("div", { class: "ftype" }, h("input", { class: "ftypein", value: f.type, title: "type as in the CSV (UCH, D2C, BI0:1, BCD:2, HEX:5, …); a shorter raw type leaves the rest as a raw field of its own", onchange: (e) => edit("type", e.target.value, e.target) }),
-          h("input", { class: "fdiv", value: f.divisor, placeholder: "÷/values", title: "divisor (10), factor (-10) or value names (0=off;1=on)", onchange: (e) => edit("divisor", e.target.value, e.target) }),
-          h("input", { class: "funit", value: f.unit, placeholder: "unit", title: "unit", onchange: (e) => edit("unit", e.target.value, e.target) })));
+        h("input", { class: "fname", value: mine ? f.name : (names[f.name] || f.name), title: mine ? "field name" : `field name in your config (upstream: ${f.name})`, onchange: (e) => edit({ name: e.target.value }, e.target) }),
+        h("div", { class: "ftype" }, typeInput,
+          f.bit === null ? h("button", { class: "pickbtn", title: "the types that fit here, with what each reads from this telegram and over the recording; an enumeration from the values seen; the bits; unit and divisor", onclick: (e) => { e.stopPropagation(); pick(); } }, "▾") : null,
+          h("input", { class: "fdiv", value: f.divisor, placeholder: "÷/values", title: "divisor (10), factor (-10) or value names (0=off;1=on)", onchange: (e) => edit({ divisor: e.target.value }, e.target) }),
+          h("input", { class: "funit", value: f.unit, placeholder: "unit", title: "unit", onchange: (e) => edit({ unit: e.target.value }, e.target) })));
       fieldsRow.appendChild(cell);
       const valueCell = h("td", { class: `value mono ${selected ? "sel" : ""}`, colspan: s.span, onclick: () => ctx.onSelect(def.key, f.name) });
       valueRow.appendChild(valueCell);
@@ -304,6 +331,7 @@ export function inspector(ctx) {
   paint(index);
 
   const root = h("div", { class: "inspector-wrap" }, table);
+  if (ctx.picker) requestAnimationFrame(() => { if (root.isConnected) pickers.get(`${ctx.picker.defKey}|${ctx.picker.field}`)?.(); });
   root.showTelegram = paint;
   root.index = () => index;
   root.lineAt = (i) => sorted[i]?.line || null;

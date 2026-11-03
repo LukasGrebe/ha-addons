@@ -244,6 +244,18 @@ a longer type takes its bytes from the raw fields that follow. A line whose fiel
 bytes than the telegram carries stays on its row, marked so; a line shorter than the telegram
 decodes (ebusd reads what the fields need, the bytes after them stay unexplained).
 
+**The type picker** (▾ next to the type of a field of your own) lists every type of ebusd that
+fits the bytes from that field on, in plain words, each with the value it reads from the
+telegram shown and the range over the recording, the most plausible first: "−40 to 130 with
+decimals: a temperature?", "only grows: a counter or a total", "3 different values: a state?".
+Below it: an **enumeration** prefilled from the values seen in the byte, with a name to fill in
+per value (`0=off;1=on` goes into the divisor/values column); the **bits** of the byte with how
+often each is on; raw bytes or text with a length; a **unit** and a **divisor** to click (a
+positive divisor divides, a negative one multiplies, as in ebusd). Every pick saves the line and
+the box stays open, so type, unit and divisor are three clicks. *All types* opens the legend:
+every abbreviation with its length, range, the value that means "no value" and what it is
+typically used for. Typing into the type field still works.
+
 Statuses of a definition:
 
 | Status | Meaning |

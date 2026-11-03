@@ -22,6 +22,7 @@ const { Core, mineFiles } = await import("../../ebusd_workbench/www/core.js");
 const { keyOfLine, identityOf } = await import("../../ebusd_workbench/www/mine.js");
 const { seriesFields, seriesValues, nearestPoint, seriesQuery } = await import("../../ebusd_workbench/www/chart.js");
 const define = await import("../../ebusd_workbench/www/define.js");
+const types = await import("../../ebusd_workbench/www/types.js");
 const { rowTelegrams, coverage, summarizeFields, whyNot, accessKind, KIND_CODES, KIND_HELP, describeConditions, kindSuffix } = await import("../../ebusd_workbench/www/compare.js");
 const spec = await import("../../ebusd_workbench/www/ebus-spec.js");
 
@@ -102,7 +103,7 @@ test("the pool matches telegrams by destination, command, ID and lengths, and kn
   assert.equal(parsed.lines.size, 8);
   const inc = [...parsed.lines.values()].find((l) => l.circuit === "bai");
   assert.deepEqual([inc.zz, inc.name], ["08", "Status00"], "an included file takes destination and circuit from the device file it is named after");
-  assert.ok(parsed.scan, "scan.csv is kept for the trees");
+  assert.ok(parsed.scan[""], "scan.csv is kept for the trees, by directory");
   const pool = new Pool();
   pool.setSource("release", "s1", parsed, 0);
   const names = (hashes) => hashes.map((h) => `${pool.lines.get(h).circuit} ${pool.lines.get(h).name}`).sort();
@@ -125,10 +126,29 @@ test("the pool matches telegrams by destination, command, ID and lengths, and kn
   assert.equal(pool.preferredRef(status00).source, "release");
   assert.deepEqual(names(pool.matches("1008b5110101", "029b01")), ["hmu Status01"]);
   const tree = pool.treeFor([status00, pool.matches("1008b5110101", "029b01")[0]]);
-  assert.deepEqual(Object.keys(tree.files).sort(), ["pr_660__vaillant_08.hmu__2.csv", "release__vaillant_08.hmu__1.csv", "scan.csv"], "one file per line, under the line's first source");
-  assert.match(tree.files["release__vaillant_08.hmu__1.csv"], /^type,circuit,name,comment,qq,zz,pbsb,id,\*name.*\nr,hmu,Status00,,,08,b511,00,temp,s,D2C,,°C,,pressure,s,UCH,10,bar,\n$/);
-  assert.equal(tree.keys.get("release__vaillant_08.hmu__1.csv|hmu|Status00|"), status00);
-  assert.equal(candidateKey({ file: "release__vaillant_08.hmu__1.csv", circuit: "hmu", name: "Status00", write: false, passive: false }), "release__vaillant_08.hmu__1.csv|hmu|Status00|");
+  assert.deepEqual(Object.keys(tree.files).sort(), ["pr_660/vaillant/line__08.hmu__2.csv", "release/vaillant/_templates.csv", "release/vaillant/line__08.hmu__1.csv", "scan.csv"], "one file per line, in its source's folder under its directory, with the templates that apply there");
+  assert.match(tree.files["release/vaillant/line__08.hmu__1.csv"], /^type,circuit,name,comment,qq,zz,pbsb,id,\*name.*\nr,hmu,Status00,,,08,b511,00,temp,s,D2C,,°C,,pressure,s,UCH,10,bar,\n$/);
+  assert.equal(tree.files["release/vaillant/_templates.csv"], "ignored,,\n");
+  assert.equal(tree.keys.get("release/vaillant/line__08.hmu__1.csv|hmu|Status00|"), status00);
+  assert.equal(candidateKey({ file: "release/vaillant/line__08.hmu__1.csv", circuit: "hmu", name: "Status00", write: false, passive: false }), "release/vaillant/line__08.hmu__1.csv|hmu|Status00|");
+  // an old layout (the whole repository in versions): the templates of the directory and of those above it, combined
+  const old = parseFiles({ "latest/en/_templates.csv": "temp1,s,D1C,,°C,\n", "latest/en/vaillant/_templates.csv": "hwcmode,s,UCH,0=off;1=on,,\n", "latest/en/vaillant/08.bai.csv": H9 + "r,,,StatusTHER,,,,b511,00,t,s,temp1,,,,m,s,hwcmode,,,\n" });
+  pool.setSource("pr/411", "p4", old, 20);
+  const oldTree = pool.treeFor([[...old.lines.keys()][0]]);
+  assert.deepEqual(Object.keys(oldTree.files).sort(), ["pr_411/latest/en/vaillant/_templates.csv", "pr_411/latest/en/vaillant/line__08.bai__1.csv", "scan.csv"], "the release's scan serves a tree of another source");
+  assert.equal(oldTree.files["pr_411/latest/en/vaillant/_templates.csv"], "temp1,s,D1C,,°C,\nhwcmode,s,UCH,0=off;1=on,,\n");
+  // compiled sources keep their identification in the manufacturer's folder
+  const compiled = parseFiles({ "vaillant/scan.csv": "r,scan,,id,,,,b509,24,id,s,STR:9,,,\n", "vaillant/_templates.csv": "ignored,,\n", "vaillant/08.hmu.csv": H9 + "r,,,Status00,,,,b511,00,temp,s,D2C,,°C,\n" });
+  const pool2 = new Pool();
+  pool2.setSource("release", "s2", compiled, 0);
+  const hmu = [...compiled.lines.values()].find((l) => l.circuit === "hmu").hash, scanLine = [...compiled.lines.values()].find((l) => l.circuit === "scan").hash;
+  assert.deepEqual(Object.keys(pool2.treeFor([hmu]).files).sort(), ["release/vaillant/_templates.csv", "release/vaillant/line__08.hmu__1.csv", "release/vaillant/scan.csv"]);
+  assert.deepEqual(Object.keys(pool2.treeFor([scanLine]).files).sort(), ["release/vaillant/_templates.csv", "release/vaillant/line__scan__1.csv"], "a scan line of its own is not doubled by its file");
+  // an old pull request with the repository in several versions: only the scan next to the line, not every version's
+  const versions = parseFiles({ "latest/en/vaillant/scan.csv": "r,scan,,id,,,,b509,24,id,s,STR:9,,,\n", "ebusd-2.x.x/en/vaillant/scan.csv": "r,scan,,id,,,,b509,24,id,s,STR:9,,,\n", "ebusd-2.x.x/en/vaillant/08.bai.csv": H9 + "r,,,Status02,,,,b511,02,t,s,D2C,,,\n" });
+  pool2.setSource("pr/328", "p5", versions, 30);
+  const bai = [...versions.lines.values()].find((l) => l.circuit === "bai").hash;
+  assert.deepEqual(Object.keys(pool2.treeFor([bai]).files).sort(), ["pr_328/ebusd-2.x.x/en/vaillant/line__08.bai__1.csv", "pr_328/ebusd-2.x.x/en/vaillant/scan.csv"]);
   pool.removeSource("pr/660");
   assert.deepEqual(pool.refs.get(status00).map((r) => r.source), ["release"]);
   assert.deepEqual(pool.matches("1008b5110101", "029b01"), []);
@@ -331,10 +351,61 @@ test("bytes are analysed and interpreted over the history", () => {
   assert.deepEqual(a.bytes.map((b) => b.distinct), [1, 3, 1]);
   const d2c = define.interpretations(samples, "s", 1).find((i) => i.type === "D2C");
   assert.equal(d2c.latest, 0x01c8 / 16);
-  assert.equal(d2c.name, "16 bit divided by 16", "the plain name travels with the interpretation");
+  assert.equal(d2c.name, "sixteenths, two bytes", "the plain name travels with the interpretation");
   assert.deepEqual([d2c.min, d2c.max], [0x01a0 / 16, 0x01c8 / 16]);
   assert.equal(define.interpretations(samples, "s", 1).find((i) => i.type === "ULG"), undefined, "a type that needs more bytes than there are does not fit");
   assert.deepEqual(Object.keys(define.TYPES).filter((t) => !define.TYPES[t].name || !define.TYPES[t].label), [], "every type has a name and an explanation");
+});
+
+test("the types of ebusd read the bytes as ebusd does, in plain words", () => {
+  const d = (code, hex) => types.TYPE_BY_CODE[code].decode(hex.match(/../g).map((x) => parseInt(x, 16)));
+  assert.deepEqual([d("UCH", "41"), d("UCH", "ff"), d("SCH", "ff"), d("SCH", "80"), d("D1B", "81")], [65, null, -1, null, -127]);
+  assert.deepEqual([d("D1C", "64"), d("D1C", "ff"), d("D1C", "d0")], [50, null, undefined], "D1C: half steps up to 100, more cannot be read");
+  assert.deepEqual([d("D2C", "9001"), d("D2C", "0080"), d("D2C", "f0ff"), d("D2B", "8001"), d("FLT", "e803"), d("FLR", "03e8")], [25, null, -1, 1.5, 1, 1]);
+  assert.deepEqual([d("UIN", "41ff"), d("UIR", "ff41"), d("SIN", "ffff"), d("SIN", "0080"), d("SIR", "8000")], [65345, 65345, -1, null, null]);
+  assert.deepEqual([d("U3N", "010000"), d("U3R", "000001"), d("S3N", "ffffff"), d("U3N", "ffffff")], [1, 1, -1, null]);
+  assert.deepEqual([d("ULG", "01000000"), d("ULG", "ffffffff"), d("SLG", "ffffffff"), d("SLR", "ffffffff")], [1, null, -1, -1]);
+  assert.deepEqual([d("EXP", "0000803f"), d("EXR", "3f800000"), d("EXP", "0000c07f")], [1, 1, null], "floating point, both byte orders, NaN is no value");
+  assert.deepEqual([d("BCD", "42"), d("BCD", "4a"), d("BCD", "ff"), d("PIN", "1234"), d("HCD", "78563412")], [42, undefined, null, 1234, 12345678]);
+  assert.deepEqual([d("BI0", "01"), d("BI3", "08"), d("BI7", "7f"), d("BI7", "80")], [1, 1, 0, 1]);
+  assert.deepEqual([d("HTI", "173b05"), d("BTI", "053917"), d("VTI", "053b17"), d("HTI", "ff0000"), d("HTI", "180000")], ["23:59:05", "17:39:05", "23:59:05", null, undefined]);
+  assert.deepEqual([d("HTM", "0c1e"), d("BTM", "3012"), d("VTM", "1e0c"), d("MIN", "5a00"), d("MIN", "ffff"), d("TTM", "8a"), d("TTM", "90")], ["12:30", "12:30", "12:30", "01:30", null, "23:00", null]);
+  assert.deepEqual([d("TTH", "03"), d("TTQ", "05")], ["01:30", "01:15"]);
+  assert.deepEqual([d("BDA", "27100126"), d("HDA", "1b0a011a"), d("BDA", "ff000000"), d("DAY", "0100"), d("DTM", "3c000000")], ["27.10.2026", "27.10.2026", null, "02.01.1900", "01.01.2009 01:00"]);
+  assert.deepEqual([d("BDY", "00"), d("BDY", "07"), d("HDY", "07"), d("HDY", "00")], ["Mon", null, "Sun", null]);
+  assert.deepEqual([d("STR", "4142"), d("NTS", "410042"), d("HEX", "0a1b"), d("IGN", "0a")], ["AB", "A", "0a 1b", ""]);
+  for (const t of types.TYPES) {
+    assert.ok(t.name && t.meaning && t.uses && t.none, `${t.code} is explained`);
+    assert.equal(byteLengthOf(t.code), t.bytes, `${t.code}: the pool and the table agree on the length`);
+  }
+  assert.deepEqual(Object.keys(define.TYPES).slice(0, 3), ["UCH", "SCH", "D1B"], "define.js keeps the number types");
+});
+
+test("the picker ranks the types by what the bytes look like, and prefills an enumeration and the bits", () => {
+  const s = (bytes, ms, n = 1) => ({ n, last_ms: ms, m: [], s: bytes });
+  // 20.0 .. 22.75 °C as D2C (320 + 4 i sixteenths), the high byte constant
+  const temps = [...Array(12).keys()].map((i) => s([(320 + 4 * i) & 0xff, (320 + 4 * i) >> 8], 1000 * i));
+  const ranked = types.interpretations(temps, "s", 0, { available: 2 });
+  assert.equal(ranked[0].code, "D2C");
+  assert.match(ranked[0].hint, /temperature/);
+  assert.deepEqual([ranked[0].min, ranked[0].max, ranked[0].distinct], [20, 22.75, 12]);
+  assert.equal(ranked.find((i) => i.code === "ULG"), undefined, "a type that needs more bytes than are available is not offered");
+  assert.equal(ranked.find((i) => i.code === "HEX"), undefined, "raw types are picked with a length, not ranked");
+  const latest = types.interpretations(temps, "s", 0, { available: 2, latestBytes: [0x50, 0x01] }).find((i) => i.code === "D2C");
+  assert.equal(latest.value, 21, "the value column reads the telegram shown, the range the recording");
+  // a counter in four bytes
+  const counter = [...Array(6).keys()].map((i) => s([7 * i, 0, 0, 0], 1000 * i));
+  assert.match(types.interpretations(counter, "s", 0, { available: 4 }).find((i) => i.code === "ULG").hint, /grows/);
+  // a state: two values, mostly off
+  const states = [s([0], 1, 5), s([1], 2, 2)];
+  assert.deepEqual(types.enumValues(states, "s", 0), [{ raw: 0, n: 5 }, { raw: 1, n: 2 }]);
+  assert.equal(types.enumList(types.enumNames(types.enumValues(states, "s", 0))), "0=off;1=on");
+  assert.equal(types.enumList({ 3: "heat pump", 0: "idle" }), "0=idle;3=heat_pump", "keys ascending, names safe for the CSV");
+  assert.match(types.interpretations(states, "s", 0, { available: 1 }).find((i) => i.code === "UCH").hint, /enumeration/);
+  assert.deepEqual(types.bitStats(states, "s", 0), { total: 7, on: [2, 0, 0, 0, 0, 0, 0, 0] });
+  // mostly no value: not plausible
+  const none = [s([0xff], 1, 9), s([3], 2, 1)];
+  assert.equal(types.interpretations(none, "s", 0, { available: 1 }).find((i) => i.code === "UCH").score, 0);
 });
 
 // -- the eBUS specification ------------------------------------------------------------------------------------

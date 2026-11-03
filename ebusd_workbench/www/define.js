@@ -1,40 +1,13 @@
 // Defining a message from the recording: a definition prefilled with what the telegrams of a
-// message tell (type, circuit, address, command, ID, the data bytes), the number types of ebusd in
-// plain words with what they read from the bytes, and the CSV line for ebusd. A new definition
-// starts as one raw HEX field per part; the inspector carves it into fields.
+// message tell (type, circuit, address, command, ID, the data bytes) and the CSV line for ebusd.
+// A new definition starts as one raw HEX field per part; the inspector carves it into fields,
+// with the types of ebusd in plain words (types.js).
 
 const hex2 = (n) => n.toString(16).padStart(2, "0");
-const s8 = (b) => (b[0] > 127 ? b[0] - 256 : b[0]);
-const u16 = (b) => b[0] | (b[1] << 8);
-const s16 = (b) => { const v = u16(b); return v > 32767 ? v - 65536 : v; };
-const u32 = (b) => (b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)) >>> 0;
-const round = (v, digits) => Math.round(v * 10 ** digits) / 10 ** digits;
 
-/** The number types of ebusd that decode a fixed number of bytes: null is the value ebusd shows as "-" (replacement value). */
-export const TYPES = {
-  UCH: { len: 1, name: "unsigned byte", label: "whole number 0 to 255", decode: (b) => b[0] },
-  SCH: { len: 1, name: "signed byte", label: "whole number -128 to 127", decode: s8 },
-  D1B: { len: 1, name: "signed byte, 0x80 empty", label: "whole number -127 to 127, 0x80 means no value", decode: (b) => (b[0] === 0x80 ? null : s8(b)) },
-  D1C: { len: 1, name: "byte divided by 2", label: "0 to 100 in half steps, e.g. a percentage; 0xFF means no value", decode: (b) => (b[0] === 0xff ? null : b[0] / 2) },
-  UIN: { len: 2, name: "unsigned 16 bit", label: "whole number 0 to 65535 in two bytes", decode: u16 },
-  SIN: { len: 2, name: "signed 16 bit", label: "whole number -32768 to 32767 in two bytes", decode: s16 },
-  D2B: { len: 2, name: "16 bit divided by 256", label: "two bytes in 1/256 steps, e.g. a temperature; 0x8000 means no value", decode: (b) => (u16(b) === 0x8000 ? null : round(s16(b) / 256, 4)) },
-  D2C: { len: 2, name: "16 bit divided by 16", label: "two bytes in 1/16 steps, e.g. a temperature; 0x8000 means no value", decode: (b) => (u16(b) === 0x8000 ? null : round(s16(b) / 16, 4)) },
-  FLT: { len: 2, name: "16 bit divided by 1000", label: "two bytes in thousandths; 0x8000 means no value", decode: (b) => (u16(b) === 0x8000 ? null : round(s16(b) / 1000, 4)) },
-  ULG: { len: 4, name: "unsigned 32 bit", label: "whole number 0 to 4294967295 in four bytes", decode: u32 },
-  SLG: { len: 4, name: "signed 32 bit", label: "whole number, negative possible, in four bytes", decode: (b) => u32(b) | 0 },
-  EXP: { len: 4, name: "decimal number", label: "four bytes as a floating point number", decode: (b) => { const v = new DataView(Uint8Array.from(b.slice(0, 4)).buffer).getFloat32(0, true); return Number.isFinite(v) ? round(v, 5) : null; } },
-};
-/** Types without a number: raw hex, ignored bytes, text of n bytes. */
-export const RAW_TYPES = ["HEX", "IGN", "STR"];
-export const RAW_INFO = {
-  HEX: { name: "raw bytes", label: "shown as hex digits" },
-  IGN: { name: "ignored bytes", label: "skipped, not decoded" },
-  STR: { name: "text", label: "characters, one byte each" },
-};
-
-/** The plain name, the explanation and the CSV shorthand of a type. */
-export const typeInfo = (code) => ({ code, ...(TYPES[code] || RAW_INFO[code] || { name: code, label: "" }) });
+/** The number types of ebusd (code -> {len, name, label, decode}), the raw types, and a type's plain words: see types.js. */
+export { NUMBER_TYPES as TYPES, RAW_TYPES, typeInfo, interpretations } from "./types.js";
+import { NUMBER_TYPES } from "./types.js";
 
 export const hexToBytes = (hex) => Uint8Array.from((hex || "").match(/../g) || [], (h) => parseInt(h, 16));
 
@@ -72,30 +45,6 @@ export function analyzeBytes(samples, part) {
   return { length: len, variants: lengths.size, bytes, latest: latest || null };
 }
 
-/** Every number type that fits at an offset: latest value and range over the samples. */
-export function interpretations(samples, part, offset) {
-  const out = [];
-  for (const [type, spec] of Object.entries(TYPES)) {
-    let valid = 0, total = 0, min = Infinity, max = -Infinity;
-    const distinct = new Set();
-    let latest = null, latestMs = -1;
-    for (const s of samples) {
-      const bytes = s[part];
-      if (!bytes || bytes.length < offset + spec.len) continue;
-      total++;
-      const v = spec.decode(bytes.slice(offset, offset + spec.len));
-      if (v === null || !Number.isFinite(v)) continue;
-      valid++; min = Math.min(min, v); max = Math.max(max, v); distinct.add(v);
-      if ((s.last_ms || 0) >= latestMs) { latestMs = s.last_ms || 0; latest = v; }
-    }
-    if (!total) continue;
-    out.push({ type, len: spec.len, name: spec.name, label: spec.label, latest, min: valid ? min : null, max: valid ? max : null, distinct: distinct.size, validRatio: valid / total });
-  }
-  // most plausible first: valid values, a modest range
-  const magnitude = (i) => (i.min === null ? Infinity : Math.max(Math.abs(i.min), Math.abs(i.max)));
-  return out.sort((a, b) => b.validRatio - a.validRatio || magnitude(a) - magnitude(b));
-}
-
 // -- segments: the fields of a definition tile the data bytes of a part -----------------------------
 
 /** A new part: one raw HEX field over all bytes. */
@@ -116,7 +65,7 @@ export function nameSegments(segments, part) {
 }
 
 const fieldCells = (seg, part) => {
-  const type = TYPES[seg.type] ? seg.type : `${seg.type}:${seg.len}`;
+  const type = NUMBER_TYPES[seg.type] ? seg.type : `${seg.type}:${seg.len}`;
   return [seg.name, part, type, seg.divisor || "", seg.unit || "", seg.comment || ""];
 };
 

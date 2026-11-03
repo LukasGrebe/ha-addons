@@ -1,4 +1,29 @@
-# 0.6.0 (unreleased)
+# 0.6.1 (unreleased)
+
+## Features
+* **A type picker** on every field of a line of your own (▾ next to the type): every type of
+  ebusd that fits the bytes from the field on, in plain words, each with the value it reads from
+  the telegram shown and the range over the recording, the most plausible first ("−40 to 130
+  with decimals: a temperature?", "only grows: a counter or a total", "3 different values: a
+  state?"); an **enumeration** prefilled from the values seen in the byte, with names to fill in
+  (`0=off;1=on`); the **bits** of the byte with how often each is on; raw bytes or text with a
+  length; a **unit** and a **divisor** to click. The box stays open while the line is saved, so
+  type, unit and divisor are three clicks. **All types** opens the legend: every abbreviation with
+  its length, range, the value that means "no value" and what it is used for
+* A longer type takes its bytes from the raw fields after it, a shorter one leaves a raw field
+  (`UCH, HEX:1, HEX:1, HEX:7` with `UIN` on the first becomes `UIN, HEX:7`)
+
+## Fixes
+* A line of an old-style pull request (CSV with templates, a `latest/en` layout) is checked with
+  the templates of its directory and of those above it, as ebusd combines them, instead of being
+  rejected for an unknown type
+* The small trees a message is checked with carry the identification messages (`vaillant/scan.csv`
+  of the compiled sources, not only a `scan.csv` at the root), so a condition such as
+  `[id_sw>=200]` is judged there as ebusd judges it. Pools are read again once for this
+* A definition shorter than the telegram fits it: ebusd reads what its fields need and leaves
+  the rest (PR 528's `bai Status00` of 8 bytes over a 9-byte answer)
+
+# 0.6.0
 
 A new backbone: a definition is a line of CSV, wherever it comes from, and ebusd's library judges
 it on demand. Everything this browser decoded before is decoded again, once (the browser store

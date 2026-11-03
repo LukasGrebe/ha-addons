@@ -14,7 +14,9 @@ import { CSV_HEADER, fnv } from "./csv.js";
 const SYNC_CHUNK = 86400e3;
 const BATCH = 1500;              // telegrams per run of the release tree
 const MESSAGE_BATCH = 300;       // telegrams per run of a message's tree
-const JOB_RULES = "j2";          // how a message's tree is built: a verdict inferred from a run (not listed by ebusd) is checked again when this changes
+const JOB_RULES = "j3";
+/** A verdict not given by ebusd itself but inferred from its silence: "no match" or "rejected", tagged with the rules of its run. */
+const isInferred = (r) => !!r.inferred || r.result === "no match" || r.result === "rejected";          // how a message's tree is built: a verdict inferred from a run (not listed by ebusd) is checked again when this changes
 export const MINE = "mine";
 const isScanLine = (line) => line.slice(4, 10) === "070400";
 const byFirst = (a, b) => (a.first_ms ?? Infinity) - (b.first_ms ?? Infinity) || a.line.localeCompare(b.line);
@@ -282,7 +284,7 @@ export class Core {
   /** What decides a source's scan: its scan.csv and the device files it has (the same for most pull requests). */
   scanKeyOf(s) {
     const names = Object.keys(s.files || {}).filter((p) => /(^|\/)[0-9a-f]{2}\.[^/]*\.(csv|inc)$/i.test(p) || /(^|\/)scan\.csv$/.test(p)).sort();
-    const scan = (s.files || {})["scan.csv"] || "";
+    const scan = names.filter((p) => /(^|\/)scan\.csv$/.test(p)).map((p) => (s.files || {})[p] || "").join("|");
     return s.scanKey || (s.scanKey = fnv(`${names.join("|")}|${scan}`));
   }
 
@@ -449,7 +451,7 @@ export class Core {
   putResults(line, seen, put) {
     let map = this.results.get(line);
     if (!map) this.results.set(line, (map = new Map()));
-    for (const [hash, c] of seen) map.set(hash, { result: c.result || "unknown", text: c.text || "", fields: compactFields(c.fields) });
+    for (const [hash, c] of seen) map.set(hash, { result: c.result || "unknown", text: c.text || "", fields: compactFields(c.fields), ...(c.inferred ? { inferred: c.inferred } : {}) });
     put.push({ line, byHash: Object.fromEntries(map) });
   }
 
@@ -465,7 +467,7 @@ export class Core {
 
   /** Decode a message's candidates over its telegrams (the inspector asks with "now", the list with "background"). */
   ensureDecoded(key, lines, priority = "background") {
-    const stamp = `${this.poolStamp}|${lines.length}`;
+    const stamp = `${this.poolStamp}|${JOB_RULES}|${lines.length}`;
     if (this.rowsDone.get(key) === stamp) return false;
     const job = this.queue.find((j) => j.key === key);
     if (job) { job.lines = lines; if (priority === "now" && job.priority !== "now") { job.priority = "now"; this.queue = [job, ...this.queue.filter((j) => j !== job)]; } }
@@ -495,20 +497,22 @@ export class Core {
   }
 
   async runJob(job) {
-    const stamp = `${this.poolStamp}|${job.lines.length}`;
+    const stamp = `${this.poolStamp}|${JOB_RULES}|${job.lines.length}`;
     const telegrams = job.lines.map((l) => this.telegrams.get(l)).filter(Boolean).sort((a, b) => (b.last_ms || 0) - (a.last_ms || 0));
     // the pairs (telegram, line) without a result yet
     const wanted = new Set();
     const lines = [];
     for (const t of telegrams) {
       const results = this.results.get(t.line);
-      const missing = this.matchesOf(t).filter((h) => { const r = results?.get(h); return !r || (r.inferred && r.inferred !== JOB_RULES); });
+      // without a result, or with one inferred under other rules (a verdict of old without a tag counts as that)
+      const missing = this.matchesOf(t).filter((h) => { const r = results?.get(h); return !r || (isInferred(r) && r.inferred !== JOB_RULES); });
       if (!missing.length) continue;
       for (const h of missing) wanted.add(h);
       lines.push(t);
     }
     if (wanted.size) {
       const tree = this.pool.treeFor([...wanted]);
+      for (const h of wanted) this.lineErrors.delete(h);   // judged afresh: a line ebusd now loads loses its old error
       const filesId = `msg|${fnv(Object.keys(tree.files).sort().join("|") + [...wanted].sort().join(","))}`;
       const scanLines = [...this.telegrams.values()].filter((t) => isScanLine(t.line)).map((t) => t.line);
       for (let i = 0; i < lines.length; i += MESSAGE_BATCH) {
@@ -529,7 +533,7 @@ export class Core {
             this.noteCandidate(hash, c, fput);
           }
           // a line that fits by the pool's reckoning but ebusd did not list: it does not decode this telegram
-          for (const h of this.matchesOf(t)) if (wanted.has(h) && !seen.has(h)) { const r = this.results.get(t.line)?.get(h); if (!r || r.inferred) seen.set(h, { result: this.lineErrors.has(h) ? "rejected" : "no match", text: "", fields: null, inferred: JOB_RULES }); }
+          for (const h of this.matchesOf(t)) if (wanted.has(h) && !seen.has(h)) { const r = this.results.get(t.line)?.get(h); if (!r || isInferred(r)) seen.set(h, { result: this.lineErrors.has(h) ? "rejected" : "no match", text: "", fields: null, inferred: JOB_RULES }); }
           this.putResults(r.input, seen, put);
         }
         await this.persist(put, [], fput);
@@ -676,7 +680,7 @@ export class Core {
   }
 
   /** Whether a message is decoded with the pool as it is. */
-  isDecoded(key, lines) { return this.rowsDone.get(key) === `${this.poolStamp}|${lines.length}`; }
+  isDecoded(key, lines) { return this.rowsDone.get(key) === `${this.poolStamp}|${JOB_RULES}|${lines.length}`; }
 
   /** A summary for the UI. */
   status() {

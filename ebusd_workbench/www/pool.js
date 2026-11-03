@@ -6,16 +6,13 @@
 //
 // No imports of the page: usable in workers and tests.
 import { CSV_HEADER, buildDefinition, fnv, joinCsv, parseDefinition, splitCsv, splitType } from "./csv.js";
+import { TYPE_BYTES } from "./types.js";
 
 /** How files are read into lines: a parsed pool kept in the store is read again when this changes. */
-export const POOL_RULES = "p2";
+export const POOL_RULES = "p4";
 
-/** Bytes a data type takes (bits for BI0..BI7); types with :n take n (bytes, or bits for BIx). */
-export const TYPE_LEN = {
-  UCH: 1, SCH: 1, D1B: 1, D1C: 1, BCD: 1, HCD: 1, PIN: 2, UIN: 2, SIN: 2, UIR: 2, SIR: 2, D2B: 2, D2C: 2, FLT: 2, FLR: 2,
-  U3N: 3, U3R: 3, S3N: 3, S3R: 3, ULG: 4, SLG: 4, ULR: 4, SLR: 4, EXP: 4, EXR: 4, TTM: 1, TTH: 1, TTQ: 1, HTI: 3, BTI: 3, VTI: 3,
-  HTM: 2, BTM: 2, VTM: 2, MIN: 2, BDA: 4, HDA: 4, BDZ: 2, DTM: 4, VDA: 3, BDY: 1, HDY: 1, DAY: 2, TEM_P: 2, NTS: 1, STR: 1, HEX: 1, IGN: 1, NUL: 1,
-};
+/** Bytes a data type takes as ebusd reads it (types.js); types with :n take n bytes (bits for BI0..BI7). */
+export const TYPE_LEN = TYPE_BYTES;
 /** The bytes a type takes as written in a CSV: 0 for a bit field, null for "the rest" (:*). */
 export function byteLengthOf(type) {
   const { code, length } = splitType(type);
@@ -135,12 +132,13 @@ export function parseLine(raw, file = "", layout = { level: false }, context = n
 }
 
 /**
- * Parse the CSV files of a source: {lines: Map(hash -> line), refs: [{hash, file}], defaults: {file: [lines starting with * or !]}, scan: text|null}.
- * `scan.csv` at the root (the identification messages) is kept as text for the trees ebusd decodes with.
+ * Parse the CSV files of a source: {lines: Map(hash -> line), refs: [{hash, file}], defaults: {file: [lines starting with * or !]},
+ * scan: {directory: text}, templates: {directory: text}}. Every `scan.csv` (the identification messages, at the
+ * root or in a manufacturer's folder) and every `_templates.csv`, by directory ("" for the root), are kept as text
+ * for the trees ebusd decodes with.
  */
 export function parseFiles(files) {
-  const lines = new Map(), refs = [], defaults = {};
-  let scan = null, templates = null;
+  const lines = new Map(), refs = [], defaults = {}, templates = {}, scan = {};
   // an included file (bai.0010002315.inc, loaded by 08.bai.csv with !load or !include) belongs to the device file
   // whose circuit it is named after: its lines get that file's destination and circuit, as ebusd gives them
   const contexts = new Map();   // "dir/circuit" -> {zz, circuit}
@@ -150,8 +148,8 @@ export function parseFiles(files) {
   }
   for (const [file, text] of Object.entries(files || {})) {
     if (typeof text !== "string" || !/\.(csv|inc)$/i.test(file)) continue;
-    if (/(^|\/)_templates\.csv$/.test(file)) { if (file === "_templates.csv") templates = text; continue; }
-    if (file === "scan.csv") scan = text;
+    if (/(^|\/)_templates\.csv$/.test(file)) { templates[file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : ""] = text; continue; }
+    if (/(^|\/)scan\.csv$/.test(file)) scan[file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : ""] = text;
     const headerLine = text.split("\n").find((l) => HEADER_LINE.test(l.trim()));
     const layout = headerLine ? layoutOf(headerLine) : sniffLayout(text);
     const context = /\.inc$/i.test(file) ? contexts.get(`${file.slice(0, file.lastIndexOf("/") + 1)}${file.replace(/^.*\//, "").split(".")[0].toLowerCase()}`) || null : null;
@@ -195,7 +193,9 @@ export class Pool {
       if (!this.refs.get(hash).some((r) => r.source === id && r.file === file)) this.refs.get(hash).push({ source: id, file });
       hashes.add(hash);
     }
-    this.sources.set(id, { stamp, hashes, defaults: parsed.defaults || {}, scan: parsed.scan || null, templates: parsed.templates || null, order });
+    const templates = typeof parsed.templates === "string" ? { "": parsed.templates } : parsed.templates || {};
+    const scan = typeof parsed.scan === "string" ? { "": parsed.scan } : parsed.scan || {};
+    this.sources.set(id, { stamp, hashes, defaults: parsed.defaults || {}, scan, templates, order });
     this.version++;
   }
 
@@ -259,9 +259,11 @@ export class Pool {
   }
 
   /**
-   * A small tree of files for ebusd's library: the given lines, every one under its first source as a root
-   * file (never a device file, so ebusd loads all of them), with zz and circuit explicit; the scan.csv and
-   * the root templates of the first source involved (the identification, for conditions).
+   * A small tree of files for ebusd's library: the given lines, every one as a file of its own (never a device
+   * file, so ebusd loads all of them) in its source's folder under the directory it came from, with zz and
+   * circuit explicit, next to the templates that apply there (the directory's own and those of the directories
+   * above it, as ebusd combines them); the scan files (the identification, for conditions) of the first source
+   * that has them, in their folders; the root templates of the first source involved at the root.
    * @returns {files, keys: Map("file|circuit|name|w|u" -> hash)}
    */
   treeFor(hashes) {
@@ -269,20 +271,52 @@ export class Pool {
     const sources = new Set();
     const files = {};
     let n = 0;
+    const slugOf = (id) => id.replace(/[^A-Za-z0-9]+/g, "_");
+    const scanFilesUsed = new Set();   // "source|dir": a scan file whose own line is in the tree is not added again
+    const dirsUsed = [];               // [source, dir] of every line, in order
+    // the templates of a directory and of those between it and the root (the root's own are global, below)
+    const placeTemplates = (sourceId, dir) => {
+      const folder = `${slugOf(sourceId)}/${dir}/`;
+      if (!dir || `${folder}_templates.csv` in files) return;
+      const templates = this.sources.get(sourceId)?.templates || {};
+      const parts = dir.split("/");
+      const applicable = parts.map((_, i) => parts.slice(0, i + 1).join("/")).filter((d) => templates[d]).map((d) => templates[d].trim());
+      if (applicable.length) files[`${folder}_templates.csv`] = `${applicable.join("\n")}\n`;
+    };
     for (const hash of hashes) {
       const line = this.lines.get(hash);
       const ref = this.preferredRef(hash);
       if (!line || !ref) continue;
       sources.add(ref.source);
+      const dir = ref.file.includes("/") ? ref.file.slice(0, ref.file.lastIndexOf("/")) : "";
+      const folder = `${slugOf(ref.source)}/${dir ? `${dir}/` : ""}`;
       // one file per line: a line ebusd refuses (a typo, a format of old) takes no other line down with it
-      const path = `${ref.source.replace(/[^A-Za-z0-9]+/g, "_")}__${ref.file.replace(/[^A-Za-z0-9.]+/g, "_").replace(/\.(csv|inc)$/, "")}__${++n}.csv`;
+      const path = `${folder}line__${ref.file.replace(/^.*\//, "").replace(/\.(csv|inc)$/, "").replace(/[^A-Za-z0-9.]+/g, "_")}__${++n}.csv`;
       files[path] = `${CSV_HEADER}\n${line.csv}\n`;   // complete lines (zz, circuit and parts explicit): the defaults (*) of the original file are not needed
       keys.set(`${path}|${line.circuit}|${line.name}|${line.write ? "w" : ""}${line.passive ? "u" : ""}`, hash);
+      placeTemplates(ref.source, dir);
+      if (/(^|\/)scan\.csv$/.test(ref.file)) scanFilesUsed.add(`${ref.source}|${dir}`);
+      dirsUsed.push([ref.source, dir]);
     }
-    for (const id of [...sources].sort((a, b) => (this.sources.get(a)?.order ?? 99) - (this.sources.get(b)?.order ?? 99))) {
+    // the identification (for conditions): the scan files next to the lines (the line's directory and its source's
+    // root), else those of the first source that has any, in their folders (the root's at the root)
+    const byOrder = (a, b) => (this.sources.get(a)?.order ?? 99) - (this.sources.get(b)?.order ?? 99);
+    const placeScan = (sourceId, dir) => {
+      const text = this.sources.get(sourceId)?.scan?.[dir];
+      if (!text || scanFilesUsed.has(`${sourceId}|${dir}`)) return false;
+      const path = dir ? `${slugOf(sourceId)}/${dir}/scan.csv` : "scan.csv";
+      if (!(path in files)) { files[path] = text; placeTemplates(sourceId, dir); }
+      return true;
+    };
+    let placed = false;
+    for (const [sourceId, dir] of dirsUsed) { placed = placeScan(sourceId, dir) || placed; placed = placeScan(sourceId, "") || placed; }
+    if (!placed) {
+      const withScan = [...this.sources.keys()].sort(byOrder).find((id) => Object.keys(this.sources.get(id)?.scan || {}).length);
+      if (withScan) for (const dir of Object.keys(this.sources.get(withScan).scan)) placeScan(withScan, dir);
+    }
+    for (const id of [...sources].sort(byOrder)) {
       const s = this.sources.get(id);
-      if (s?.scan && !files["scan.csv"]) files["scan.csv"] = s.scan;
-      if (s?.templates && !files["_templates.csv"]) files["_templates.csv"] = s.templates;
+      if (s?.templates?.[""] && !files["_templates.csv"]) files["_templates.csv"] = s.templates[""];
     }
     return { files, keys };
   }

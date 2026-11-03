@@ -9,6 +9,7 @@
 import { app, append, bus, fmt, h, toast } from "./app.js";
 import { drawChart, nearestPoint, seriesFields, seriesValues } from "./chart.js";
 import { accessKind, coverage, rowTelegrams, whyNot } from "./compare.js";
+import { closeTypePicker } from "./typepick.js";
 import { messageColors } from "./colors.js";
 import { analyzeBytes, buildCsv, defaultHeader, initialSegments, samplesOf } from "./define.js";
 import { MINE, setup } from "./setup.js";
@@ -50,6 +51,7 @@ export class Scratchpad {
   }
 
   close() {
+    closeTypePicker({ silent: true });
     this.state = null;
     this.model = null;
     this.key = null;
@@ -172,9 +174,10 @@ export class Scratchpad {
     const defs = m.shown.map((c) => ({ def: c.def, coverage: c.cov }));
     const usedDef = m.candidates.find((c) => c.def.key === m.usedKey)?.def || null;
     this.inspectorEl = inspector({
-      row: st.row, telegrams: m.telegrams, defs, decoder: app.decoder, view: this.view, telegramIndex: st.tIndex, selected: st.chart,
+      row: st.row, telegrams: m.telegrams, defs, decoder: app.decoder, view: this.view, telegramIndex: st.tIndex, selected: st.chart, picker: st.picker,
       included: m.included, otherKeys: m.keys, usedKey: m.usedKey, usedDef, defKey: m.defKey,
       onTelegram: (i) => { st.tIndex = i; },
+      onPicker: (p) => { st.picker = p; },
       onSelect: (defKey, field) => (st.chart?.defKey === defKey && st.chart?.field === field ? this.closeChart() : this.openChart(defKey, field)),
       onChange: () => this.refresh(),
       onNew: () => this.newDefinition(),
