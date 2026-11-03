@@ -11,6 +11,7 @@ import { messageColors } from "./colors.js";
 import { accessKind } from "./compare.js";
 import { MINE, setup } from "./setup.js";
 import { addressName } from "./ebus-spec.js";
+import { describeEvent, mergeTimeline } from "./events.js";
 
 const FILTERS = [
   ["attention", "needs a look", "messages ebusd does not understand today: unknown ones (most traffic first) and ones another source could understand"],
@@ -47,6 +48,7 @@ export class MessagesView {
     bus.on("decodes-changed", (reason) => { if (reason !== "progress") this.schedule(); });
     bus.on("setup-changed", () => this.schedule());
     bus.on("settings-changed", () => this.schedule());
+    bus.on("events-changed", () => this.schedule());
     bus.on("status", () => { this.renderLoad(); if (!this.allRows.length) this.schedule(); });
     this.schedule();
   }
@@ -68,8 +70,9 @@ export class MessagesView {
     el.load = h("span", { class: "group load" });
     el.toolbar = h("div", { class: "toolbar msg-toolbar" }, el.filters, el.sorts, h("span", { class: "group" }, el.search), h("span", { class: "group", style: "margin-left:auto" }, el.info), el.load);
     el.devices = h("div", { class: "devices" });
+    el.events = h("div", { class: "events-strip" });
     el.list = h("div", { class: "msg-list" });
-    append(this.root, el.toolbar, el.devices, el.list);
+    append(this.root, el.toolbar, el.devices, el.events, el.list);
     this.renderLoad();
   }
 
@@ -234,6 +237,7 @@ export class MessagesView {
     for (const b of el.filters.querySelectorAll("button")) b.classList.toggle("active", b.dataset.filter === this.filter);
     for (const b of el.sorts.querySelectorAll("button")) b.classList.toggle("active", b.dataset.sort === this.sort);
     this.renderDevices();
+    this.renderEvents();
     this.renderLoad();
     if (this.selected && this.inspHost && !force) return;   // the list stays put while you inspect a message
     const rows = this.shownRows();
@@ -250,7 +254,9 @@ export class MessagesView {
     }
     const table = h("table", { class: "msgs" }, h("thead", {}, h("tr", {},
       h("th", { style: "width:18px" }), h("th", {}, "message"), h("th", {}, "understood by"), h("th", {}, "latest value"), h("th", { class: "num" }, "telegrams"), h("th", { class: "num", title: "distinct telegrams (values) seen" }, "values"), h("th", {}, "last seen"), h("th", { class: "num", title: "definitions that fit this message, from every source" }, "fits"), h("th", { title: "part of your setup" }, "setup"))),
-      h("tbody", {}, this.grouped(rows).map((r) => (r.kind === "group" ? this.groupRow(r) : this.row(r)))));
+      h("tbody", {}, this.sort === "last"
+        ? mergeTimeline(rows, app.events?.events || []).map((it) => (it.kind === "event" ? this.eventRow(it) : this.row(it.row)))
+        : this.grouped(rows).map((r) => (r.kind === "group" ? this.groupRow(r) : this.row(r)))));
     append(el.list, table);
     d?.markDrawn?.();
     this.placeInspector();
@@ -305,6 +311,52 @@ export class MessagesView {
     if (masters.length && open) el.appendChild(h("span", { class: "masters muted", title: "addresses that only send: the controller, remote controls, ebusd itself" }, "asking: ", masters.map((m) => h("span", { class: "mono" }, `${m.qq} (${m.role})`)).flatMap((x, i) => (i ? [", ", x] : [x]))));
   }
 
+  /** The events watched next to the telegrams, as one line: a chip per entity with what the recording holds. */
+  renderEvents() {
+    const el = this.el.events;
+    el.replaceChildren();
+    const ev = app.events;
+    if (!ev) return;
+    const openSettings = () => { const details = document.querySelector("#extras details"); if (details) { details.open = true; details.querySelector(".settings")?.scrollIntoView({ behavior: "smooth", block: "start" }); } };
+    const chips = [];
+    for (const c of ev.config) {
+      const list = ev.intervals.get(c.entity) || [];
+      const points = ev.events.filter((e) => e.kind === "point" && e.entity === c.entity).length;
+      const text = c.mode === "interval" ? `${fmt.count(list.length)} on-stretch${list.length === 1 ? "" : "es"}${list.some((e) => e.end_ms === null) ? ", on now" : ""}` : `${fmt.count(points)} change${points === 1 ? "" : "s"}`;
+      chips.push(h("span", { class: "evchip", title: `${c.entity}: ${c.mode === "interval" ? `on/off stretches (on = ${c.on || "on"})` : "value changes"} in the recording` }, h("span", { class: "evdot", style: `background:${ev.colorOf(c.entity)};margin-left:0` }), h("b", {}, c.label || c.entity), h("span", { class: "muted" }, text)));
+    }
+    const notes = ev.notes.length;
+    if (notes) chips.push(h("span", { class: "evchip", title: "notes made with the log command of the eBUSd terminal" }, h("b", {}, "notes"), h("span", { class: "muted" }, fmt.count(notes))));
+    if (!chips.length) return;   // nothing watched, nothing noted: no line
+    append(el, h("span", { class: "muted", title: "the events next to the telegrams: by last received they interleave with the messages, a message's row says what was on when it was last seen, the chart draws the stretches" }, "events"), ...chips,
+      h("button", { class: "small", title: "which entities are watched, and how: in the settings under Advanced", onclick: openSettings }, "⚙"));
+  }
+
+  /** A line of the chronological list: an event began, ended, changed, or a note was made. */
+  eventRow(it) {
+    const e = it.event, ev = app.events;
+    const color = e.color || ev?.colorOf(e.entity) || "#6b7a8a";
+    const text = describeEvent(e, it.edge);
+    const span = it.edge === "end" && e.start_ms ? ` · after ${fmt.duration(e.end_ms - e.start_ms)}` : it.edge === "note" && e.min_ms !== undefined && e.max_ms !== undefined && e.max_ms > e.min_ms ? ` · some time between ${fmt.time(e.min_ms)} and ${fmt.time(e.max_ms)}` : "";
+    return h("tr", { class: `event ${it.edge}` },
+      h("td", {}, h("span", { class: "evdot", style: `background:${color};margin-left:3px` })),
+      h("td", { colspan: 5 }, h("span", { class: "evlabel" }, text), h("span", { class: "muted" }, span)),
+      h("td", { class: "muted nowrap" }, fmt.dateTime(it.ms, true)),
+      h("td", { colspan: 2 }));
+  }
+
+  /** The stretches that were on when the message was last seen, as dots after its name. */
+  eventMarks(r) {
+    const active = r.latest?.last_ms ? app.events?.activeAt(r.latest.last_ms) || [] : [];
+    return active.map((e) => h("span", { class: "evdot", style: `background:${e.color}`, title: `last seen while ${e.label} was on (since ${fmt.dateTime(e.start_ms)})` }));
+  }
+
+  /** How much of the message's traffic fell inside each watched stretch, as a thin bar after the count. */
+  shareBar(r) {
+    const shares = app.events?.shareOf(r) || [];
+    return shares.slice(0, 3).map((s) => h("span", { class: "evshare", title: `${Math.round(s.share * 100)} % of this message's telegrams (${fmt.count(s.inside)} of ${fmt.count(s.total)}, by the command's first ID byte) arrived while ${s.label} was on` }, h("i", { style: `width:${Math.max(2, Math.round(s.share * 100))}%;background:${s.color}` })));
+  }
+
   groupRow(g) {
     const open = this.openGroups.has(`${g.zz}${g.pbsb}`);
     return h("tr", { class: "group", onclick: () => { const k = `${g.zz}${g.pbsb}`; this.openGroups[open ? "delete" : "add"](k); this.render(true); } },
@@ -339,10 +391,10 @@ export class MessagesView {
     return h("tr", { class: `msg ${this.selected?.key === r.key ? "selected" : ""} attention${r.attention}`, "data-key": r.key, title, onclick: () => this.select(r, null, true) },
       h("td", {}, h("span", { class: "fold" }, this.selected?.key === r.key ? "▾" : "")),
       h("td", { class: "name" }, r.def ? [chip(r.def.circuit, r.def.name), setup.exportName(r.def) !== r.def.name ? h("span", { class: "export" }, `→ ${setup.exportName(r.def)}`) : null, h("span", { class: "tmeta" }, accessKind(r.def))] : [h("span", { class: "mono" }, r.label), h("span", { class: "tmeta" }, r.zz === "fe" ? "broadcast" : r.latest?.slave ? "answered" : "no answer")],
-        !r.def && !r.scan ? h("span", { class: "define" }, "＋ define") : null, !r.def && r.scan ? h("span", { class: "tmeta" }, "scan") : null),
+        !r.def && !r.scan ? h("span", { class: "define" }, "＋ define") : null, !r.def && r.scan ? h("span", { class: "tmeta" }, "scan") : null, this.eventMarks(r)),
       h("td", {}, understood),
       h("td", { class: "mono value", title: dec ? `${value}\n${latestHex}` : "" }, value.length > 400 ? `${value.slice(0, 398)}…` : value),
-      h("td", { class: "num" }, fmt.count(r.n)),
+      h("td", { class: "num nowrap" }, fmt.count(r.n), this.shareBar(r)),
       h("td", { class: "num" }, fmt.count(r.distinct)),
       h("td", { class: "muted nowrap" }, r.latest?.last_ms ? fmt.duration(Math.max(0, Date.now() - r.latest.last_ms)) + " ago" : ""),
       h("td", { class: "num" }, r.candidates.size ? h("span", { class: `cands ${r.pending ? "pending" : ""}`, title: r.pending ? "some of them are not checked with ebusd's library yet" : "" }, `${r.candidates.size}`) : ""),

@@ -245,18 +245,21 @@ export class Scratchpad {
     const t0 = db.first_ms, t1 = db.last_ms + 1000;
     const width = Math.max(300, (this.host.clientWidth || 600) - 40);
     let geometry = null;
-    const paint = (hover = null) => { geometry = drawChart(canvas, series, { t0, t1, width, height: 180, band: null, hoverMs: hover }); };
+    const bands = app.events?.bandsIn(t0, t1) || [];
+    const paint = (hover = null) => { geometry = drawChart(canvas, series, { t0, t1, width, height: 180, bands, hoverMs: hover }); };
     const summary = () => {
       const values = series.points.map((p) => p.value);
       const range = series.numeric && values.length ? ` · ${Math.min(...values)} … ${Math.max(...values)}` : "";
-      info.textContent = `${fmt.count(series.points.length)} telegrams${data.stride > 1 ? ` (every ${data.stride}th of ${fmt.count(data.total)})` : ""}${range}${series.points.length < data.points.length ? " · telegrams not decoded with this definition are left out" : ""}`;
+      const stretches = bands.length ? ` · ${bands.length} stretch${bands.length === 1 ? "" : "es"} of ${[...new Set(bands.map((b) => b.label))].join(", ")} behind the values` : "";
+      info.textContent = `${fmt.count(series.points.length)} telegrams${data.stride > 1 ? ` (every ${data.stride}th of ${fmt.count(data.total)})` : ""}${range}${series.points.length < data.points.length ? " · telegrams not decoded with this definition are left out" : ""}${stretches}`;
     };
     const lineAt = (ms) => { const p = nearestPoint(series, ms); if (!p) return null; const idx = data.points.findIndex(([pm]) => pm === p.ms); return { p, line: idx >= 0 ? data.lines[data.points[idx][1]] : null }; };
     canvas.addEventListener("mousemove", (e) => {
       const ms = geometry.tOf(e.offsetX), hit = lineAt(ms);
       paint(ms);
       if (!hit) return;
-      info.textContent = `${fmt.dateTime(hit.p.ms)}  ${field} = ${hit.p.value}`;
+      const active = app.events?.activeAt(hit.p.ms) || [];
+      info.textContent = `${fmt.dateTime(hit.p.ms)}  ${field} = ${hit.p.value}${active.length ? ` · while ${active.map((e) => e.label).join(", ")} on` : ""}`;
       const at = hit.line ? this.inspectorEl?.indexOfLine(hit.line) : -1;
       if (at >= 0) this.inspectorEl.showTelegram(at);   // the telegram row above follows the pointer
     });

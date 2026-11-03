@@ -1,5 +1,6 @@
 """Unit tests of the safe paths, deploy and settings of the Workbench."""
 
+import json
 import os
 import sys
 import tempfile
@@ -52,6 +53,22 @@ class Deploy(unittest.TestCase):
 
 
 class SettingsFile(unittest.TestCase):
+    def test_events_and_the_entities_of_old(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "settings.json")
+            with open(path, "w") as f:
+                json.dump({"entities": ["switch.pump", "sensor.outside"]}, f)
+            settings = Settings(path)
+            self.assertEqual([(e["entity"], e["mode"]) for e in settings.events], [("sensor.outside", "value"), ("switch.pump", "interval")], "the entity list of earlier versions becomes events with defaults")
+            self.assertEqual(settings.entities, ["sensor.outside", "switch.pump"], "the subscription follows the events")
+            self.assertTrue(settings.update({"events": [{"entity": "binary_sensor.burner", "on": "on", "label": "Burner", "color": "#ff0000"}]}), "the entities changed")
+            self.assertEqual(settings.entities, ["binary_sensor.burner"])
+            self.assertFalse(settings.update({"events": [{"entity": "binary_sensor.burner", "label": "Flame"}]}), "a rename changes no subscription")
+            with self.assertRaises(ValueError):
+                settings.update({"events": [{"entity": "burner"}]})
+            with self.assertRaises(ValueError):
+                settings.update({"events": [{"entity": "switch.x", "mode": "sometimes"}]})
+
     def test_validation_and_persistence(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "data", "settings.json")

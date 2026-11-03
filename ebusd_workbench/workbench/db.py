@@ -393,6 +393,39 @@ class Database:
         finally:
             conn.close()
 
+    def event_share(self, from_ms, to_ms, intervals):
+        """How much of every message's traffic fell inside intervals: {"zz|pbsb|id1": [inside, total]} per
+        entity, with the messages keyed by destination, command and first data byte (the first byte of the
+        message ID). intervals: {entity: [(start_ms, end_ms|None)]}; an open interval runs to the end."""
+        schema = self.schema()
+        if schema is None:
+            return {"total": {}, "entities": {}}
+        conn = self.connect()
+        try:
+            totals = {}
+            rows = conn.execute(
+                f"SELECT zz, pb, sb, substr({schema.dd}, 1, 2) AS id1, count(*) AS n FROM telegram "
+                "WHERE ts >= ? AND ts < ? AND status = 'ok' AND dd IS NOT NULL GROUP BY zz, pb, sb, id1",
+                (from_ms * NS_PER_MS, to_ms * NS_PER_MS)).fetchall()
+            for r in rows:
+                totals["%02x|%02x%02x|%s" % (r["zz"], r["pb"], r["sb"], r["id1"] or "")] = r["n"]
+            per_entity = {}
+            for entity, spans in intervals.items():
+                counts = {}
+                for start_ms, end_ms in spans[:2000]:
+                    lo = start_ms * NS_PER_MS
+                    hi = (end_ms if end_ms is not None else to_ms) * NS_PER_MS
+                    for r in conn.execute(
+                            f"SELECT zz, pb, sb, substr({schema.dd}, 1, 2) AS id1, count(*) AS n FROM telegram "
+                            "WHERE ts >= ? AND ts < ? AND status = 'ok' AND dd IS NOT NULL GROUP BY zz, pb, sb, id1",
+                            (max(lo, from_ms * NS_PER_MS), min(hi, to_ms * NS_PER_MS))):
+                        key = "%02x|%02x%02x|%s" % (r["zz"], r["pb"], r["sb"], r["id1"] or "")
+                        counts[key] = counts.get(key, 0) + r["n"]
+                per_entity[entity] = counts
+            return {"total": totals, "entities": per_entity}
+        finally:
+            conn.close()
+
     def state_entities(self):
         """Entities that have recorded state changes, with their counts."""
         conn = self.connect()

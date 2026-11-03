@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import __version__, deploy
 from .db import NO_VALUE
+from . import events
 from .paths import PathError, safe_relative
 from .sources import SourceError
 
@@ -149,9 +150,28 @@ def api_distinct(ctx, req):
 
 @route("GET", "/api/events")
 def api_events(ctx, req):
+    """The events of a time range (default: the last hour): on/off intervals of the watched switches and
+    binary sensors, value changes of the other watched entities, and the notes of the terminal's `log`
+    command; with the settings they follow and every entity that has recorded changes."""
     from_ms, to_ms = window(req.query)
-    return {"markers": ctx.db.markers(from_ms, to_ms), "states": ctx.db.states(from_ms, to_ms),
-            "entities": ctx.db.state_entities()}
+    recorded = ctx.db.state_entities()
+    config = events.config_for([e["entity"] for e in recorded], ctx.settings.events)
+    # an interval open at the start of the range begins before it: the states of the whole recording are read
+    states = ctx.db.states(0, to_ms, limit=50000)
+    built = events.build_events(ctx.db.markers(from_ms, to_ms), states, config, from_ms, to_ms)
+    return {"from_ms": from_ms, "to_ms": to_ms, "events": built, "config": config, "entities": recorded}
+
+
+@route("GET", "/api/events/share")
+def api_events_share(ctx, req):
+    """How much of every message's traffic fell inside the on/off intervals of each watched entity."""
+    from_ms, to_ms = window(req.query, 31 * 86400_000)
+    recorded = ctx.db.state_entities()
+    config = events.config_for([e["entity"] for e in recorded], ctx.settings.events)
+    built = events.build_events([], ctx.db.states(0, to_ms, limit=50000), config, from_ms, to_ms)
+    share = ctx.db.event_share(from_ms, to_ms, events.intervals_of(built))
+    share.update({"from_ms": from_ms, "to_ms": to_ms})
+    return share
 
 
 @route("POST", "/api/events")
@@ -185,6 +205,14 @@ def api_events_delete(ctx, req):
     if not ctx.db.delete_marker(int(req.params["id"])):
         raise ApiError("no such event", HTTPStatus.NOT_FOUND)
     return {"ok": True}
+
+
+@route("POST", "/api/ha/test")
+def api_ha_test(ctx, req):
+    """Try the connection to Home Assistant step by step (connect, authenticate, subscribe, ping)."""
+    if not ctx.ha:
+        return {"ok": False, "steps": [{"step": "connect", "ok": False, "detail": "no Home Assistant connection in this run (--no-ha)"}]}
+    return ctx.ha.test_connection()
 
 
 @route("GET", "/api/ha/entities")

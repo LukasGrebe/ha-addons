@@ -99,12 +99,22 @@ class Api(unittest.TestCase):
 
     def test_events_and_settings(self):
         events = self.get_json(f"/api/events?from={self.end_ms - 86400_000}&to={self.end_ms}")
-        self.assertEqual(len(events["markers"]), 1)
+        notes = [e for e in events["events"] if e["kind"] == "note"]
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0]["label"], "opened hot water tap")
         self.assertEqual(events["entities"][0]["entity"], "switch.circulation_pump")
+        self.assertEqual(events["config"], [{"entity": "switch.circulation_pump", "mode": "interval", "on": "on", "label": "circulation pump", "color": ""}], "a switch is watched as on/off stretches by default")
+        intervals = [e for e in events["events"] if e["kind"] == "interval"]
+        self.assertGreater(len(intervals), 0)
+        self.assertTrue(all(e["entity"] == "switch.circulation_pump" and e["label"] == "circulation pump" for e in intervals))
+        share = self.get_json(f"/api/events/share?from={self.end_ms - 86400_000}&to={self.end_ms}")
+        self.assertIn("switch.circulation_pump", share["entities"])
+        self.assertTrue(share["total"], "every message's traffic is counted")
+        self.assertTrue(all(share["entities"]["switch.circulation_pump"][k] <= share["total"][k] for k in share["entities"]["switch.circulation_pump"]))
         code, _, body = self.request("POST", "/api/events", {"message": "test marker", "ms": self.end_ms - 1000})
         self.assertEqual(code, 200)
         event_id = json.loads(body)["id"]
-        self.assertEqual(len(self.get_json(f"/api/events?from={self.end_ms - 86400_000}&to={self.end_ms}")["markers"]), 2)
+        self.assertEqual(len([e for e in self.get_json(f"/api/events?from={self.end_ms - 86400_000}&to={self.end_ms}")["events"] if e["kind"] == "note"]), 2)
         self.assertEqual(self.request("DELETE", f"/api/events/{event_id}")[0], 200)
         self.assertEqual(self.request("DELETE", f"/api/events/{event_id}")[0], 404)
         # like the terminal's `log`: a time range ("somewhere between 8:40 and 8:50"), or only a time without a message
@@ -129,6 +139,18 @@ class Api(unittest.TestCase):
         self.assertNotIn("id_overrides", json.loads(body), "settings of the timeline are ignored")
         self.assertEqual(json.loads(body)["sources"], [{"id": "pr/660", "enabled": True}, {"id": "next", "enabled": False}])
         self.assertEqual(self.request("PUT", "/api/settings", {"entities": "x"})[0], 400)
+        code, _, body = self.request("PUT", "/api/settings", {"events": [{"entity": "switch.pump", "label": "Pump", "color": "#1976D2"}, {"entity": "sensor.outside"}]})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(json.loads(body)["events"], [{"entity": "switch.pump", "mode": "interval", "on": "on", "label": "Pump", "color": "#1976d2"}, {"entity": "sensor.outside", "mode": "value", "on": "on", "label": "", "color": ""}])
+        self.assertEqual(self.request("PUT", "/api/settings", {"events": [{"entity": "pump"}]})[0], 400)
+        self.assertEqual(self.request("PUT", "/api/settings", {"events": [{"entity": "switch.pump", "color": "blue"}]})[0], 400)
+        config = self.get_json(f"/api/events?from={self.end_ms - 86400_000}&to={self.end_ms}")["config"]
+        self.assertEqual(next(c["label"] for c in config if c["entity"] == "switch.pump"), "Pump")
+        self.assertEqual([c["entity"] for c in config], ["sensor.outside", "switch.circulation_pump", "switch.pump"], "watched and recorded entities alike")
+        test = json.loads(self.request("POST", "/api/ha/test")[2])
+        self.assertFalse(test["ok"])
+        self.assertEqual(test["steps"][0]["step"], "connect")
+        self.request("PUT", "/api/settings", {"events": []})
 
     def test_client_gone_stops_queries(self):
         import socket

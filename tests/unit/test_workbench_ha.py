@@ -50,6 +50,13 @@ class Frames(unittest.TestCase):
         # example of RFC 6455 section 1.3
         self.assertEqual(ha.accept_key("dGhlIHNhbXBsZSBub25jZQ=="), "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")
 
+    def test_pong_is_an_answer(self):
+        # a quiet subscription: the pong to our ping proves the connection and must not be swallowed
+        ws = ha.WebSocket("ws://example.invalid/")
+        ws._buffer = ha.encode_frame(ha.OP_PONG, b"wb", mask=False) + ha.encode_frame(ha.OP_TEXT, b'{"type":"event"}', mask=False)
+        self.assertEqual(ws.recv_text(), "")
+        self.assertEqual(ws.recv_text(), '{"type":"event"}')
+
     def test_parse_iso(self):
         from datetime import datetime, timezone
         expected = int(datetime(2026, 10, 27, 10, 0, 0, 500000, tzinfo=timezone.utc).timestamp() * 1000) * 1_000_000
@@ -171,6 +178,7 @@ class Logger(unittest.TestCase):
             self.assertEqual(logged[1]["ms"], ha.parse_iso("2026-10-27T10:00:00+00:00") // 1_000_000)
             self.assertEqual(logged[1]["attributes"], {"friendly_name": "Pump"})
             self.assertEqual(client.status()["entities"], ["switch.pump"])
+            self.assertTrue(any("connected to" in line[1] for line in client.status()["log"]), "the connection log tells what happened")
             subscribe = next(m for m in server.received if m.get("type") == "subscribe_trigger")
             self.assertEqual(subscribe["trigger"], {"platform": "state", "entity_id": ["switch.pump"]})
 

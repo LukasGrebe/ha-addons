@@ -1,4 +1,28 @@
-# 0.6.1 (unreleased)
+# 0.6.2 (unreleased)
+
+## Features
+* **Events next to the telegrams.** A switch or a binary sensor of Home Assistant (the circulation
+  pump, the burner, a heating request) is watched as **on/off stretches**, any other entity as
+  value changes; notes made with the `log` command of the eBUSd terminal are events too. The
+  settings (Advanced) say what is watched, how, under which name and colour. An *events* line
+  above the list shows what the recording holds. Sorted by **last received**, the stretches and
+  notes interleave with the messages as lines of their own; in every sort a message's row carries
+  a dot per stretch that was on when it was last seen, and a thin bar per watched entity with
+  how much of its traffic arrived while that was on. The inspector's telegram line says what was
+  on at that telegram; the chart draws the stretches behind the values and names them under the
+  pointer
+* **Home Assistant connection: diagnostics and a test.** The chip's tooltip and the settings show
+  since when the connection stands, the last message and the last pong, the reconnects and the
+  last error with its time; *test the connection* tries connect, authentication, subscription and
+  ping apart from the running connection and says which step fails; the connection log is there
+  to read
+
+## Fixes
+* The connection to Home Assistant no longer drops as "no answer to ping" while nothing happens:
+  the pong to the keep-alive ping was skipped, so a quiet subscription (no state change for 90 s)
+  looked dead. The pong counts as the answer now
+
+# 0.6.1
 
 ## Features
 * **A type picker** on every field of a line of your own (▾ next to the type): every type of

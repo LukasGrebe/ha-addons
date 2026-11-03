@@ -6,6 +6,7 @@ API http://supervisor/core/api, both authenticated with the SUPERVISOR_TOKEN.
 """
 
 import base64
+import collections
 import hashlib
 import json
 import logging
@@ -155,9 +156,10 @@ class WebSocket:
         self.send(OP_PING, b"wb")
 
     def recv_text(self):
-        """Return the next text message, or None when the peer closed the connection.
+        """Return the next text message, "" for a pong (the peer is alive, nothing to read), or None when
+        the peer closed the connection.
 
-        Pings are answered, pongs skipped; raises socket.timeout when nothing arrives in time.
+        Pings are answered; raises socket.timeout when nothing arrives in time.
         """
         message = bytearray()
         message_opcode = None
@@ -167,7 +169,7 @@ class WebSocket:
                 self.send(OP_PONG, payload)
                 continue
             if opcode == OP_PONG:
-                continue
+                return ""
             if opcode == OP_CLOSE:
                 try:
                     self.send(OP_CLOSE, payload[:2])
@@ -230,10 +232,16 @@ class HAClient(threading.Thread):
         self.token = token if token is not None else os.environ.get("SUPERVISOR_TOKEN", "")
         self.ws = None
         self.connected = False
+        self.connected_since_ms = None
         self.last_error = None
+        self.last_error_ms = None
         self.last_event_ms = None
+        self.last_message_ms = None
+        self.last_pong_ms = None
+        self.reconnects = 0
         self.subscribed = []
         self.events_logged = 0
+        self.lines = collections.deque(maxlen=40)   # the connection log, newest last: [ms, text]
         self._stop = threading.Event()
         self._reconnect = threading.Event()
         self._next_id = 1
@@ -244,7 +252,58 @@ class HAClient(threading.Thread):
     def status(self):
         return {"configured": bool(self.token), "connected": self.connected, "last_error": self.last_error,
                 "entities": list(self.subscribed), "last_event_ms": self.last_event_ms,
-                "events_logged": self.events_logged}
+                "events_logged": self.events_logged, "url": self.url, "connected_since_ms": self.connected_since_ms,
+                "last_error_ms": self.last_error_ms, "last_message_ms": self.last_message_ms, "last_pong_ms": self.last_pong_ms,
+                "reconnects": self.reconnects, "log": [list(line) for line in self.lines]}
+
+    def _note(self, text, level=logging.INFO):
+        self.lines.append([int(time.time() * 1000), text])
+        log.log(level, "%s", text)
+
+    def test_connection(self, timeout=10.0):
+        """Try the steps of a session once, apart from the logger: connect, authenticate, subscribe. Returns
+        {"ok": bool, "steps": [{"step", "ok", "detail"}]} with the first failing step's reason."""
+        steps = []
+        ok = True
+        ws = None
+        try:
+            if not self.token:
+                raise WebSocketError("no SUPERVISOR_TOKEN: not running as a Home Assistant app")
+            ws = WebSocket(self.url, timeout=timeout)
+            try:
+                ws.connect()
+                steps.append({"step": "connect", "ok": True, "detail": self.url})
+            except (OSError, WebSocketError) as err:
+                raise WebSocketError(f"connect to {self.url}: {err}") from err
+            message = json.loads(ws.recv_text() or "{}")
+            if message.get("type") != "auth_required":
+                raise WebSocketError(f"auth: unexpected first message {message.get('type')}")
+            ws.send_json({"type": "auth", "access_token": self.token})
+            message = json.loads(ws.recv_text() or "{}")
+            if message.get("type") != "auth_ok":
+                raise WebSocketError(f"auth: {message.get('message') or message.get('type')}")
+            steps.append({"step": "auth", "ok": True, "detail": f"Home Assistant {message.get('ha_version') or ''}".strip()})
+            entities = sorted(set(self.settings.entities))
+            if entities:
+                ws.send_json({"id": 1, "type": "subscribe_trigger", "trigger": {"platform": "state", "entity_id": entities}})
+                message = json.loads(ws.recv_text() or "{}")
+                if not message.get("success"):
+                    error = message.get("error") or {}
+                    raise WebSocketError(f"subscribe: {error.get('message') or error or message.get('type')}")
+                steps.append({"step": "subscribe", "ok": True, "detail": f"{len(entities)} entities"})
+            else:
+                steps.append({"step": "subscribe", "ok": True, "detail": "nothing to subscribe to: no entities in the settings"})
+            ws.ping()
+            answer = ws.recv_text()
+            steps.append({"step": "ping", "ok": answer is not None, "detail": "answered" if answer == "" else "no pong, but a message" if answer else "closed"})
+        except (OSError, WebSocketError, ValueError) as err:
+            ok = False
+            failed = str(err).split(":", 1)[0] if ":" in str(err) and str(err).split(":", 1)[0] in ("connect to " + self.url, "auth", "subscribe") else "connect"
+            steps.append({"step": failed.replace("connect to " + self.url, "connect"), "ok": False, "detail": str(err) or err.__class__.__name__})
+        finally:
+            if ws is not None:
+                ws.close()
+        return {"ok": ok, "steps": steps}
 
     def resubscribe(self):
         """Apply a changed entity list by reconnecting."""
@@ -289,16 +348,22 @@ class HAClient(threading.Thread):
                 backoff = 5
             except (OSError, WebSocketError, ValueError) as err:
                 self.last_error = str(err) or err.__class__.__name__
-                log.warning("connection to Home Assistant failed: %s", self.last_error)
+                self.last_error_ms = int(time.time() * 1000)
+                self._note(f"connection failed: {self.last_error}", logging.WARNING)
             finally:
+                if self.connected:
+                    self.reconnects += 1
                 self.connected = False
+                self.connected_since_ms = None
                 if self.ws is not None:
                     self.ws.close()
                     self.ws = None
             if self._stop.is_set():
                 break
             if self._reconnect.is_set():
+                self._note("entity list changed: connecting again")
                 continue  # entity list changed: reconnect right away
+            self._note(f"trying again in {backoff} s")
             self._stop.wait(backoff)
             backoff = min(backoff * 2, 60)
 
@@ -320,6 +385,7 @@ class HAClient(threading.Thread):
         if message.get("type") != "auth_ok":
             raise WebSocketError(f"authentication failed: {message.get('message') or message.get('type')}")
         self.connected = True
+        self.connected_since_ms = int(time.time() * 1000)
         self.last_error = None
         entities = sorted(set(self.settings.entities))
         self.subscribed = entities
@@ -330,7 +396,9 @@ class HAClient(threading.Thread):
             states_id = self._send({"type": "get_states"})
         else:
             states_id = None
-        log.info("connected to Home Assistant, logging %d entities", len(entities))
+        self._note(f"connected to {self.url}, watching {len(entities)} entities")
+        # a quiet subscription: after a timeout of silence a ping is sent; the pong (an empty text) proves
+        # the connection; three timeouts without any answer end the session
         idle = 0
         while not self._stop.is_set() and not self._reconnect.is_set():
             try:
@@ -344,6 +412,10 @@ class HAClient(threading.Thread):
             idle = 0
             if text is None:
                 raise WebSocketError("connection closed by Home Assistant")
+            if text == "":
+                self.last_pong_ms = int(time.time() * 1000)
+                continue
+            self.last_message_ms = int(time.time() * 1000)
             message = json.loads(text)
             if message.get("type") == "result":
                 if message.get("id") == states_id and message.get("success"):

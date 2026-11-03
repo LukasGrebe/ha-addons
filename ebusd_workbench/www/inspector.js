@@ -305,7 +305,9 @@ export function inspector(ctx) {
     older.disabled = index >= sorted.length - 1;
     newer.disabled = index <= 0;
     counter.textContent = sorted.length ? `${fmt.count(index + 1)} of ${fmt.count(sorted.length)} distinct` : "no telegram";
-    info.textContent = current ? `${current.n ? `×${fmt.count(current.n)}` : "pasted"} · last ${current.last_ms ? fmt.dateTime(current.last_ms, true) : "?"}` : "";
+    const active = current?.last_ms ? app.events?.activeAt(current.last_ms) || [] : [];
+    info.replaceChildren(current ? `${current.n ? `×${fmt.count(current.n)}` : "pasted"} · last ${current.last_ms ? fmt.dateTime(current.last_ms, true) : "?"}` : "",
+      ...active.map((e) => h("span", { class: "evtag", style: `border-color:${e.color}`, title: `${e.label} was on from ${fmt.dateTime(e.start_ms)}${e.end_ms ? ` to ${fmt.dateTime(e.end_ms)}` : " on"} when this telegram was last recorded` }, h("span", { class: "evdot", style: `background:${e.color}` }), ` while ${e.label} on`)));
     info.title = current?.line || "";
     const master = current?.master || "";
     const cmd = master ? commandInfo(master.slice(4, 8)) : null;

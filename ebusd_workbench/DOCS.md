@@ -162,11 +162,27 @@ as you watch.
 
 ### Events
 
-The timeline view of earlier versions is set aside for now; what it recorded stays and may come
-back. Home Assistant entity changes are stored next to the telegrams (the entities are chosen
-under *Advanced → Settings*; the Workbench subscribes to them through the Home Assistant API),
-and the `log` command of the eBUSd app's terminal notes what you did or saw ("set hot water to
-50 °C", with the time and how exact it is).
+What happened around the telegrams: the on/off stretches of a switch or a binary sensor of Home
+Assistant (the circulation pump, the burner, a heating request), the value changes of any other
+entity, and the notes made with the `log` command of the eBUSd app's terminal ("set hot water to
+50 °C", with the time and how exact it is). Under *Advanced → Settings* you pick what is watched:
+search an entity, give it a name and a colour, choose **on/off stretches** (from the change to
+its on value until the next change away from it; *on* also means true, open, heating, running) or
+**value changes**. The Workbench subscribes to the entities through the Home Assistant API and
+stores every change next to the telegrams.
+
+An *events* line above the list shows what the recording holds (how many stretches, whether one
+is on now, how many notes). Sorted by **last received**, the stretches begin and end as lines of
+their own between the messages, with the notes; in every sort a message's row carries a dot per
+stretch that was on when the message was last seen, and after its count a thin bar per watched
+entity with the share of its traffic that arrived while that was on (counted on the device by
+destination, command and first ID byte). The inspector's telegram line says what was on at the
+telegram shown; the chart draws the stretches behind the values and names them under the pointer.
+
+The connection to Home Assistant shows in the top bar (the tooltip has since when, the last
+message and pong, reconnects, the last error) and under *Advanced → Settings*, where *test the
+connection* tries connect, authentication, subscription and ping apart from the running
+connection and says which step fails; the connection log is there to read.
 
 | Table | Content |
 |---|---|

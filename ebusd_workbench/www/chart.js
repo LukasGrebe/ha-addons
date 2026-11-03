@@ -63,7 +63,10 @@ const stamp = (ms) => { const d = new Date(ms); return `${pad(d.getMonth() + 1)}
  * behind it, other values as dots on one lane per distinct value (most frequent first).
  * Returns the geometry for hit testing: {xOf, tOf}.
  */
-export function drawChart(canvas, series, { t0, t1, width, height, band = null, hoverMs = null }) {
+const withAlpha = (color, alpha) => { const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color || ""); return m ? `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${alpha})` : `rgba(11,125,218,${alpha})`; };
+
+/** @param bands [{from, to, color}]: the stretches of the events, drawn behind the values */
+export function drawChart(canvas, series, { t0, t1, width, height, band = null, bands = null, hoverMs = null }) {
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(width * dpr);
   canvas.height = Math.round(height * dpr);
@@ -85,9 +88,10 @@ export function drawChart(canvas, series, { t0, t1, width, height, band = null, 
     const label = stamp(t0 + ((t1 - t0) * i) / 5);
     ctx.fillText(label, Math.min(Math.max(2, x - ctx.measureText(label).width / 2), width - ctx.measureText(label).width - 2), height - 5);
   }
-  if (band && band.to > t0 && band.from < t1) {
-    ctx.fillStyle = "rgba(11,125,218,.12)";
-    const x0 = Math.max(L, xOf(band.from)), x1 = Math.min(L + w, xOf(band.to));
+  for (const b of [...(band ? [band] : []), ...(bands || [])]) {
+    if (!(b.to > t0 && b.from < t1)) continue;
+    ctx.fillStyle = withAlpha(b.color, 0.14);
+    const x0 = Math.max(L, xOf(b.from)), x1 = Math.min(L + w, xOf(b.to));
     ctx.fillRect(x0, T, Math.max(2, x1 - x0), h);
   }
   const points = series.points.filter((p) => p.ms >= t0 && p.ms <= t1);

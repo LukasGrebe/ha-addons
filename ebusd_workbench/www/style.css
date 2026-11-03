@@ -380,3 +380,21 @@ table.inspector .defmeta .spinner { vertical-align: middle; }
 .typepick .enum input { font-family: var(--mono); font-size: 11px; width: 130px; padding: 1px 4px; }
 .typepick input.len { width: 54px; }
 .typepick table.legend td { font-size: 11px; }
+
+/* the events next to the telegrams */
+.events-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 4px 12px; border-bottom: 1px solid var(--line); background: #fffdf8; font-size: 12px; flex: none; }
+.events-strip:empty { display: none; }
+.evchip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
+.evdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; margin-left: 5px; flex: none; }
+.evtag { display: inline-flex; align-items: center; margin-left: 6px; padding: 0 6px; border: 1px solid; border-radius: 10px; font-size: 11px; }
+table.msgs tr.event td { background: #fffdf8; color: var(--muted); font-size: 11px; padding: 1px 8px; border-bottom: 1px dashed var(--line); }
+table.msgs tr.event .evlabel { color: var(--text); font-weight: 600; }
+.evshare { display: inline-block; width: 36px; height: 6px; margin-left: 6px; vertical-align: middle; background: #eef1f4; border-radius: 3px; overflow: hidden; }
+.evshare i { display: block; height: 100%; }
+.ha-steps { list-style: none; padding: 0; margin: 6px 0; }
+.ha-steps li { padding: 1px 0; }
+.ha-log { max-height: 160px; }
+.entity-list .ent select, .entity-list .ent input[type=text] { font-size: 11px; padding: 1px 4px; }
+.entity-list .ent input.label { width: 150px; }
+.entity-list .ent input.onvalue { width: 60px; font-family: var(--mono); }
+.entity-list .ent input[type=color] { width: 22px; height: 18px; padding: 0; border: none; background: none; cursor: pointer; }

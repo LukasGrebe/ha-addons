@@ -23,6 +23,7 @@ const { keyOfLine, identityOf } = await import("../../ebusd_workbench/www/mine.j
 const { seriesFields, seriesValues, nearestPoint, seriesQuery } = await import("../../ebusd_workbench/www/chart.js");
 const define = await import("../../ebusd_workbench/www/define.js");
 const types = await import("../../ebusd_workbench/www/types.js");
+const ev = await import("../../ebusd_workbench/www/events.js");
 const { rowTelegrams, coverage, summarizeFields, whyNot, accessKind, KIND_CODES, KIND_HELP, describeConditions, kindSuffix } = await import("../../ebusd_workbench/www/compare.js");
 const spec = await import("../../ebusd_workbench/www/ebus-spec.js");
 
@@ -406,6 +407,24 @@ test("the picker ranks the types by what the bytes look like, and prefills an en
   // mostly no value: not plausible
   const none = [s([0xff], 1, 9), s([3], 2, 1)];
   assert.equal(types.interpretations(none, "s", 0, { available: 1 }).find((i) => i.code === "UCH").score, 0);
+});
+
+test("events next to the telegrams: active stretches, the chronological list, the words", () => {
+  const pump = { kind: "interval", entity: "switch.pump", label: "pump", color: "#1976d2", start_ms: 2000, end_ms: 5000 };
+  const open = { kind: "interval", entity: "switch.pump", label: "pump", color: "#1976d2", start_ms: 7000, end_ms: null };
+  const point = { kind: "point", entity: "sensor.out", label: "outside", start_ms: 2500, end_ms: null, value: "7.5" };
+  const note = { kind: "note", entity: "", label: "tap opened", start_ms: 4000, end_ms: null, min_ms: 3000, max_ms: 4000 };
+  const intervals = ev.intervalsOf([pump, point, note, open]);
+  assert.deepEqual([...intervals.keys()], ["switch.pump"]);
+  assert.deepEqual(ev.activeIntervals(intervals, 3000).map((e) => e.start_ms), [2000]);
+  assert.deepEqual(ev.activeIntervals(intervals, 5000), [], "the end is not inside");
+  assert.deepEqual(ev.activeIntervals(intervals, 99999).map((e) => e.start_ms), [7000], "an open stretch runs on");
+  const rows = [{ key: "a", latest: { last_ms: 4500 } }, { key: "b", latest: { last_ms: 1000 } }];
+  const items = ev.mergeTimeline(rows, [pump, point, note, open]).map((it) => (it.kind === "row" ? `row ${it.row.key}` : `${it.edge} ${it.ms}`));
+  assert.deepEqual(items, ["start 7000", "end 5000", "row a", "note 4000", "point 2500", "start 2000", "row b"], "the newest first, an interval as its start and its end");
+  assert.deepEqual([ev.describeEvent(pump, "start"), ev.describeEvent(pump, "end"), ev.describeEvent(point, "point"), ev.describeEvent(note, "note")], ["pump on", "pump off", "outside = 7.5", "note: tap opened"]);
+  assert.deepEqual([ev.defaultMode("switch.pump"), ev.defaultMode("sensor.out")], ["interval", "value"]);
+  assert.match(ev.defaultColor("switch.pump"), /^#[0-9a-f]{6}$/);
 });
 
 // -- the eBUS specification ------------------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import { Sources, SourcesStrip } from "./sources.js";
 import { Scratchpad } from "./scratchpad.js";
 import { SetupPanel } from "./setup-panel.js";
 import { Extras } from "./extras.js";
+import { Events } from "./events.js";
 
 // All URLs are relative: the app is served through Home Assistant ingress under a prefix.
 export const api = {
@@ -123,7 +124,7 @@ export const bus = {
   emit(name, data) { for (const fn of this.handlers[name] ?? []) fn(data); },
 };
 
-export const app = { status: null, settings: null, views: {}, decoder: null, builder: null, compileState: null, api };
+export const app = { status: null, settings: null, views: {}, decoder: null, builder: null, events: null, compileState: null, api };
 window.workbench = app;  // for debugging and tests
 
 /** What the app is busy with, in one place: fetching sources, compiling, reading the recording, decoding. */
@@ -171,8 +172,12 @@ function updateStatusBar() {
   bar.appendChild(h("span", { class: `chip ${dbState}`, title: `${db.path}\n${fmt.bytes(db.size)}${db.first_ms ? `\nrecorded ${fmt.dateTime(db.first_ms)} – ${fmt.dateTime(db.last_ms)}` : ""}` }, dbText));
   const ha = s.ha;
   const haState = !ha.configured ? "warn" : ha.connected ? "ok" : "err";
-  const haText = !ha.configured ? "HA: not available" : ha.connected ? `HA: ${ha.entities.length} entities` : "HA: disconnected";
-  bar.appendChild(h("span", { class: `chip ${haState}`, title: ha.last_error || "state changes of the entities picked in the settings are recorded next to the telegrams" }, haText));
+  const haText = !ha.configured ? "HA: not available" : ha.connected ? `HA: ${ha.entities.length} entit${ha.entities.length === 1 ? "y" : "ies"} watched` : "HA: disconnected";
+  const ago = (ms) => (ms ? `${fmt.duration(Math.max(0, Date.now() - ms))} ago` : "never");
+  const haTitle = !ha.configured ? `${ha.last_error || "not running as a Home Assistant app"}\nthe state changes of watched entities would be recorded next to the telegrams`
+    : ha.connected ? `connected since ${fmt.dateTime(ha.connected_since_ms || Date.now())}\nlast message ${ago(ha.last_message_ms)} · last pong ${ago(ha.last_pong_ms)} · ${ha.reconnects || 0} reconnects\n${fmt.count(ha.events_logged || 0)} changes logged since start; what is watched is set under Advanced`
+      : `not connected: ${ha.last_error || "connecting…"}${ha.last_error_ms ? ` (${fmt.dateTime(ha.last_error_ms)})` : ""}\nAdvanced has a test of the connection and its log`;
+  bar.appendChild(h("span", { class: `chip ${haState}`, title: haTitle }, haText));
   bar.appendChild(h("a", { class: "help", href: "https://github.com/LukasGrebe/ha-addons/blob/main/ebusd_workbench/DOCS.md", target: "_blank", rel: "noopener", title: "documentation" }, "?"));
   updateActivity();
 }
@@ -194,6 +199,8 @@ async function main() {
   await refreshStatus();
   setup.load();
   app.decoder = new Core();
+  app.events = new Events();
+  app.events.schedule(true);
   app.builder = new Sources();
   app.views.sources = new SourcesStrip(document.getElementById("sources"));
   app.views.messages = new MessagesView(document.getElementById("messages"));
