@@ -272,6 +272,13 @@ the box stays open, so type, unit and divisor are three clicks. *All types* open
 every abbreviation with its length, range, the value that means "no value" and what it is
 typically used for. Typing into the type field still works.
 
+The pill of a pull request on a definition's row links to the pull request on GitHub, to follow
+its discussion; the status is one sentence to paste into such a discussion, with the devices and
+their software versions ("hmu Status01 (PR 660, 08.hmu.HW5103.csv): decodes all 902 of 902
+distinct telegrams (51,345 recorded) on 700 HW6903 SW 0614 (10) & HMU HW5103 SW 0605 (08),
+recorded 2026-10-21 – 2026-10-27"); a click copies it. In the list, *understood by* shows three
+sources per message and folds the rest into *+N* (a click unfolds them).
+
 Statuses of a definition:
 
 | Status | Meaning |

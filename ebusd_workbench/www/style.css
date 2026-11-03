@@ -117,6 +117,12 @@ table.plain th { background: var(--bg); color: var(--muted); font-weight: 500; }
 .tbadge.custom { background: #e8f5e9; color: #2e7d32; }
 .tbadge.src { background: #ede7f6; color: #4527a0; }
 .tbadge.warn { background: #fff3e0; color: var(--warn); }
+a.tbadge { text-decoration: none; cursor: pointer; }
+a.tbadge:hover { text-decoration: underline; }
+.tbadge.more { cursor: pointer; border: 1px dashed var(--line); background: var(--panel); }
+.tbadge.more:hover { border-color: var(--accent); color: var(--accent); }
+table.inspector .defmeta .summary { cursor: copy; user-select: all; white-space: normal; }
+table.inspector .defmeta .summary:hover { text-decoration: underline dotted; }
 .tmeta { color: var(--muted); font-size: 10px; font-weight: 400; white-space: nowrap; }
 
 /* the scratchpad: head, notes, cards */

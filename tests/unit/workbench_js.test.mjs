@@ -24,7 +24,7 @@ const { seriesFields, seriesValues, nearestPoint, seriesQuery } = await import("
 const define = await import("../../ebusd_workbench/www/define.js");
 const types = await import("../../ebusd_workbench/www/types.js");
 const ev = await import("../../ebusd_workbench/www/events.js");
-const { rowTelegrams, coverage, summarizeFields, whyNot, accessKind, KIND_CODES, KIND_HELP, describeConditions, kindSuffix } = await import("../../ebusd_workbench/www/compare.js");
+const { rowTelegrams, coverage, summarizeFields, whyNot, accessKind, KIND_CODES, KIND_HELP, describeConditions, kindSuffix, summaryText, deviceLabel, sourceUrl } = await import("../../ebusd_workbench/www/compare.js");
 const spec = await import("../../ebusd_workbench/www/ebus-spec.js");
 
 const H9 = "# type (r[1-9];w;u),circuit,level,name,comment,QQ,ZZ,PBSB,ID,field1,part (m/s),datatypes/templates,divider/values,unit,comment\n";
@@ -425,6 +425,25 @@ test("events next to the telegrams: active stretches, the chronological list, th
   assert.deepEqual([ev.describeEvent(pump, "start"), ev.describeEvent(pump, "end"), ev.describeEvent(point, "point"), ev.describeEvent(note, "note")], ["pump on", "pump off", "outside = 7.5", "note: tap opened"]);
   assert.deepEqual([ev.defaultMode("switch.pump"), ev.defaultMode("sensor.out")], ["interval", "value"]);
   assert.match(ev.defaultColor("switch.pump"), /^#[0-9a-f]{6}$/);
+});
+
+test("a summary to paste into a pull request, and the page of a source", () => {
+  const devices = { "15": { ident: "70000", manufacturer: "Vaillant", sw: "0419", hw: "6903" }, "76": { ident: "VWZIO", manufacturer: "Vaillant", sw: "0432", hw: "5103" } };
+  assert.equal(deviceLabel("10", { devices }), "700 HW6903 SW 0419 (10)", "a master is named by its slave's identification");
+  assert.equal(deviceLabel("76", { devices }), "VWZIO HW5103 SW 0432 (76)");
+  assert.equal(deviceLabel("31", { devices, own: "31" }), "ebusd (31)");
+  const def = { circuit: "vwzio", name: "Status01", source: "pr/707", file: "vaillant/76.vwzio.csv" };
+  const row = { zz: "76", senders: new Map([["10", 52000], ["31", 27]]) };
+  const cov = { telegrams: 4508, decoded: 4508, distinct: 4508, ok: 4508, errors: 0, pending: 0, occurrences: 52027, first_ms: Date.UTC(2026, 9, 20, 12), last_ms: Date.UTC(2026, 9, 27, 12), errorKinds: new Map() };
+  assert.equal(summaryText({ def, cov, row, devices, sourceLabel: "PR 707" }), "vwzio Status01 (PR 707, 76.vwzio.csv): decodes all 4,508 of 4,508 distinct telegrams (52,027 recorded) on 700 HW6903 SW 0419 (10) and ebusd (31) & VWZIO HW5103 SW 0432 (76), recorded 2026-10-20 – 2026-10-27");
+  const failing = { ...cov, ok: 4500, errors: 8, errorKinds: new Map([["invalid position", 8]]) };
+  assert.match(summaryText({ def, cov: failing, row, devices, sourceLabel: "PR 707" }), /decodes 4,500 of 4,508 distinct telegrams \(52,027 recorded\), fails on 8 \(invalid position ×8\) on 700/);
+  assert.match(summaryText({ def, cov: { ...cov, decoded: 3000, distinct: 3000, ok: 3000, pending: 1508 }, row, devices, sourceLabel: "PR 707", pending: true }), /decodes all 3,000 of 3,000 distinct telegrams \(52,027 recorded\) on 700 HW6903 SW 0419 \(10\) and ebusd \(31\) & VWZIO HW5103 SW 0432 \(76\), 1,508 of 4,508 still to check, recorded/);
+  assert.equal(summaryText({ def: { ...def, error: "element not found, field type TEMP1 in field 0" }, cov, row, devices, sourceLabel: "PR 411" }), "vwzio Status01 (PR 411, 76.vwzio.csv): ebusd rejects this line: element not found, field type TEMP1 in field 0");
+  assert.match(summaryText({ def, cov, row: { zz: "fe", senders: new Map([["10", 5]]) }, devices, sourceLabel: "release" }), / on 700 HW6903 SW 0419 \(10\) as a broadcast, recorded/);
+  assert.equal(sourceUrl("pr/598"), "https://github.com/john30/ebusd-configuration/pull/598");
+  assert.equal(sourceUrl("pr/598", { url: "https://github.com/john30/ebusd-configuration/pull/598/files" }), "https://github.com/john30/ebusd-configuration/pull/598/files");
+  assert.equal(sourceUrl("mine"), null);
 });
 
 // -- the eBUS specification ------------------------------------------------------------------------------------

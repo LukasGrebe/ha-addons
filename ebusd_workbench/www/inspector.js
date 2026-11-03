@@ -11,7 +11,7 @@
 // repaints the telegram row and the decoded values, so nothing else moves.
 import { app, append, fmt, h, toast } from "./app.js";
 import { messageColors } from "./colors.js";
-import { accessKind, describeConditions, whyNot } from "./compare.js";
+import { accessKind, describeConditions, sourceUrl, summaryText, whyNot } from "./compare.js";
 import { buildDefinition, parseDefinition, splitType } from "./csv.js";
 import { byteLengthOf, layoutFields, parseLine, partLength } from "./pool.js";
 import { TYPES } from "./define.js";
@@ -22,7 +22,21 @@ import { closeTypePicker, openTypePicker } from "./typepick.js";
 
 const chip = (circuit, name) => { const c = messageColors(circuit, name); return h("span", { class: "chip-msg", style: `color:${c.text};background:${c.background};border-color:${c.border}` }, `${circuit} ${name}`); };
 const hexToBytes = (hex) => (hex || "").match(/../g)?.map((b) => parseInt(b, 16)) || [];
-const sourceBadge = (id) => h("span", { class: `tbadge ${id === MINE ? "custom" : id === "release" ? "" : "src"}`, title: `from ${app.decoder.source(id)?.label || id}` }, id === MINE ? "mine" : app.decoder.source(id)?.label || id);
+/** The pill of a source: a link to the pull request on GitHub (its discussion), the repository for release and next. */
+export const sourceBadge = (id) => {
+  const info = app.decoder.source(id);
+  const label = id === MINE ? "mine" : info?.label || id;
+  const cls = `tbadge ${id === MINE ? "custom" : id === "release" ? "" : "src"}`;
+  const url = id === MINE ? null : sourceUrl(id, info);
+  if (!url) return h("span", { class: cls, title: `from ${label}` }, label);
+  return h("a", { class: cls, href: url, target: "_blank", rel: "noopener", title: `${info?.title ? `${info.title}\n` : ""}open ${label} on GitHub`, onclick: (e) => e.stopPropagation() }, label);
+};
+/** Copy a text, or select it where the clipboard is not allowed. */
+function copyText(text, el) {
+  const select = () => { try { const range = document.createRange(); range.selectNodeContents(el); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range); toast("selected: copy it with ⌘C / Ctrl+C", "info", 2500); } catch { /* ignore */ } };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => toast("summary copied", "ok", 1500)).catch(select);
+  else select();
+}
 export { byteLengthOf, layoutFields };
 
 /** A tiny chart: a line for numbers, dots on lanes for words; points [{ms, value}]. */
@@ -162,6 +176,14 @@ export function inspector(ctx) {
     const fieldsRow = h("tr", { class: `def ${isRef ? "ref" : ""} ${chosen ? "chosen" : ""} ${pending ? "pending" : ""}` });
     const nameInput = h("input", { class: "msgname", value: mine ? parsed.header.name : setup.exportName(def), title: mine ? "the message name (edits your line)" : `the message name in your config (MQTT topic ebusd/${setup.circuitOf(def)}/…); upstream: ${def.name}`,
       onchange: (e) => { if (mine) { const next = parseDefinition(csv); next.header.name = e.target.value.trim(); e.target.blur(); upsertMine(buildDefinition(next), def.key).then(() => ctx.onChange?.()).catch((err) => toast(err.message, "err")); } else setup.rename(def, e.target.value); } });
+    // one sentence about the definition on this bus, to copy into a pull request: what it decodes, between which devices
+    const summaryLine = () => {
+      const text = summaryText({ def, cov, row, devices, own, sourceLabel: def.sourceLabel || decoder.source(def.source)?.label || def.source, pending });
+      const cls = def.error || def.nomatch ? "err" : pending && !cov?.decoded ? "muted" : cov?.errors ? "warn" : "ok";
+      const why = pending ? "being checked against every recorded telegram of this message" : `${def.file}\n${describeConditions(def) ? `only when ${describeConditions(def)}\n` : ""}${def.key === ctx.usedKey ? "ebusd uses this definition today." : whyNot(def, decoder.scanOf(def.source) || {}, null, ctx.usedDef)}`;
+      const span = h("span", { class: `summary ${cls}`, title: `click to copy this summary (for a pull request comment)\n\n${why}`, onclick: (e) => { e.stopPropagation(); copyText(text, span); } }, text);
+      return h("div", { class: "defmeta muted" }, accessKind(def), " · ", pending && !cov?.decoded ? h("span", { class: "spinner" }) : null, span);
+    };
     const label = h("td", { class: "fixed label", rowspan: mine ? 4 : 3 },
       h("div", { class: "deflabel" },
         h("label", { class: "insetup", title: chosen ? "used for this message and part of your setup" : "use this definition for this message: it joins your setup, the message's other definitions leave it" },
@@ -171,15 +193,10 @@ export function inspector(ctx) {
         (def.sources || []).length > 3 ? h("span", { class: "tmeta", title: def.sources.map((id) => app.decoder.source(id)?.label || id).join(", ") }, `+${def.sources.length - 3}`) : null,
         def.refs?.length > 1 ? h("span", { class: "tmeta", title: `the same line in ${def.refs.length} places: ${def.refs.map((r) => `${app.decoder.source(r.source)?.label || r.source}: ${r.file.replace(/^.*\//, "")}`).join(", ")}` }, `×${def.refs.length}`) : null,
         def.key === ctx.usedKey ? h("span", { class: "tbadge active", title: "what ebusd uses today" }, "ebusd's choice") : null),
-      h("div", { class: "defmeta muted", title: pending ? "being checked against every recorded telegram of this message" : `${def.file}\n${describeConditions(def) ? `only when ${describeConditions(def)}\n` : ""}${def.key === ctx.usedKey ? "ebusd uses this definition today." : whyNot(def, decoder.scanOf(def.source) || {}, null, ctx.usedDef)}` },
-        accessKind(def),
-        def.error ? h("span", { class: "err" }, ` · ebusd rejects this line: ${def.error}`)
-          : def.nomatch ? h("span", { class: "err", title: "the fields of this line need more bytes than the recorded telegrams carry: a type or a length is wrong" }, " · the fields need more bytes than the telegram has")
-          : pending ? [" · ", h("span", { class: "spinner" }), " checking…"]
-          : cov ? (cov.errors ? h("span", { class: "warn" }, ` · fails on ${cov.errors} of ${cov.distinct}${cov.pending ? `, ${cov.pending} to check` : ""}`) : h("span", { class: "ok" }, ` · decodes all ${fmt.count(cov.ok)}${cov.pending ? `, ${cov.pending} to check` : ""}`)) : null),
+      summaryLine(),
       h("div", { class: "defacts" },
         h("span", { class: "muted" }, "name "), nameInput,
-        mine ? h("button", { class: "small", title: "remove this line from your definitions", onclick: async () => { if (confirm(`Remove ${def.circuit} ${def.name} from your definitions?`)) await removeMine(def.key); } }, "remove") : h("button", { class: "small", title: "a copy of your own (mine), to change it freely", onclick: async () => { try { await upsertMine(def.csv); toast(`${def.circuit} ${def.name} copied: the copy (mine) is below`); ctx.onChange?.(); } catch (err) { toast(err.message, "err"); } } }, "copy")));
+        mine ? h("button", { class: "small", title: "remove this line from your definitions", onclick: async () => { if (confirm(`Remove ${def.circuit} ${def.name} from your definitions?`)) await removeMine(def.key); } }, "remove") : h("button", { class: "small", title: "a copy of your own (mine), to change it freely", onclick: async () => { try { await upsertMine(def.csv); toast(`${def.circuit} ${def.name} copied: the copy (mine) is below`); ctx.onChange?.(); } catch (err) { toast(err.message, "err"); } } }, "edit a copy")));
     fieldsRow.appendChild(label);
     const { header } = parsed;
     fieldsRow.appendChild(h("td", { class: "fixed mono muted", title: `source (any) and destination the definition is for${header.zz ? `: ${nameOf(header.zz)}` : ""}` }, `${header.qq || "--"} ${header.zz || "--"}`));

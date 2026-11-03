@@ -14,11 +14,11 @@ import { messageColors } from "./colors.js";
 import { analyzeBytes, buildCsv, defaultHeader, initialSegments, samplesOf } from "./define.js";
 import { MINE, setup } from "./setup.js";
 import { upsertMine } from "./mine.js";
-import { inspector } from "./inspector.js";
+import { inspector, sourceBadge } from "./inspector.js";
 
 const base = (file) => file.replace(/^.*\//, "");
 const chip = (circuit, name) => { const c = messageColors(circuit, name); return h("span", { class: "chip-msg", style: `color:${c.text};background:${c.background};border-color:${c.border}` }, `${circuit} ${name}`); };
-const sourceBadges = (def) => def.sources.slice(0, 3).map((s) => h("span", { class: `tbadge ${s === MINE ? "custom" : s === "release" ? "" : "src"}`, title: `from ${app.decoder.source(s)?.label || s}` }, s === MINE ? "mine" : app.decoder.source(s)?.label || s));
+const sourceBadges = (def) => def.sources.slice(0, 3).map((s) => sourceBadge(s));
 
 export class Scratchpad {
   constructor(view) {

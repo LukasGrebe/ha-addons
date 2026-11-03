@@ -1,4 +1,18 @@
-# 0.6.2 (unreleased)
+# 0.6.3 (unreleased)
+
+## Features
+* **Understood by** folds: a row shows three sources, the rest as *+N* with every source in the
+  tooltip; a click unfolds them for that row
+* The pill of a pull request in the inspector (and in the card of failing definitions) is a
+  link to the pull request on GitHub, to follow its discussion; release and next link to the
+  repository
+* The status of a definition in the inspector is one sentence to paste into a pull request,
+  with the devices and their software versions: "vwzio Status01 (PR 707, 76.vwzio.csv): decodes
+  all 4,508 of 4,508 distinct telegrams (52,027 recorded) on 700 HW6903 SW 0419 (10) & VWZIO
+  HW5103 SW 0432 (76), recorded 2026-10-20 – 2026-10-27"; a click copies it. The button for a
+  copy of your own is called *edit a copy* now
+
+# 0.6.2
 
 ## Features
 * **Events next to the telegrams.** A switch or a binary sensor of Home Assistant (the circulation

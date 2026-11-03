@@ -22,6 +22,7 @@ const FILTERS = [
 ];
 const SORTS = [["auto", "what matters", "the most traffic first on the attention filters, by device otherwise"], ["last", "last received", "the newest telegram first"]];
 const GROUP_MIN = 8;
+const BADGES_SHOWN = 3;   // sources shown per row in "understood by" before the rest fold into a count
 const hexByte = (n) => (n === null || n === undefined ? "--" : n.toString(16).padStart(2, "0"));
 const chip = (circuit, name) => { const c = messageColors(circuit, name); return h("span", { class: "chip-msg", style: `color:${c.text};background:${c.background};border-color:${c.border}` }, `${circuit} ${name}`); };
 const remembered = (key, fallback) => { try { const v = localStorage.getItem(key); return v === null ? fallback : v === "1"; } catch { return fallback; } };
@@ -38,6 +39,7 @@ export class MessagesView {
     this.device = null;          // zz to show, or null for all
     this.devicesOpen = remembered("workbench.devicesOpen", true);   // the devices with their numbers, or one line
     this.openGroups = new Set(); // zz+pbsb of the commands unfolded in the list
+    this.openBadges = new Set(); // keys of the rows whose "understood by" shows every source
     this.selected = null;
     this.allRows = [];
     this.devices = [];
@@ -379,9 +381,12 @@ export class MessagesView {
     const value = dec ? (dec.result === "ok" ? dec.text || "(empty)" : `✗ ${dec.result}`) : latestHex;
     const understood = [];
     if (r.known) understood.push(h("span", { class: "tbadge active", title: "ebusd understands this message today" }, "ebusd"));
-    for (const s of r.newIn) understood.push(srcBadge(s, d.source(s)?.label));
-    for (const s of r.maybeIn.slice(0, 4)) understood.push(srcBadge(s, d.source(s)?.label, true));
-    if (r.maybeIn.length > 4) understood.push(h("span", { class: "muted", title: r.maybeIn.slice(4).map((s) => d.source(s)?.label || s).join(", ") }, `+${r.maybeIn.length - 4}`));
+    // the other sources: three, the rest folded into a count (a click unfolds them for this row)
+    const others = [...r.newIn.map((s) => ({ s, maybe: false })), ...r.maybeIn.map((s) => ({ s, maybe: true }))];
+    const unfolded = this.openBadges.has(r.key);
+    for (const o of unfolded ? others : others.slice(0, BADGES_SHOWN)) understood.push(srcBadge(o.s, d.source(o.s)?.label, o.maybe));
+    if (others.length > BADGES_SHOWN) understood.push(h("span", { class: "tbadge more", title: unfolded ? "fold them" : `${others.length} sources understand this message:\n${others.map((o) => `${d.source(o.s)?.label || o.s}${o.maybe ? " (not checked yet)" : ""}`).join("\n")}\nclick to show them all`,
+      onclick: (e) => { e.stopPropagation(); this.openBadges[unfolded ? "delete" : "add"](r.key); this.render(true); } }, unfolded ? "fewer" : `+${others.length - BADGES_SHOWN}`));
     if (!r.known && r.inSetup) understood.push(h("span", { class: "tbadge custom", title: "a definition of your setup" }, "my setup"));
     if (r.scan && !r.known) understood.push(h("span", { class: "tbadge active", title: "ebusd's own scan of the device: the identification (07 04) and, for Vaillant, the serial number in four parts (b5 09 24…27, vaillant/scan.csv). Nothing to define." }, "ebusd's scan"));
     if (!r.known && !r.newIn.length && !r.maybeIn.length && !r.inSetup && !r.scan) understood.push(h("span", { class: r.candidates.size ? "warn" : "err" }, r.candidates.size ? (r.pending ? "fits, not checked yet" : "fits, but ebusd would not use it") : "nothing"));

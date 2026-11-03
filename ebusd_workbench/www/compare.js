@@ -1,6 +1,8 @@
 // Judging the candidate definitions of a message over the whole recording: how each one decodes
 // the message's telegrams, and why a candidate is not the one ebusd uses.
 
+import { addressName, slaveOf } from "./ebus-spec.js";
+
 const hex2 = (n) => n.toString(16).padStart(2, "0");
 const MAX_VALUES = 5000;
 const MAX_LINES = 5000;
@@ -130,4 +132,50 @@ export function describeConditions(def) {
   return (def.conditions || []).map((c) => (c.message === "scan" || c.circuit === "scan"
     ? `the device identification ${c.field || c.name} ${rangeText(c.value)}`
     : `${c.circuit ? c.circuit + " " : ""}${c.message}${c.field ? " " + c.field : ""} ${rangeText(c.value)}`).trim()).join(" and ");
+}
+
+/** The page of a source: a pull request on GitHub, the repository for release and next, nothing for your own lines. */
+export function sourceUrl(id, info = null) {
+  if (info?.url) return info.url;
+  const pr = /^pr\/(\d+)$/.exec(id || "");
+  if (pr) return `https://github.com/john30/ebusd-configuration/pull/${pr[1]}`;
+  if (id === "release") return "https://github.com/john30/ebusd-configuration/releases";
+  if (id === "next") return "https://github.com/john30/ebusd-configuration";
+  return null;
+}
+
+/** A device as a pull request comment would name it: "VWZIO HW5103 SW 0432 (76)", the scan's software version included. */
+export function deviceLabel(addr, { devices = {}, own = "31" } = {}) {
+  const a = typeof addr === "number" ? addr : parseInt(addr, 16);
+  if (Number.isNaN(a)) return "";
+  const hex = a.toString(16).padStart(2, "0");
+  const name = addressName(a, { devices, own });
+  const scan = devices[hex] || (slaveOf(a) !== null ? devices[slaveOf(a).toString(16).padStart(2, "0")] : null);
+  return `${name}${scan?.sw ? ` SW ${scan.sw}` : ""} (${hex})`;
+}
+
+const count = (n) => Number(n || 0).toLocaleString("en-US");
+const day = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+
+/**
+ * One sentence about a definition on this bus, to paste into a pull request: what it decodes of the message's
+ * recorded telegrams, between which devices (with their software versions), over which days.
+ * @param row the list's row: {zz, senders: Map(qq -> n), n}; cov from coverage(); devices from the core's devices()
+ */
+export function summaryText({ def, cov, row, devices = {}, own = "31", sourceLabel = "", pending = false }) {
+  const name = `${def.circuit} ${def.name}`;
+  const file = (def.file || "").replace(/^.*\//, "");
+  const where = `${name} (${[sourceLabel || def.sourceLabel || def.source, file].filter(Boolean).join(", ")})`;
+  const senders = [...(row?.senders?.entries?.() || [])].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([qq]) => deviceLabel(qq, { devices, own }));
+  const to = row?.zz === "fe" ? "as a broadcast" : row?.zz ? `& ${deviceLabel(row.zz, { devices, own })}` : "";
+  const on = senders.length ? ` on ${senders.join(" and ")}${to ? ` ${to}` : ""}` : "";
+  const span = cov?.first_ms && cov?.last_ms ? `, recorded ${day(cov.first_ms)}${day(cov.last_ms) !== day(cov.first_ms) ? ` – ${day(cov.last_ms)}` : ""}` : "";
+  if (def.error) return `${where}: ebusd rejects this line: ${def.error}`;
+  if (def.nomatch) return `${where}: the fields need more bytes than the telegram has`;
+  if (!cov || (pending && !cov.decoded)) return `${where}: being checked against ${count(cov?.telegrams)} distinct telegrams`;
+  const total = cov.telegrams || cov.distinct + cov.pending;
+  const kinds = cov.errorKinds?.size ? ` (${[...cov.errorKinds.entries()].map(([k, n]) => `${k} ×${n}`).join(", ")})` : "";
+  const checked = cov.pending ? `, ${count(cov.pending)} of ${count(total)} still to check` : "";
+  if (cov.errors) return `${where}: decodes ${count(cov.ok)} of ${count(cov.distinct)} distinct telegrams (${count(cov.occurrences)} recorded), fails on ${count(cov.errors)}${kinds}${on}${checked}${span}`;
+  return `${where}: decodes all ${count(cov.ok)} of ${count(cov.pending ? cov.distinct : total)} distinct telegrams (${count(cov.occurrences)} recorded)${on}${checked}${span}`;
 }
