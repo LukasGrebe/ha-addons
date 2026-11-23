@@ -163,6 +163,10 @@ auto-configured from the HA Mosquitto broker — remove them from your config en
 The app config folder is at `/addon_configs/2ad9b828_ebusd/` on the HA host and mounted at
 `/config` inside the running container. It is included in HA backups.
 
+The Home Assistant configuration folder is mounted read-only at `/homeassistant` inside
+the container. For example, if your message definitions are in `/config/ebusd/` in
+Home Assistant, use `--configpath=/homeassistant/ebusd/` in `additional ebus options`.
+
 The prefix `2ad9b828` is derived from the repository URL as you added it
 (`https://github.com/LukasGrebe/ha-addons/`); a different spelling of the URL, or a
 [test version](#testing-upcoming-versions), gets a different prefix. If the folder
