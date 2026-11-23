@@ -21,6 +21,7 @@ uart: true
 map:
   - app_config:rw
   - share:rw
+  - homeassistant_config:ro
 ports:
   8888/tcp: null
   8889/tcp: null

@@ -1,6 +1,7 @@
 # Unreleased
 
 ## Features
+* Read message definitions and other files from the Home Assistant configuration folder at `/homeassistant` (read-only).
 * `log` command in the built-in terminal: note what you did or saw, e.g. `log 8:52:23 ~1s Modus auf Einschaltempfehlung geändert`, to find its telegrams in the SQLite telegram log by time. The time is optional (default: now) and can have an uncertainty (default ±500 ms; `~2s`, or `-10m` for something that started before you saw it); without a message, `log` stores the time and asks for it. Events are stored in the new table `event` of the telegram log database and are not deleted by the retention. See the [docs](https://github.com/LukasGrebe/ha-addons/blob/main/ebusd/DOCS.md#logging-what-you-did-log)
 
 ## App Changes
